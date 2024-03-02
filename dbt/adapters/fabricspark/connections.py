@@ -1,5 +1,4 @@
 from contextlib import contextmanager
-import json
 import os
 import dbt.exceptions
 
@@ -7,30 +6,32 @@ from dbt.adapters.sql import SQLConnectionManager
 from dbt.contracts.connection import ConnectionState, AdapterResponse
 from dbt.events import AdapterLogger
 from dbt.events.functions import fire_event
-from dbt.events.types import ConnectionUsed, SQLQuery, SQLQueryStatus, ConnectionLeftOpenInCleanup, ConnectionClosedInCleanup
+from dbt.events.types import ConnectionUsed, SQLQuery, SQLQueryStatus
 from dbt.utils import DECIMALS
-from dbt.adapters.fabricspark import __version__
 from dbt.adapters.fabricspark.livysession import LivySessionConnectionWrapper, LivySessionManager
 
-from datetime import datetime
-import sqlparams
 from dbt.contracts.connection import Connection
 from dbt.dataclass_schema import StrEnum
-from typing import Any, Dict, Optional, Union, Tuple, List, Generator, Iterable, Sequence
-from dbt import flags
+from typing import Any, Optional, Union, Tuple, List, Generator, Iterable, Sequence
 from abc import ABC, abstractmethod
-import base64
 import time
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
-for logger_name in ["fabricspark.connector", "botocore", "boto3","Microsoft Fabric-Spark.connector"]:
+for logger_name in [
+    "fabricspark.connector",
+    "botocore",
+    "boto3",
+    "Microsoft Fabric-Spark.connector",
+]:
     logger.debug(f"Setting {logger_name} to DEBUG")
     logger.set_adapter_dependency_log_level(logger_name, "DEBUG")
 
 NUMBERS = DECIMALS + (int, float)
 
+
 class SparkConnectionMethod(StrEnum):
     LIVY = "livy"
+
 
 class SparkConnectionWrapper(ABC):
     @abstractmethod
@@ -66,9 +67,10 @@ class SparkConnectionWrapper(ABC):
     ]:
         pass
 
+
 class SparkConnectionManager(SQLConnectionManager):
     TYPE = "fabricspark"
-    
+
     connection_managers = {}
     spark_version = None
 
@@ -123,8 +125,6 @@ class SparkConnectionManager(SQLConnectionManager):
                     " to connect to Spark".format(key, method)
                 )
 
-
-
     @classmethod
     def open(cls, connection: Connection) -> Connection:
         if connection.state == ConnectionState.OPEN:
@@ -134,26 +134,21 @@ class SparkConnectionManager(SQLConnectionManager):
         creds = connection.credentials
         exc = None
         handle: SparkConnectionWrapper = None
-        
+
         for i in range(1 + creds.connect_retries):
             try:
                 if creds.method == SparkConnectionMethod.LIVY:
-                    connection_start_time = time.time()
-                    connection_ex = None
                     try:
                         thread_id = cls.get_thread_identifier()
-                        if not thread_id in cls.connection_managers:
-                             cls.connection_managers[thread_id] = LivySessionManager()  
+                        if thread_id not in cls.connection_managers:
+                            cls.connection_managers[thread_id] = LivySessionManager()
                         handle = LivySessionConnectionWrapper(
-                             cls.connection_managers[thread_id].connect(creds)
-                        ) 
-                        connection_end_time = time.time()
+                            cls.connection_managers[thread_id].connect(creds)
+                        )
                         connection.state = ConnectionState.OPEN
-                        #SparkConnectionManager.fetch_spark_version(handle)
+                        # SparkConnectionManager.fetch_spark_version(handle)
                     except Exception as ex:
                         logger.debug("Connection error: {}".format(ex))
-                        connection_ex = ex
-                        connection_end_time = time.time()
                         connection.state = ConnectionState.FAIL
                 else:
                     raise dbt.exceptions.DbtProfileError(
@@ -204,21 +199,20 @@ class SparkConnectionManager(SQLConnectionManager):
     @classmethod
     def cleanup_all(self) -> None:
         for thread_id in self.connection_managers:
-            livySession = self.connection_managers[thread_id] 
+            livySession = self.connection_managers[thread_id]
             livySession.disconnect()
-            
+
             # garbage collect these connections
         self.connection_managers.clear()
-    
+
     @classmethod
-    def close(cls, connection):
+    def close(cls, connection) -> None:
         try:
-            
             # if the connection is in closed or init, there's nothing to do
             if connection.state in {ConnectionState.CLOSED, ConnectionState.INIT}:
-                return connection                   
+                return connection
 
-            connection = super().close(connection)            
+            connection = super().close(connection)
             return connection
         except Exception as err:
             logger.debug(f"Error closing connection {err}")
@@ -235,11 +229,10 @@ class SparkConnectionManager(SQLConnectionManager):
         if isinstance(type_code, str):
             return type_code
         return type_code.__name__.upper()
-    
-    @classmethod
-    def fetch_spark_version(cls, connection):
 
-        if SparkConnectionManager.spark_version: 
+    @classmethod
+    def fetch_spark_version(cls, connection) -> None:
+        if SparkConnectionManager.spark_version:
             return SparkConnectionManager.spark_version
 
         try:
@@ -254,7 +247,7 @@ class SparkConnectionManager(SQLConnectionManager):
             logger.debug(f"Cannot get spark version, defaulting to version 2. Error: {ex}")
             SparkConnectionManager.spark_version = "2"
 
-        os.environ['DBT_SPARK_VERSION'] = SparkConnectionManager.spark_version 
+        os.environ["DBT_SPARK_VERSION"] = SparkConnectionManager.spark_version
         logger.debug(f"SPARK VERSION {os.getenv('DBT_SPARK_VERSION')}")
 
     def add_query(
@@ -281,7 +274,7 @@ class SparkConnectionManager(SQLConnectionManager):
             cursor = connection.handle.cursor()
 
             try:
-                 cursor.execute(sql, bindings)
+                cursor.execute(sql, bindings)
             except Exception as ex:
                 query_exception = ex
 
@@ -299,6 +292,7 @@ class SparkConnectionManager(SQLConnectionManager):
             )
 
             return connection, cursor
+
 
 def _is_retryable_error(exc: Exception) -> str:
     message = str(exc).lower()

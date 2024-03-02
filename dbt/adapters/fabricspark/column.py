@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, TypeVar, Union
-
 from dbt.adapters.base.column import Column
 from dbt.dataclass_schema import dbtClassMixin
 

@@ -75,47 +75,7 @@ model_fk_constraint_schema_yml = model_fk_constraint_schema_yml.replace("text", 
 model_constraints_yml = constrained_model_schema_yml.replace("text", "string")
 
 
-class PyodbcSetup:
-    @pytest.fixture(scope="class")
-    def project_config_update(self):
-        return {
-            "models": {
-                "+file_format": "delta",
-            }
-        }
-
-    @pytest.fixture
-    def string_type(self):
-        return "STR"
-
-    @pytest.fixture
-    def int_type(self):
-        return "INT"
-
-    @pytest.fixture
-    def schema_string_type(self):
-        return "STRING"
-
-    @pytest.fixture
-    def schema_int_type(self):
-        return "INT"
-
-    @pytest.fixture
-    def data_types(self, int_type, schema_int_type, string_type, schema_string_type):
-        # sql_column_value, schema_data_type, error_data_type
-        return [
-            ["1", schema_int_type, int_type],
-            ['"1"', schema_string_type, string_type],
-            ["true", "boolean", "BOOL"],
-            ['array("1","2","3")', "string", string_type],
-            ["array(1,2,3)", "string", string_type],
-            ["6.45", "decimal", "DECIMAL"],
-            ["cast('2019-01-01' as date)", "date", "DATE"],
-            ["cast('2019-01-01' as timestamp)", "timestamp", "DATETIME"],
-        ]
-
-
-class DatabricksHTTPSetup:
+class FabricSparkLivySetup:
     @pytest.fixture
     def string_type(self):
         return "STRING_TYPE"
@@ -147,8 +107,28 @@ class DatabricksHTTPSetup:
         ]
 
 
-@pytest.mark.skip_profile("spark_session", "apache_spark", "databricks_http_cluster")
-class TestSparkTableConstraintsColumnsEqualPyodbc(PyodbcSetup, BaseTableConstraintsColumnsEqual):
+@pytest.mark.skip("ALTER SET NULL is not supported")
+class TestSparkTableConstraintsColumnsEqual(
+    FabricSparkLivySetup, BaseTableConstraintsColumnsEqual
+):
+    @pytest.fixture(scope="class")
+    def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
+        profile = {
+            "test": {
+                "outputs": {
+                    "default": {},
+                },
+                "target": "default",
+            },
+        }
+        target = dbt_profile_target
+        target["schema"] = target["lakehouse"]
+        profile["test"]["outputs"]["default"] = target
+
+        if profiles_config_update:
+            profile.update(profiles_config_update)
+        return profile
+
     @pytest.fixture(scope="class")
     def models(self):
         return {
@@ -158,50 +138,9 @@ class TestSparkTableConstraintsColumnsEqualPyodbc(PyodbcSetup, BaseTableConstrai
         }
 
 
-@pytest.mark.skip_profile("spark_session", "apache_spark", "databricks_http_cluster")
-class TestSparkViewConstraintsColumnsEqualPyodbc(PyodbcSetup, BaseViewConstraintsColumnsEqual):
-    @pytest.fixture(scope="class")
-    def models(self):
-        return {
-            "my_model_wrong_order.sql": my_model_view_wrong_order_sql,
-            "my_model_wrong_name.sql": my_model_view_wrong_name_sql,
-            "constraints_schema.yml": constraints_yml,
-        }
-
-
-@pytest.mark.skip_profile("spark_session", "apache_spark", "databricks_http_cluster")
-class TestSparkIncrementalConstraintsColumnsEqualPyodbc(
-    PyodbcSetup, BaseIncrementalConstraintsColumnsEqual
-):
-    @pytest.fixture(scope="class")
-    def models(self):
-        return {
-            "my_model_wrong_order.sql": my_model_incremental_wrong_order_sql,
-            "my_model_wrong_name.sql": my_model_incremental_wrong_name_sql,
-            "constraints_schema.yml": constraints_yml,
-        }
-
-
-@pytest.mark.skip_profile(
-    "spark_session", "apache_spark", "databricks_sql_endpoint", "databricks_cluster"
-)
-class TestSparkTableConstraintsColumnsEqualDatabricksHTTP(
-    DatabricksHTTPSetup, BaseTableConstraintsColumnsEqual
-):
-    @pytest.fixture(scope="class")
-    def models(self):
-        return {
-            "my_model_wrong_order.sql": my_model_wrong_order_sql,
-            "my_model_wrong_name.sql": my_model_wrong_name_sql,
-            "constraints_schema.yml": constraints_yml,
-        }
-
-
-@pytest.mark.skip_profile(
-    "spark_session", "apache_spark", "databricks_sql_endpoint", "databricks_cluster"
-)
+@pytest.mark.skip("ALTER SET NULL is not supported")
 class TestSparkViewConstraintsColumnsEqualDatabricksHTTP(
-    DatabricksHTTPSetup, BaseViewConstraintsColumnsEqual
+    FabricSparkLivySetup, BaseViewConstraintsColumnsEqual
 ):
     @pytest.fixture(scope="class")
     def models(self):
@@ -212,11 +151,9 @@ class TestSparkViewConstraintsColumnsEqualDatabricksHTTP(
         }
 
 
-@pytest.mark.skip_profile(
-    "spark_session", "apache_spark", "databricks_sql_endpoint", "databricks_cluster"
-)
-class TestSparkIncrementalConstraintsColumnsEqualDatabricksHTTP(
-    DatabricksHTTPSetup, BaseIncrementalConstraintsColumnsEqual
+@pytest.mark.skip("ALTER SET NULL is not supported")
+class TestSparkIncrementalConstraintsColumnsEqual(
+    FabricSparkLivySetup, BaseIncrementalConstraintsColumnsEqual
 ):
     @pytest.fixture(scope="class")
     def models(self):
@@ -227,6 +164,7 @@ class TestSparkIncrementalConstraintsColumnsEqualDatabricksHTTP(
         }
 
 
+@pytest.mark.skip("ALTER SET NULL is not supported")
 class BaseSparkConstraintsDdlEnforcementSetup:
     @pytest.fixture(scope="class")
     def project_config_update(self):
@@ -241,7 +179,7 @@ class BaseSparkConstraintsDdlEnforcementSetup:
         return _expected_sql_spark
 
 
-@pytest.mark.skip_profile("spark_session", "apache_spark")
+@pytest.mark.skip("ALTER SET NULL is not supported")
 class TestSparkTableConstraintsDdlEnforcement(
     BaseSparkConstraintsDdlEnforcementSetup, BaseConstraintsRuntimeDdlEnforcement
 ):
@@ -254,7 +192,7 @@ class TestSparkTableConstraintsDdlEnforcement(
         }
 
 
-@pytest.mark.skip_profile("spark_session", "apache_spark")
+@pytest.mark.skip("ALTER SET NULL is not supported")
 class TestSparkIncrementalConstraintsDdlEnforcement(
     BaseSparkConstraintsDdlEnforcementSetup, BaseIncrementalConstraintsRuntimeDdlEnforcement
 ):
@@ -267,8 +205,8 @@ class TestSparkIncrementalConstraintsDdlEnforcement(
         }
 
 
-@pytest.mark.skip_profile("spark_session", "apache_spark", "databricks_http_cluster")
-class TestSparkConstraintQuotedColumn(PyodbcSetup, BaseConstraintQuotedColumn):
+@pytest.mark.skip("ALTER SET NULL is not supported")
+class TestSparkConstraintQuotedColumn(FabricSparkLivySetup, BaseConstraintQuotedColumn):
     @pytest.fixture(scope="class")
     def models(self):
         return {
@@ -326,7 +264,7 @@ class BaseSparkConstraintsRollbackSetup:
         assert any(msg in error_message for msg in expected_error_messages)
 
 
-@pytest.mark.skip_profile("spark_session", "apache_spark")
+@pytest.mark.skip("ALTER SET NULL is not supported")
 class TestSparkTableConstraintsRollback(
     BaseSparkConstraintsRollbackSetup, BaseConstraintsRollback
 ):
@@ -345,7 +283,7 @@ class TestSparkTableConstraintsRollback(
         return "red"
 
 
-@pytest.mark.skip_profile("spark_session", "apache_spark")
+@pytest.mark.skip("ALTER SET NULL is not supported")
 class TestSparkIncrementalConstraintsRollback(
     BaseSparkConstraintsRollbackSetup, BaseIncrementalConstraintsRollback
 ):
@@ -362,7 +300,7 @@ class TestSparkIncrementalConstraintsRollback(
 # TODO: Like the tests above, this does test that model-level constraints don't
 # result in errors, but it does not verify that they are actually present in
 # Spark and that the ALTER TABLE statement actually ran.
-@pytest.mark.skip_profile("spark_session", "apache_spark")
+@pytest.mark.skip("ALTER SET NULL is not supported")
 class TestSparkModelConstraintsRuntimeEnforcement(BaseModelConstraintsRuntimeEnforcement):
     @pytest.fixture(scope="class")
     def project_config_update(self):

@@ -8,6 +8,24 @@ from dbt.tests.adapter.incremental.test_incremental_on_schema_change import (
 
 
 class IncrementalOnSchemaChangeIgnoreFail(BaseIncrementalOnSchemaChangeSetup):
+    @pytest.fixture(scope="class")
+    def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
+        profile = {
+            "test": {
+                "outputs": {
+                    "default": {},
+                },
+                "target": "default",
+            },
+        }
+        target = dbt_profile_target
+        target["schema"] = target["lakehouse"]
+        profile["test"]["outputs"]["default"] = target
+
+        if profiles_config_update:
+            profile.update(profiles_config_update)
+        return profile
+
     def test_run_incremental_ignore(self, project):
         select = "model_a incremental_ignore incremental_ignore_target"
         compare_source = "incremental_ignore"
@@ -21,7 +39,6 @@ class IncrementalOnSchemaChangeIgnoreFail(BaseIncrementalOnSchemaChangeSetup):
         assert "Compilation Error" in results_two[1].message
 
 
-@pytest.mark.skip_profile("databricks_sql_endpoint")
 class TestAppendOnSchemaChange(IncrementalOnSchemaChangeIgnoreFail):
     @pytest.fixture(scope="class")
     def project_config_update(self):
@@ -32,21 +49,55 @@ class TestAppendOnSchemaChange(IncrementalOnSchemaChangeIgnoreFail):
         }
 
 
-@pytest.mark.skip_profile("databricks_sql_endpoint", "spark_session")
 class TestInsertOverwriteOnSchemaChange(IncrementalOnSchemaChangeIgnoreFail):
+    @pytest.fixture(scope="class")
+    def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
+        profile = {
+            "test": {
+                "outputs": {
+                    "default": {},
+                },
+                "target": "default",
+            },
+        }
+        target = dbt_profile_target
+        target["schema"] = target["lakehouse"]
+        profile["test"]["outputs"]["default"] = target
+
+        if profiles_config_update:
+            profile.update(profiles_config_update)
+        return profile
+
     @pytest.fixture(scope="class")
     def project_config_update(self):
         return {
             "models": {
-                "+file_format": "parquet",
+                "+file_format": "delta",
                 "+partition_by": "id",
                 "+incremental_strategy": "insert_overwrite",
             }
         }
 
 
-@pytest.mark.skip_profile("apache_spark", "spark_session")
 class TestDeltaOnSchemaChange(BaseIncrementalOnSchemaChangeSetup):
+    @pytest.fixture(scope="class")
+    def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
+        profile = {
+            "test": {
+                "outputs": {
+                    "default": {},
+                },
+                "target": "default",
+            },
+        }
+        target = dbt_profile_target
+        target["schema"] = target["lakehouse"]
+        profile["test"]["outputs"]["default"] = target
+
+        if profiles_config_update:
+            profile.update(profiles_config_update)
+        return profile
+
     @pytest.fixture(scope="class")
     def project_config_update(self):
         return {

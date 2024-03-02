@@ -1,31 +1,21 @@
 import re
 from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Union, Type, Tuple, Callable, Set
-
+from typing import Any, Dict, Iterable, List, Optional, Union, Tuple, Callable, Set
 from dbt.adapters.base.relation import InformationSchema
 from dbt.contracts.graph.manifest import Manifest
-
 from typing_extensions import TypeAlias
-
 import agate
-
 import dbt
 import dbt.exceptions
-
-from dbt.adapters.base import AdapterConfig, PythonJobHelper
+from dbt.adapters.base import AdapterConfig
 from dbt.adapters.base.impl import catch_as_completed, ConstraintSupport
 from dbt.adapters.sql import SQLAdapter
 from dbt.adapters.fabricspark import SparkConnectionManager
 from dbt.adapters.fabricspark import SparkRelation
 from dbt.adapters.fabricspark import SparkColumn
-from dbt.adapters.fabricspark.python_submissions import (
-    JobClusterPythonJobHelper,
-    AllPurposeClusterPythonJobHelper,
-)
 from dbt.adapters.base import BaseRelation
 from dbt.clients.agate_helper import DEFAULT_TYPE_TESTER
-from dbt.contracts.connection import AdapterResponse
 from dbt.contracts.graph.nodes import ConstraintType
 from dbt.contracts.relation import RelationType
 from dbt.events import AdapterLogger
@@ -312,8 +302,7 @@ class SparkAdapter(SQLAdapter):
         columns = [x for x in columns if x.name not in self.HUDI_METADATA_COLUMNS]
         return columns
 
-    
-    def parse_columns_from_information(self, relation: BaseRelation, columnDict) -> List[SparkColumn]:
+    def parse_columns_from_information(self, relation: BaseRelation) -> List[SparkColumn]:
         if hasattr(relation, "information"):
             information = relation.information or ""
         else:
@@ -342,7 +331,6 @@ class SparkAdapter(SQLAdapter):
         return columns
 
     def _get_columns_for_catalog(self, relation: BaseRelation) -> Iterable[Dict[str, Any]]:
-        
         table_name = f"{relation.schema}.{relation.identifier}"
         raw_rows = None
         try:
@@ -354,7 +342,7 @@ class SparkAdapter(SQLAdapter):
             raise e
 
         # Not using parsing to extract schema and other properties using describe table extended command
-        #columns = self.parse_columns_from_information(relation, table_results)
+        # columns = self.parse_columns_from_information(relation, table_results)
         columns = self.parse_describe_extended(relation, raw_rows)
 
         for column in columns:
@@ -403,7 +391,7 @@ class SparkAdapter(SQLAdapter):
             )
 
         database = information_schema.database
-        logger.debug('database name is ', database)
+        logger.debug("database name is ", database)
         schema = list(schemas)[0]
 
         columns: List[Dict[str, Any]] = []
@@ -414,7 +402,7 @@ class SparkAdapter(SQLAdapter):
         return agate.Table.from_object(columns, column_types=DEFAULT_TYPE_TESTER)
 
     def check_schema_exists(self, database: str, schema: str) -> bool:
-        logger.debug('database name is ', database)
+        logger.debug("database name is ", database)
         results = self.execute_macro(LIST_SCHEMAS_MACRO_NAME, kwargs={"database": database})
 
         exists = True if schema in [row[0] for row in results] else False
@@ -447,44 +435,6 @@ class SparkAdapter(SQLAdapter):
         )
 
         return sql
-
-    # This is for use in the test suite
-    # Spark doesn't have 'commit' and 'rollback', so this override
-    # doesn't include those commands.
-    def run_sql_for_tests(self, sql, fetch, conn):  # type: ignore
-        cursor = conn.handle.cursor()
-        try:
-            cursor.execute(sql)
-            if fetch == "one":
-                if hasattr(cursor, "fetchone"):
-                    return cursor.fetchone()
-                else:
-                    # AttributeError: 'PyhiveConnectionWrapper' object has no attribute 'fetchone'
-                    return cursor.fetchall()[0]
-            elif fetch == "all":
-                return cursor.fetchall()
-            else:
-                return
-        except BaseException as e:
-            print(sql)
-            print(e)
-            raise
-        finally:
-            conn.transaction_open = False
-
-    def generate_python_submission_response(self, submission_result: Any) -> AdapterResponse:
-        return self.connections.get_response(None)
-
-    @property
-    def default_python_submission_method(self) -> str:
-        return "all_purpose_cluster"
-
-    @property
-    def python_submission_helpers(self) -> Dict[str, Type[PythonJobHelper]]:
-        return {
-            "job_cluster": JobClusterPythonJobHelper,
-            "all_purpose_cluster": AllPurposeClusterPythonJobHelper,
-        }
 
     def standardize_grants_dict(self, grants_table: agate.Table) -> dict:
         grants_dict: Dict[str, List[str]] = {}

@@ -25,6 +25,24 @@ from tests.functional.adapter.incremental_strategies.fixtures import (
 
 class BaseIncrementalStrategies(SeedConfigBase):
     @pytest.fixture(scope="class")
+    def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
+        profile = {
+            "test": {
+                "outputs": {
+                    "default": {},
+                },
+                "target": "default",
+            },
+        }
+        target = dbt_profile_target
+        target["schema"] = target["lakehouse"]
+        profile["test"]["outputs"]["default"] = target
+
+        if profiles_config_update:
+            profile.update(profiles_config_update)
+        return profile
+
+    @pytest.fixture(scope="class")
     def seeds(self):
         return {
             "expected_append.csv": expected_append_csv,
@@ -54,9 +72,6 @@ class TestDefaultAppend(BaseIncrementalStrategies):
         self.seed_and_run_twice()
         check_relations_equal(project.adapter, ["default_append", "expected_append"])
 
-    @pytest.mark.skip_profile(
-        "databricks_http_cluster", "databricks_sql_endpoint", "spark_session"
-    )
     def test_default_append(self, project):
         self.run_and_test(project)
 
@@ -76,9 +91,6 @@ class TestInsertOverwrite(BaseIncrementalStrategies):
         )
         check_relations_equal(project.adapter, ["insert_overwrite_partitions", "expected_upsert"])
 
-    @pytest.mark.skip_profile(
-        "databricks_http_cluster", "databricks_sql_endpoint", "spark_session"
-    )
     def test_insert_overwrite(self, project):
         self.run_and_test(project)
 
@@ -102,20 +114,8 @@ class TestDeltaStrategies(BaseIncrementalStrategies):
         check_relations_equal(project.adapter, ["merge_unique_key", "expected_upsert"])
         check_relations_equal(project.adapter, ["merge_update_columns", "expected_partial_upsert"])
 
-    @pytest.mark.skip_profile(
-        "apache_spark", "databricks_http_cluster", "databricks_sql_endpoint", "spark_session"
-    )
     def test_delta_strategies(self, project):
         self.run_and_test(project)
-
-    @pytest.mark.skip(
-        reason="this feature is incompatible with databricks settings required for grants"
-    )
-    def test_delta_strategies_overwrite(self, project):
-        self.seed_and_run_twice()
-        check_relations_equal(
-            project.adapter, ["insert_overwrite_partitions_delta", "expected_upsert"]
-        )
 
 
 class TestBadStrategies(BaseIncrementalStrategies):
@@ -135,6 +135,5 @@ class TestBadStrategies(BaseIncrementalStrategies):
             assert result.status == "error"
             assert "Compilation Error in model" in result.message
 
-    @pytest.mark.skip_profile("databricks_http_cluster", "spark_session")
     def test_bad_strategies(self, project):
         self.run_and_test()

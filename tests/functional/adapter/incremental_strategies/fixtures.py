@@ -217,7 +217,7 @@ insert_overwrite_no_partitions_sql = """
 {{ config(
     materialized = 'incremental',
     incremental_strategy = 'insert_overwrite',
-    file_format = 'parquet',
+    file_format = 'delta',
 ) }}
 
 {% if not is_incremental() %}
@@ -240,7 +240,7 @@ insert_overwrite_partitions_sql = """
     materialized = 'incremental',
     incremental_strategy = 'insert_overwrite',
     partition_by = 'id',
-    file_format = 'parquet',
+    file_format = 'delta',
 ) }}
 
 {% if not is_incremental() %}

@@ -29,7 +29,9 @@ with open(os.path.join(this_directory, "README.md"), "r", encoding="utf8") as f:
 
 # get this package's version from dbt/adapters/<name>/__version__.py
 def _get_plugin_version_dict():
-    _version_path = os.path.join(this_directory, "dbt", "adapters", "fabricspark", "__version__.py")
+    _version_path = os.path.join(
+        this_directory, "dbt", "adapters", "fabricspark", "__version__.py"
+    )
     _semver = r"""(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)"""
     _pre = r"""((?P<prekind>a|b|rc)(?P<pre>\d+))?"""
     _version_pattern = rf"""version\s*=\s*["']{_semver}{_pre}["']"""
@@ -49,14 +51,10 @@ def _get_dbt_core_version():
 
 
 package_name = "dbt-fabricspark"
-package_version = "1.7.1"
+package_version = "1.7.0"
 dbt_core_version = _get_dbt_core_version()
 print(f"printing version --------- {dbt_core_version}")
 description = """The Apache Spark adapter plugin for dbt"""
-
-odbc_extras = ["pyodbc~=4.0.39"]
-session_extras = ["pyspark>=3.0.0,<4.0.0"]
-all_extras = odbc_extras + session_extras
 
 setup(
     name=package_name,
@@ -66,19 +64,17 @@ setup(
     long_description_content_type="text/markdown",
     author="Pradeep Srikakolapu",
     author_email="pvenkat@microsoft.com",
-    url="https://github.com/prdpsvs/dbt-spark",
+    url="https://github.com/microsoft/dbt-fabricspark",
     packages=find_namespace_packages(include=["dbt", "dbt.*"]),
     include_package_data=True,
     install_requires=[
         "dbt-core~={}".format(dbt_core_version),
         "sqlparams>=3.0.0",
-        "azure-identity>=1.12.0",
+        "azure-identity>=1.13.0",
+        "azure-core>=1.26.4",
+        "requests==2.31.0"
+        # "pyspark>=3.0.0,<4.0.0",
     ],
-    extras_require={
-        "ODBC": odbc_extras,
-        "session": session_extras,
-        "all": all_extras,
-    },
     zip_safe=False,
     classifiers=[
         "Development Status :: 5 - Production/Stable",

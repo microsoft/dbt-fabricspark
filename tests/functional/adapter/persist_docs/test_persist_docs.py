@@ -1,5 +1,4 @@
 import pytest
-
 from dbt.tests.util import run_dbt
 
 from fixtures import (
@@ -15,8 +14,25 @@ from fixtures import (
 )
 
 
-@pytest.mark.skip_profile("apache_spark", "spark_session")
 class TestPersistDocsDeltaTable:
+    @pytest.fixture(scope="class")
+    def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
+        profile = {
+            "test": {
+                "outputs": {
+                    "default": {},
+                },
+                "target": "default",
+            },
+        }
+        target = dbt_profile_target
+        target["schema"] = target["lakehouse"]
+        profile["test"]["outputs"]["default"] = target
+
+        if profiles_config_update:
+            profile.update(profiles_config_update)
+        return profile
+
     @pytest.fixture(scope="class")
     def models(self):
         return {
@@ -64,7 +80,7 @@ class TestPersistDocsDeltaTable:
         ]:
             results = project.run_sql(
                 "describe extended {schema}.{table}".format(
-                    schema=project.test_schema, table=table
+                    schema=project.adapter.config.credentials.schema, table=table
                 ),
                 fetch="all",
             )
@@ -78,8 +94,25 @@ class TestPersistDocsDeltaTable:
                     assert result[2].startswith("Some stuff here and then a call to")
 
 
-@pytest.mark.skip_profile("apache_spark", "spark_session")
 class TestPersistDocsDeltaView:
+    @pytest.fixture(scope="class")
+    def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
+        profile = {
+            "test": {
+                "outputs": {
+                    "default": {},
+                },
+                "target": "default",
+            },
+        }
+        target = dbt_profile_target
+        target["schema"] = target["lakehouse"]
+        profile["test"]["outputs"]["default"] = target
+
+        if profiles_config_update:
+            profile.update(profiles_config_update)
+        return profile
+
     @pytest.fixture(scope="class")
     def models(self):
         return {
@@ -106,7 +139,7 @@ class TestPersistDocsDeltaView:
 
         results = project.run_sql(
             "describe extended {schema}.{table}".format(
-                schema=project.test_schema, table="view_delta_model"
+                schema=project.adapter.config.credentials.schema, table="view_delta_model"
             ),
             fetch="all",
         )
@@ -120,7 +153,6 @@ class TestPersistDocsDeltaView:
                 assert result[2] is None
 
 
-@pytest.mark.skip_profile("apache_spark", "spark_session")
 class TestPersistDocsMissingColumn:
     @pytest.fixture(scope="class")
     def project_config_update(self):

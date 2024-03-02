@@ -14,8 +14,8 @@ from tests.functional.adapter.dbt_clone.fixtures import (
 )
 
 
-@pytest.mark.skip_profile("apache_spark", "spark_session")
-class TestSparkBigqueryClonePossible(BaseClonePossible):
+@pytest.mark.skip("Cloning cross schema is not supported")
+class TestSparkClonePossible(BaseClonePossible):
     @pytest.fixture(scope="class")
     def models(self):
         return {

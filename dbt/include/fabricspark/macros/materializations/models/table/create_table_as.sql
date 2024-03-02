@@ -25,14 +25,7 @@
       {{ compiled_code }}
     {%- endif -%}
   {%- elif language == 'python' -%}
-    {#--
-    N.B. Python models _can_ write to temp views HOWEVER they use a different session
-    and have already expired by the time they need to be used (I.E. in merges for incremental models)
-
-    TODO: Deep dive into spark sessions to see if we can reuse a single session for an entire
-    dbt invocation.
-     --#}
-    {{ py_write_table(compiled_code=compiled_code, target_relation=relation) }}
+    {{ exceptions.raise_compiler_error("Python models are not supported in Fabric Spark") }}
   {%- endif -%}
 {%- endmacro -%}
 
@@ -43,7 +36,7 @@
 {% macro fabricspark__file_format_clause() %}
   {%- set file_format = config.get('file_format', validator=validation.any[basestring]) -%}
   {%- if file_format is not none %}
-    using {{ file_format }}  
+    using {{ file_format }}
   {%- endif %}
 {%- endmacro -%}
 
@@ -101,7 +94,6 @@
   {%- endif %}
 {%- endmacro -%}
 
-
 {% macro comment_clause() %}
   {{ return(adapter.dispatch('comment_clause', 'dbt')()) }}
 {%- endmacro -%}
@@ -118,7 +110,6 @@
     {{ exceptions.raise_compiler_error("Invalid value provided for 'persist_docs'. Expected dict but got value: " ~ raw_persist_docs) }}
   {% endif %}
 {%- endmacro -%}
-
 
 {% macro partition_cols(label, required=false) %}
   {{ return(adapter.dispatch('partition_cols', 'dbt')(label, required)) }}
@@ -138,7 +129,6 @@
     )
   {%- endif %}
 {%- endmacro -%}
-
 
 {% macro clustered_cols(label, required=false) %}
   {{ return(adapter.dispatch('clustered_cols', 'dbt')(label, required)) }}
@@ -160,7 +150,6 @@
   {%- endif %}
 {%- endmacro -%}
 
-
 {% macro fetch_tbl_properties(relation) -%}
   {% call statement('list_properties', fetch_result=True) -%}
     SHOW TBLPROPERTIES {{ relation }}
@@ -168,20 +157,19 @@
   {% do return(load_result('list_properties').table) %}
 {%- endmacro %}
 
-
 {% macro persist_constraints(relation, model) %}
   {{ return(adapter.dispatch('persist_constraints', 'dbt')(relation, model)) }}
 {% endmacro %}
 
-/* TODO: alter table {{ relation }} change column {{ quoted_name }} set not null; 
+/* TODO: alter table {{ relation }} change column {{ quoted_name }} set not null;
      is not supported in Fabric Runtime 1.2/Spark 3.4.1
     {% do alter_column_set_constraints(relation, model.columns) %}
 */
 {% macro fabricspark__persist_constraints(relation, model) %}
   {%- set contract_config = config.get('contract') -%}
-  {% if contract_config.enforced and config.get('file_format', 'delta') == 'delta' %}  
-    {% do alter_column_set_constraints(relation, model.columns) %}
-    {# {% do alter_table_add_constraints(relation, model.constraints) %} #}
+  {% if contract_config.enforced and config.get('file_format', 'delta') == 'delta' %}
+    {# {% do alter_column_set_constraints(relation, model.columns) %} #}
+    {% do alter_table_add_constraints(relation, model.constraints) %}
   {% endif %}
 {% endmacro %}
 
@@ -202,10 +190,11 @@
 
 
 {% macro alter_column_set_constraints(relation, column_dict) %}
-  {{ return(adapter.dispatch('alter_column_set_constraints', 'dbt')(relation, column_dict)) }}
+  return(adapter.dispatch('alter_column_set_constraints', 'dbt')(relation, column_dict))
 {% endmacro %}
 
 {% macro fabricspark__alter_column_set_constraints(relation, column_dict) %}
+
   {% for column_name in column_dict %}
     {% set constraints = column_dict[column_name]['constraints'] %}
     {% for constraint in constraints %}

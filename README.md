@@ -1,22 +1,15 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/dbt-labs/dbt/ec7dee39f793aa4f7dd3dae37282cc87664813e4/etc/dbt-logo-full.svg" alt="dbt logo" width="500"/>
-</p>
-<p align="center">
-  <a href="https://github.com/dbt-labs/dbt-spark/actions/workflows/main.yml">
-    <img src="https://github.com/dbt-labs/dbt-spark/actions/workflows/main.yml/badge.svg?event=push" alt="Unit Tests Badge"/>
+  <a href="https://github.com/microsoft/dbt-fabricspark/actions/workflows/integration.yml">
+    <img src="https://github.com/microsoft/dbt-fabricspark/actions/workflows/integration.yml/badge.svg?branch=main&event=pull_request" alt="Adapter Integration Tests"/>
   </a>
-  <a href="https://circleci.com/gh/dbt-labs/dbt-spark/?branch=main">
-    <img src="https://circleci.com/gh/dbt-labs/dbt-spark/tree/main.svg?style=shield" alt="Integration Tests Badge"/>
-  </a>
-</p>
+
 
 **[dbt](https://www.getdbt.com/)** enables data analysts and engineers to transform their data using the same practices that software engineers use to build applications.
 
 dbt is the T in ELT. Organize, cleanse, denormalize, filter, rename, and pre-aggregate the raw data in your warehouse so that it's ready for analysis.
 
-## dbt-spark
+## dbt-fabricspark
 
-The `dbt-fabric spark` package contains all of the code enabling dbt to work with Synapse Spark in Microsoft Fabric. For more information, consult [the docs](https://docs.getdbt.com/docs/profile-fabricspark).
+The `dbt-fabricspark` package contains all of the code enabling dbt to work with Synapse Spark in Microsoft Fabric. For more information, consult [the docs](https://docs.getdbt.com/docs/profile-fabricspark).
 
 ## Getting started
 

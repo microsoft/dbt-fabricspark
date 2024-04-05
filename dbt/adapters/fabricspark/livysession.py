@@ -160,7 +160,7 @@ class LivySession:
                 self.connect_url + "/sessions/" + self.session_id,
                 headers=get_headers(self.credential, False),
             ).json()
-            if "tridentSessionStateInfo" in res:
+            if res["state"] == "starting" or res["state"] == "not_started":                
                 # logger.debug("Polling Session creation status - ", self.connect_url + '/sessions/' + self.session_id )
                 time.sleep(DEFAULT_POLL_WAIT)
             elif res["livyInfo"]["currentState"] == "idle":

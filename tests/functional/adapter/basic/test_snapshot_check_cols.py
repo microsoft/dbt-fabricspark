@@ -30,9 +30,9 @@ class BaseSnapshotCheckCols:
     @pytest.fixture(scope="class")
     def snapshots(self):
         return {
-            "cc_all_snapshot.sql": cc_all_snapshot_sql.replace("target_database=database","target_database=\"test\"").replace("target_schema=schema","target_schema=\"test\""),
-            "cc_date_snapshot.sql": cc_date_snapshot_sql.replace("target_database=database","target_database=\"test\"").replace("target_schema=schema","target_schema=\"test\""),
-            "cc_name_snapshot.sql": cc_name_snapshot_sql.replace("target_database=database","target_database=\"test\"").replace("target_schema=schema","target_schema=\"test\""),
+            "cc_all_snapshot.sql": cc_all_snapshot_sql.replace("target_database=database","target_database=\"dbttest\"").replace("target_schema=schema","target_schema=\"dbttest\""),
+            "cc_date_snapshot.sql": cc_date_snapshot_sql.replace("target_database=database","target_database=\"dbttest\"").replace("target_schema=schema","target_schema=\"dbttest\""),
+            "cc_name_snapshot.sql": cc_name_snapshot_sql.replace("target_database=database","target_database=\"dbttest\"").replace("target_schema=schema","target_schema=\"dbttest\""),
         }
     
     @pytest.fixture(scope="class")

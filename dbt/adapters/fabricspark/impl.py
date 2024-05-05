@@ -435,6 +435,26 @@ class SparkAdapter(SQLAdapter):
         )
 
         return sql
+    
+    def run_sql_for_tests(self, sql, fetch, conn):
+        cursor = conn.handle.cursor()
+        try:
+            cursor.execute(sql)
+            if fetch == "one":
+                if hasattr(cursor, "fetchone"):
+                    return cursor.fetchone()
+                else:
+                    return cursor.fetchall()[0]
+            elif fetch == "all":
+                return cursor.fetchall()
+            else:
+                return
+        except BaseException as e:
+            print(sql)
+            print(e)
+            raise
+        finally:
+            conn.transaction_open = False
 
     def standardize_grants_dict(self, grants_table: agate.Table) -> dict:
         grants_dict: Dict[str, List[str]] = {}

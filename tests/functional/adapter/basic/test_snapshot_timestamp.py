@@ -45,7 +45,7 @@ class BaseSnapshotTimestamp:
     @pytest.fixture(scope="class")
     def snapshots(self):
         return {
-            "ts_snapshot.sql": ts_snapshot_sql.replace("target_database=database","target_database=\"test\"").replace("target_schema=schema","target_schema=\"test\""),
+            "ts_snapshot.sql": ts_snapshot_sql.replace("target_database=database","target_database=\"dbttest\"").replace("target_schema=schema","target_schema=\"dbttest\""),
         }
 
     @pytest.fixture(scope="class")

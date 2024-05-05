@@ -6,8 +6,36 @@ from dbt.tests.util import (
     check_relation_types,
     check_relations_equal,
 )
+from dbt.tests.adapter.basic.files import (
+    seeds_base_csv,
+    base_view_sql,
+    base_table_sql,
+    base_materialized_var_sql,
+    schema_base_yml,
+)
 
 class BaseSimpleMaterializations:
+    
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {
+            "view_model.sql": base_view_sql,
+            "table_model.sql": base_table_sql,
+            "swappable.sql": base_materialized_var_sql,
+            "schema.yml": schema_base_yml,
+        }
+
+    @pytest.fixture(scope="class")
+    def seeds(self):
+        return {
+            "base.csv": seeds_base_csv,
+        }
+
+    @pytest.fixture(scope="class")
+    def project_config_update(self):
+        return {
+            "name": "base",
+        }
     
     @pytest.fixture(scope="class")
     def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):

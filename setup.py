@@ -69,11 +69,9 @@ setup(
     include_package_data=True,
     install_requires=[
         "dbt-core~={}".format(dbt_core_version),
-        "sqlparams>=3.0.0",
         "azure-identity>=1.13.0",
         "azure-core>=1.26.4",
-        "requests==2.31.0"
-        # "pyspark>=3.0.0,<4.0.0",
+        "azure-cli==2.60.0"
     ],
     zip_safe=False,
     classifiers=[

@@ -24,6 +24,7 @@ Create a profile like this one:
 ```yaml
 fabric-spark-test:
   target: fabricspark-dev
+  outputs:
     fabricspark-dev:
         authentication: CLI
         method: livy

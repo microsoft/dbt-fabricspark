@@ -11,7 +11,7 @@ class SparkCredentials(Credentials):
     database: Optional[str] = None
     lakehouse: str = None
     lakehouseid: str = None  # type: ignore    
-    endpoint: Optional[str] = "https://msitapi.fabric.microsoft.com/v1"
+    endpoint: Optional[str] = "https://api.fabric.microsoft.com/v1"
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
     tenant_id: Optional[str] = None

@@ -188,6 +188,8 @@ class SparkConnectionManager(SQLConnectionManager):
         else:
             raise exc  # type: ignore
 
+        if handle is None:
+            raise dbt.exceptions.FailedToConnectError("Failed to connect to Livy")
         connection.handle = handle
         connection.state = ConnectionState.OPEN
         return connection

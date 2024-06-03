@@ -127,7 +127,7 @@ class LivySession:
     def create_session(self, data) -> str:
         # Create sessions
         response = None
-        print("Creating Livy session")
+        print("Creating Livy session (this may take a few minutes)")
         try:
             response = requests.post(
                 self.connect_url + "/sessions",
@@ -156,7 +156,6 @@ class LivySession:
             raise Exception("Json decode error to get session_id") from json_err
 
         # Wait for started state
-        print("Created session, waiting for session start (this may take a few minutes)")
         while True:
             res = requests.get(
                 self.connect_url + "/sessions/" + self.session_id,
@@ -172,8 +171,7 @@ class LivySession:
             elif res["livyInfo"]["currentState"] == "dead":
                 print("ERROR, cannot create a livy session")
                 raise dbt.exceptions.FailedToConnectException("failed to connect")
-                return
-        print("Livy session started successfully")
+        print("Livy session created successfully")
         return self.session_id
 
     def delete_session(self) -> None:

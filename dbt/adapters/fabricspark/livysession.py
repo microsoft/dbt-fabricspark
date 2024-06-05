@@ -14,6 +14,7 @@ from dbt.utils import DECIMALS
 from azure.core.credentials import AccessToken
 from azure.identity import AzureCliCredential, ClientSecretCredential
 from dbt.adapters.fabricspark.fabric_spark_credentials import SparkCredentials
+from notebookutils import mssparkutils
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
 NUMBERS = DECIMALS + (int, float)
@@ -100,14 +101,6 @@ def get_synapse_spark_access_token(credentials: SparkCredentials) -> AccessToken
         The access token.
     """
     print("Getting token from Synapse Spark...")
-    print("Getting mssparkutils")
-    try:
-        import notebookutils
-        from notebookutils import mssparkutils
-    except ImportError as e:
-        print("Error importing mssparkutils: ", e)
-        raise e
-    print("Got mssparkutils")
     try:
         aad_token = mssparkutils.credentials.getToken(SYNAPSE_SPARK_CREDENTIAL_SCOPE)
     except Exception as e:

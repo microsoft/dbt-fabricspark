@@ -19,7 +19,7 @@ logger = AdapterLogger("Microsoft Fabric-Spark")
 NUMBERS = DECIMALS + (int, float)
 
 livysession_credentials: SparkCredentials
-
+SYNAPSE_SPARK_CREDENTIAL_SCOPE = "pbi"
 DEFAULT_POLL_WAIT = 45
 DEFAULT_POLL_STATEMENT_WAIT = 5
 AZURE_CREDENTIAL_SCOPE = "https://analysis.windows.net/powerbi/api/.default"
@@ -87,6 +87,41 @@ def get_sp_access_token(credentials: SparkCredentials) -> AccessToken:
     logger.info("SPN - Fetched Access Token")
     return accessToken
 
+def get_synapse_spark_access_token(credentials: SparkCredentials) -> AccessToken:
+    """
+    Get an Azure access token by using mspsarkutils
+    Parameters
+    -----------
+    credentials: FabricCredentials
+        Credentials.
+    Returns
+    -------
+    out : AccessToken
+        The access token.
+    """
+    print("Getting token from Synapse Spark...")
+    print("Getting mssparkutils")
+    try:
+        import notebookutils
+        from notebookutils import mssparkutils
+    except ImportError as e:
+        print("Error importing mssparkutils: ", e)
+        raise e
+    print("Got mssparkutils")
+    try:
+        aad_token = mssparkutils.credentials.getToken(SYNAPSE_SPARK_CREDENTIAL_SCOPE)
+    except Exception as e:
+        print("Error getting token: ", e)
+        raise e
+    print("Got token: ", aad_token)
+    expires_on = int(time.time() + 4500.0)
+    token = AccessToken(
+        token=aad_token,
+        expires_on=expires_on,
+    )
+    print("Got token: ", token.token)
+    return token
+
 
 def get_headers(credentials: SparkCredentials, tokenPrint: bool = False) -> dict[str, str]:
     global accessToken
@@ -94,6 +129,9 @@ def get_headers(credentials: SparkCredentials, tokenPrint: bool = False) -> dict
         if credentials.authentication and credentials.authentication.lower() == "cli":
             logger.debug("Using CLI auth")
             accessToken = get_cli_access_token(credentials)
+        elif credentials.authentication and credentials.authentication.lower() == "notebook":
+            logger.debug("Using Synapse Spark auth")
+            accessToken = get_synapse_spark_access_token(credentials)
         else:
             logger.debug("Using SPN auth")
             accessToken = get_sp_access_token(credentials)

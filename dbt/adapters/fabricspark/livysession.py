@@ -477,7 +477,7 @@ class LivySessionManager:
             __class__.livy_global_session.create_session(data)
             __class__.livy_global_session.is_new_session_required = False
             # create shortcuts
-            shortcut_client = ShortcutClient(credentials.token)
+            shortcut_client = ShortcutClient(accessToken.token, credentials.workspaceid, credentials.lakehouseid)
             shortcut_client.create_shortcuts(credentials.shortcuts_json_path, retry=credentials.retry_all)
         elif not __class__.livy_global_session.is_valid_session():
             __class__.livy_global_session.delete_session()

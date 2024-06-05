@@ -20,6 +20,7 @@ class SparkCredentials(Credentials):
     connect_timeout: int = 10
     livy_session_parameters: Dict[str, Any] = field(default_factory=dict)
     retry_all: bool = False
+    shortcuts_json_path: Optional[str] = None
 
     @classmethod
     def __pre_deserialize__(cls, data: Any) -> Any:

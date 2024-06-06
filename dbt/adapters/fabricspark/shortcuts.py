@@ -166,8 +166,7 @@ class ShortcutClient:
         if self.check_exists(shortcut):
             logger.debug(f"Shortcut {shortcut} already exists, skipping...")
             return
-        shortcutConflictPolicy = "abort"
-        connect_url = f"https://api.fabric.microsoft.com/v1/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts?shortcutConflictPolicy={shortcutConflictPolicy}"
+        connect_url = f"https://api.fabric.microsoft.com/v1/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts"
         headers = {
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json"

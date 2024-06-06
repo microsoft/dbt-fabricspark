@@ -9,9 +9,6 @@ logger = AdapterLogger("Microsoft Fabric-Spark")
 
 class TargetName(Enum):
     onelake = "onelake"
-    amazonS3 = "amazonS3"
-    adlsGen2 = "adlsGen2"
-    dataverse = "dataverse"
 
 @dataclass
 class Shortcut:
@@ -21,7 +18,7 @@ class Shortcut:
     Attributes:
         path (str): The path where the shortcut will be created.
         name (str): The name of the shortcut.
-        target (TargetName): The target system where the shortcut will be created -- one of 'onelake', 'amazonS3', 'adlsGen2', or 'dataverse'.
+        target (TargetName): The target system where the shortcut will be created -- only 'onelake' is supported for now.
         source_path (Optional[str]): The source path for the shortcut ('onelake' target).
         source_workspace_id (Optional[str]): The source workspace ID for the shortcut ('onelake' target).
         source_item_id (Optional[str]): The source item ID for the shortcut ('onelake' target).
@@ -40,14 +37,6 @@ class Shortcut:
     source_path: Optional[str] = None
     source_workspace_id: Optional[str] = None
     source_item_id: Optional[str] = None
-    # amazonS3/adlsGen2 specific
-    location: Optional[str] = None
-    subpath: Optional[str] = None
-    connection_id: Optional[str] = None # also used for dataverse
-    # dataverse specific
-    delta_lake_folder: Optional[str] = None
-    environment_domain: Optional[str] = None
-    table_name: Optional[str] = None
 
     def __post_init__(self):
         if self.path is None:
@@ -64,22 +53,6 @@ class Shortcut:
                 raise ValueError(f"source_workspace_id is required for {self.target}")
             if self.source_item_id is None:
                 raise ValueError(f"source_item_id is required for {self.target}")
-        elif self.target == TargetName.amazonS3 or self.target == TargetName.adlsGen2:
-            if self.location is None:
-                raise ValueError(f"location is required for {self.target}")
-            if self.subpath is None:
-                raise ValueError(f"subpath is required for {self.target}")
-            if self.connection_id is None:
-                raise ValueError(f"connection_id is required for {self.target}")
-        elif self.target == TargetName.dataverse:
-            if self.connection_id is None:
-                raise ValueError(f"connection_id is required for {self.target}")
-            if self.delta_lake_folder is None:
-                raise ValueError(f"delta_lake_folder is required for {self.target}")
-            if self.environment_domain is None:
-                raise ValueError("environment_domain is required for {self.target}")
-            if self.table_name is None:
-                raise ValueError(f"table_name is required for {self.target}")
     
     def __str__(self):
         """
@@ -103,23 +76,6 @@ class Shortcut:
                     "workspaceId": self.source_workspace_id,
                     "itemId": self.source_item_id,
                     "path": self.source_path
-                }
-            }
-        elif self.target == TargetName.amazonS3 or self.target == TargetName.adlsGen2:
-            return {
-                self.target.value: {
-                    "location": self.location,
-                    "subpath": self.subpath,
-                    "connectionId": self.connection_id
-                }
-            }
-        elif self.target == TargetName.dataverse:
-            return {
-                self.target.value: {
-                    "connectionId": self.connection_id,
-                    "deltaLakeFolder": self.delta_lake_folder,
-                    "environmentDomain": self.environment_domain,
-                    "tableName": self.table_name
                 }
             }
 
@@ -152,11 +108,11 @@ class ShortcutClient:
             try:
                 shortcut_obj = Shortcut(**shortcut)
             except Exception as e:
-                print(f"Could not create shortcut object: {e}, skipping...")
+                raise ValueError(f"Could not parse shortcut: {shortcut} with error: {e}")
             shortcuts.append(shortcut_obj)
         return shortcuts
     
-    def create_shortcuts(self, json_path: str, retry: bool = True):
+    def create_shortcuts(self, json_path: str, max_retries: int = 3):
         """
         Creates shortcuts from a JSON file.
 
@@ -171,17 +127,34 @@ class ShortcutClient:
             raise ValueError(f"Could not read JSON file at {json_path}")
         for shortcut in self.parse_json(json_str):
             logger.debug(f"Creating shortcut: {shortcut}")
-            try:
-                self.create_shortcut(shortcut)
-            except Exception as e:
-                if retry:
+            while max_retries > 0:
+                try:
+                    self.create_shortcut(shortcut)
+                    break
+                except Exception as e:
                     logger.debug(f"Failed to create shortcut: {shortcut} with error: {e}. Retrying...")
-                    try:
-                        self.create_shortcut(shortcut)
-                    except Exception as e:
-                        raise "Could not create shortcut {shortcut} after retrying, ending run."
-                else:
-                    logger.debug(f"Failed to create shortcut: {shortcut}, skipping...")
+                    max_retries -= 1
+            if max_retries == 0:
+                raise f"Failed to create shortcut: {shortcut} after {max_retries} retries, failing..."
+            
+    def check_exists(self, shortcut: Shortcut):
+        """
+        Checks if a shortcut exists.
+
+        Args:
+            shortcut (Shortcut): The shortcut to check.
+        """
+        connect_url = f"https://api.fabric.microsoft.com/v1/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts/{shortcut.path}/{shortcut.shortcut_name}"
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json"
+        }
+        response = requests.get(connect_url, headers=headers)
+        # check if the error is ItemNotFound
+        if response.status_code == 404:
+            return False
+        response.raise_for_status()
+        return True
             
     def create_shortcut(self, shortcut: Shortcut):
         """
@@ -190,7 +163,11 @@ class ShortcutClient:
         Args:
             shortcut (Shortcut): The shortcut to create.
         """
-        connect_url = f"https://api.fabric.microsoft.com/v1/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts"
+        if self.check_exists(shortcut):
+            logger.debug(f"Shortcut {shortcut} already exists, skipping...")
+            return
+        shortcutConflictPolicy = "abort"
+        connect_url = f"https://api.fabric.microsoft.com/v1/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts?shortcutConflictPolicy={shortcutConflictPolicy}"
         headers = {
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json"

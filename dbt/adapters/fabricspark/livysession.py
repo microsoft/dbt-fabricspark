@@ -14,6 +14,7 @@ from dbt.utils import DECIMALS
 from azure.core.credentials import AccessToken
 from azure.identity import AzureCliCredential, ClientSecretCredential
 from dbt.adapters.fabricspark.fabric_spark_credentials import SparkCredentials
+from dbt.adapters.fabricspark.shortcuts import ShortcutClient
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
 NUMBERS = DECIMALS + (int, float)
@@ -127,6 +128,7 @@ class LivySession:
     def create_session(self, data) -> str:
         # Create sessions
         response = None
+        print("Creating Livy session (this may take a few minutes)")
         try:
             response = requests.post(
                 self.connect_url + "/sessions",
@@ -170,7 +172,7 @@ class LivySession:
             elif res["livyInfo"]["currentState"] == "dead":
                 print("ERROR, cannot create a livy session")
                 raise dbt.exceptions.FailedToConnectException("failed to connect")
-                return
+        print("Livy session created successfully")
         return self.session_id
 
     def delete_session(self) -> None:
@@ -196,7 +198,9 @@ class LivySession:
             headers=get_headers(self.credential, False),
         ).json()
 
-        return res["livyInfo"]["currentState"] == "idle"
+        # we can reuse the session so long as it is not dead, killed, or being shut down
+        invalid_states = ["dead", "shutting_down", "killed"]
+        return res["livyInfo"]["currentState"] not in invalid_states
 
 
 # cursor object - wrapped for livy API
@@ -472,6 +476,10 @@ class LivySessionManager:
             __class__.livy_global_session = LivySession(credentials)
             __class__.livy_global_session.create_session(data)
             __class__.livy_global_session.is_new_session_required = False
+            # create shortcuts, if there are any
+            if credentials.shortcuts_json_path:
+                shortcut_client = ShortcutClient(accessToken.token, credentials.workspaceid, credentials.lakehouseid)
+                shortcut_client.create_shortcuts(credentials.shortcuts_json_path)
         elif not __class__.livy_global_session.is_valid_session():
             __class__.livy_global_session.delete_session()
             __class__.livy_global_session.create_session(data)

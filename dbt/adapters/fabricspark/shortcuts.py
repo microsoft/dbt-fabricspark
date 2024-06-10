@@ -169,9 +169,10 @@ class ShortcutClient:
         Deletes a shortcut.
 
         Args:
-            shortcut (Shortcut): The shortcut to delete.
+            shortcut_path (str): The path where the shortcut is located.
+            shortcut_name (str): The name of the shortcut.
         """
-        connect_url = f"https://api.fabric.microsoft.com/v1/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts/{shortcut.path}/{shortcut.shortcut_name}"
+        connect_url = f"https://api.fabric.microsoft.com/v1/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts/{shortcut_path}/{shortcut_name}"
         headers = {
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json"

@@ -2,6 +2,7 @@ import unittest
 from unittest import mock
 
 from dbt.adapters.fabricspark.shortcuts import Shortcut, TargetName, ShortcutClient
+
 class TestShorcutClient(unittest.TestCase):
     def test_create_shortcut_does_not_exist(self):
         # if check_exists false, create_shortcut succeeds
@@ -190,3 +191,4 @@ class TestShorcutClient(unittest.TestCase):
             client.delete_shortcut("path", "name")
             mock_delete.assert_called_once()
             self.assertEqual(mock_delete.call_args[0][0], "https://api.fabric.microsoft.com/v1/workspaces/workspace_id/items/item_id/shortcuts/path/name")
+            

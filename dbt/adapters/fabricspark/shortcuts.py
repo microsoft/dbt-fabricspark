@@ -153,8 +153,31 @@ class ShortcutClient:
         # check if the error is ItemNotFound
         if response.status_code == 404:
             return False
-        response.raise_for_status()
+        response.raise_for_status() # raise an exception if there are any other errors
+        # else, check that the target body of the existing shortcut matches the target body of the shortcut they want to create
+        response_json = response.json()
+        response_target = response_json["target"]
+        target_body = shortcut.get_target_body()
+        if response_target != target_body:
+            # if the response target does not match the target body, delete the existing shortcut, then return False so we can create the new shortcut
+            self.delete_shortcut(response_json["path"], response_json["name"])
+            return False
         return True
+    
+    def delete_shortcut(self, shortcut_path: str, shortcut_name: str):
+        """
+        Deletes a shortcut.
+
+        Args:
+            shortcut (Shortcut): The shortcut to delete.
+        """
+        connect_url = f"https://api.fabric.microsoft.com/v1/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts/{shortcut.path}/{shortcut.shortcut_name}"
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json"
+        }
+        response = requests.delete(connect_url, headers=headers)
+        response.raise_for_status()
             
     def create_shortcut(self, shortcut: Shortcut):
         """

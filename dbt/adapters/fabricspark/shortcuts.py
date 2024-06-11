@@ -160,6 +160,7 @@ class ShortcutClient:
         target_body = shortcut.get_target_body()
         if response_target != target_body:
             # if the response target does not match the target body, delete the existing shortcut, then return False so we can create the new shortcut
+            logger.debug(f"Shortcut {shortcut} already exists with different source path, workspace ID, and/or item ID. Deleting exisiting shortcut and recreating based on JSON.")
             self.delete_shortcut(response_json["path"], response_json["name"])
             return False
         return True
@@ -177,6 +178,7 @@ class ShortcutClient:
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json"
         }
+        logger.debug(f"Deleting shortcut {shortcut_name} at {shortcut_path} from workspace {self.workspace_id} and item {self.item_id}")
         response = requests.delete(connect_url, headers=headers)
         response.raise_for_status()
             

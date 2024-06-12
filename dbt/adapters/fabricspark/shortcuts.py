@@ -64,7 +64,7 @@ class Shortcut:
         """
         Returns the connect URL for the shortcut.
         """
-        return f"https://api.fabric.microsoft.com/v1/workspaces/{self.source_workspace_id}/items/{self.source_item_id}/shortcuts"
+        return f"https://api.fabric.microsoft.com/v1/workspaces/{self.source_workspace_id}/items/{self.source_item_id}/shortcuts/{self.source_path}/{self.shortcut_name}"
     
     def get_target_body(self):
         """
@@ -144,12 +144,11 @@ class ShortcutClient:
         Args:
             shortcut (Shortcut): The shortcut to check.
         """
-        connect_url = f"https://api.fabric.microsoft.com/v1/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts/{shortcut.path}/{shortcut.shortcut_name}"
         headers = {
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json"
         }
-        response = requests.get(connect_url, headers=headers)
+        response = requests.get(shortcut.connect_url(), headers=headers)
         # check if the error is ItemNotFound
         if response.status_code == 404:
             return False

@@ -64,7 +64,7 @@ class Shortcut:
         """
         Returns the connect URL for the shortcut.
         """
-        return f"https://api.fabric.microsoft.com/v1/workspaces/{self.source_workspace_id}/items/{self.source_item_id}/shortcuts"
+        return f"https://api.fabric.microsoft.com/v1/workspaces/{self.source_workspace_id}/items/{self.source_item_id}/shortcuts/{self.source_path}/{self.shortcut_name}"
     
     def get_target_body(self):
         """
@@ -144,17 +144,42 @@ class ShortcutClient:
         Args:
             shortcut (Shortcut): The shortcut to check.
         """
-        connect_url = f"https://api.fabric.microsoft.com/v1/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts/{shortcut.path}/{shortcut.shortcut_name}"
         headers = {
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json"
         }
-        response = requests.get(connect_url, headers=headers)
+        response = requests.get(shortcut.connect_url(), headers=headers)
         # check if the error is ItemNotFound
         if response.status_code == 404:
             return False
-        response.raise_for_status()
+        response.raise_for_status() # raise an exception if there are any other errors
+        # else, check that the target body of the existing shortcut matches the target body of the shortcut they want to create
+        response_json = response.json()
+        response_target = response_json["target"]
+        target_body = shortcut.get_target_body()
+        if response_target != target_body:
+            # if the response target does not match the target body, delete the existing shortcut, then return False so we can create the new shortcut
+            logger.debug(f"Shortcut {shortcut} already exists with different source path, workspace ID, and/or item ID. Deleting exisiting shortcut and recreating based on JSON.")
+            self.delete_shortcut(response_json["path"], response_json["name"])
+            return False
         return True
+    
+    def delete_shortcut(self, shortcut_path: str, shortcut_name: str):
+        """
+        Deletes a shortcut.
+
+        Args:
+            shortcut_path (str): The path where the shortcut is located.
+            shortcut_name (str): The name of the shortcut.
+        """
+        connect_url = f"https://api.fabric.microsoft.com/v1/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts/{shortcut_path}/{shortcut_name}"
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json"
+        }
+        logger.debug(f"Deleting shortcut {shortcut_name} at {shortcut_path} from workspace {self.workspace_id} and item {self.item_id}")
+        response = requests.delete(connect_url, headers=headers)
+        response.raise_for_status()
             
     def create_shortcut(self, shortcut: Shortcut):
         """

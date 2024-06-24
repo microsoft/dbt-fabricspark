@@ -1,25 +1,29 @@
 import re
 from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Union, Tuple, Callable, Set
+from typing import Any, Dict, Iterable, List, Optional, Union, Tuple, Callable, Set, FrozenSet
+
 from dbt.adapters.base.relation import InformationSchema
+from dbt.adapters.contracts.connection import AdapterResponse
+from dbt.adapters.events.logging import AdapterLogger
+from dbt_common.exceptions import DbtRuntimeError, CompilationError
+from dbt_common.utils import AttrDict, executor
+import agate
+
 from dbt.contracts.graph.manifest import Manifest
 from typing_extensions import TypeAlias
-import agate
-import dbt
-import dbt.exceptions
+
 from dbt.adapters.base import AdapterConfig
 from dbt.adapters.base.impl import catch_as_completed, ConstraintSupport
 from dbt.adapters.sql import SQLAdapter
 from dbt.adapters.fabricspark import SparkConnectionManager
 from dbt.adapters.fabricspark import SparkRelation
 from dbt.adapters.fabricspark import SparkColumn
+
 from dbt.adapters.base import BaseRelation
-from dbt.clients.agate_helper import DEFAULT_TYPE_TESTER
-from dbt.contracts.graph.nodes import ConstraintType
-from dbt.contracts.relation import RelationType
-from dbt.events import AdapterLogger
-from dbt.utils import executor, AttrDict
+from dbt.adapters.contracts.relation import RelationType, RelationConfig
+from dbt_common.clients.agate_helper import DEFAULT_TYPE_TESTER
+from dbt_common.contracts.constraints import ConstraintType
 
 logger = AdapterLogger("fabricspark")
 
@@ -134,7 +138,7 @@ class SparkAdapter(SQLAdapter):
         try:
             _schema, name, _, information = row
         except ValueError:
-            raise dbt.exceptions.DbtRuntimeError(
+            raise DbtRuntimeError(
                 f'Invalid value from "show tables extended ...", got {len(row)} values, expected 4'
             )
 
@@ -145,7 +149,7 @@ class SparkAdapter(SQLAdapter):
         try:
             _schema, name, _ = row
         except ValueError:
-            raise dbt.exceptions.DbtRuntimeError(
+            raise DbtRuntimeError(
                 f'Invalid value from "show tables ...", got {len(row)} values, expected 3'
             )
 
@@ -154,7 +158,7 @@ class SparkAdapter(SQLAdapter):
             table_results = self.execute_macro(
                 DESCRIBE_TABLE_EXTENDED_MACRO_NAME, kwargs={"table_name": table_name}
             )
-        except dbt.exceptions.DbtRuntimeError as e:
+        except DbtRuntimeError as e:
             logger.debug(f"Error while retrieving information about {table_name}: {e.msg}")
             table_results = AttrDict()
 
@@ -209,7 +213,7 @@ class SparkAdapter(SQLAdapter):
                 row_list=show_table_extended_rows,
                 relation_info_func=self._get_relation_information,
             )
-        except dbt.exceptions.DbtRuntimeError as e:
+        except DbtRuntimeError as e:
             errmsg = getattr(e, "msg", "")
             if f"Database '{schema_relation}' not found" in errmsg:
                 return []
@@ -226,7 +230,7 @@ class SparkAdapter(SQLAdapter):
                         row_list=show_table_rows,
                         relation_info_func=self._get_relation_information_using_describe,
                     )
-                except dbt.exceptions.DbtRuntimeError as e:
+                except DbtRuntimeError as e:
                     description = "Error while retrieving information about"
                     logger.debug(f"{description} {schema_relation}: {e.msg}")
                     return []
@@ -288,7 +292,7 @@ class SparkAdapter(SQLAdapter):
                 GET_COLUMNS_IN_RELATION_RAW_MACRO_NAME, kwargs={"relation": relation}
             )
             columns = self.parse_describe_extended(relation, rows)
-        except dbt.exceptions.DbtRuntimeError as e:
+        except DbtRuntimeError as e:
             # spark would throw error when table doesn't exist, where other
             # CDW would just return and empty list, normalizing the behavior here
             errmsg = getattr(e, "msg", "")
@@ -337,7 +341,7 @@ class SparkAdapter(SQLAdapter):
             raw_rows = self.execute_macro(
                 DESCRIBE_TABLE_EXTENDED_MACRO_NAME, kwargs={"table_name": table_name}
             )
-        except dbt.exceptions.DbtRuntimeError as e:
+        except DbtRuntimeError as e:
             logger.debug(f"Error while retrieving information about {table_name}: {e.msg}")
             raise e
 
@@ -354,11 +358,13 @@ class SparkAdapter(SQLAdapter):
             yield as_dict
 
     def get_catalog(
-        self, manifest: Manifest, selected_nodes: Optional[Set] = None
+        self,
+        relation_configs: Iterable[RelationConfig],
+        used_schemas: FrozenSet[Tuple[str, str]],
     ) -> Tuple[agate.Table, List[Exception]]:
-        schema_map = self._get_catalog_schemas(manifest)
+        schema_map = self._get_catalog_schemas(relation_configs)
         if len(schema_map) > 1:
-            raise dbt.exceptions.CompilationError(
+            raise CompilationError(
                 f"Expected only one database in get_catalog, found " f"{list(schema_map)}"
             )
 
@@ -386,7 +392,7 @@ class SparkAdapter(SQLAdapter):
         manifest: Manifest,
     ) -> agate.Table:
         if len(schemas) != 1:
-            raise dbt.exceptions.CompilationError(
+            raise CompilationError(
                 f"Expected only one schema in spark _get_one_catalog, found " f"{schemas}"
             )
 

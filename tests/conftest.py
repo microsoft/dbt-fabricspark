@@ -39,6 +39,7 @@ def _all_profiles_base():
         "lakehouseid":os.getenv("DBT_FABRIC_SPARK_LAKEHOUSE_ID"),
         "lakehouse":os.getenv("DBT_FABRIC_SPARK_LAKEHOUSE_NAME"),
         "schema":os.getenv("DBT_FABRIC_SPARK_LAKEHOUSE_NAME"),
+        "create_shortcuts":False,
         "retry_all": True,
     }
 

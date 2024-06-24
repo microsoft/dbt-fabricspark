@@ -8,13 +8,14 @@ import re
 import datetime as dt
 from types import TracebackType
 from typing import Any
-import dbt.exceptions
-from dbt.events import AdapterLogger
+from dbt_common.exceptions import DbtDatabaseError
+from dbt.adapters.exceptions import FailedToConnectError
+from dbt.adapters.events.logging import AdapterLogger
 from dbt.utils import DECIMALS
 from azure.core.credentials import AccessToken
 from azure.identity import AzureCliCredential, ClientSecretCredential
 from dbt.adapters.fabricspark.fabric_spark_credentials import SparkCredentials
-from dbt.adapters.fabricspark.shortcuts import ShortcutClient
+from dbt.adapters.fabricspark.shortcut_client import ShortcutClient
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
 NUMBERS = DECIMALS + (int, float)
@@ -171,7 +172,7 @@ class LivySession:
                 break
             elif res["livyInfo"]["currentState"] == "dead":
                 print("ERROR, cannot create a livy session")
-                raise dbt.exceptions.FailedToConnectException("failed to connect")
+                raise FailedToConnectError("failed to connect")
         print("Livy session created successfully")
         return self.session_id
 
@@ -365,7 +366,7 @@ class LivyCursor:
             self._rows = None
             self._schema = None
 
-            raise dbt.exceptions.DbtDatabaseError(
+            raise DbtDatabaseError(
                 "Error while executing query: " + res["output"]["evalue"]
             )
 
@@ -473,13 +474,15 @@ class LivySessionManager:
         # the following opens an spark / sql session
         data = {"kind": "sql", "conf": credentials.livy_session_parameters}  # 'spark'
         if __class__.livy_global_session is None:
+            # create shortcuts, if there are any
+            if credentials.create_shortcuts:
+                shortcut_client = ShortcutClient(accessToken.token, credentials.workspaceid, credentials.lakehouseid, credentials.endpoint, credentials.shortcuts)
+                shortcut_client.create_shortcuts(credentials.shortcuts_json_path)
+
             __class__.livy_global_session = LivySession(credentials)
             __class__.livy_global_session.create_session(data)
             __class__.livy_global_session.is_new_session_required = False
-            # create shortcuts, if there are any
-            if credentials.shortcuts_json_path:
-                shortcut_client = ShortcutClient(accessToken.token, credentials.workspaceid, credentials.lakehouseid)
-                shortcut_client.create_shortcuts(credentials.shortcuts_json_path)
+            
         elif not __class__.livy_global_session.is_valid_session():
             __class__.livy_global_session.delete_session()
             __class__.livy_global_session.create_session(data)

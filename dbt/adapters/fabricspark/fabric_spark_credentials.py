@@ -1,7 +1,12 @@
-from dbt.adapters.base import Credentials
+from dbt.adapters.contracts.connection import (
+    Credentials,
+)
+import json
 from typing import Any, Dict, Optional, Tuple
 from dataclasses import dataclass, field
-import dbt.exceptions
+from dbt_common.exceptions import DbtRuntimeError
+from dbt.adapters.fabricspark.shortcut import Shortcut, TargetName
+
 
 @dataclass
 class SparkCredentials(Credentials):
@@ -20,7 +25,8 @@ class SparkCredentials(Credentials):
     connect_timeout: int = 10
     livy_session_parameters: Dict[str, Any] = field(default_factory=dict)
     retry_all: bool = False
-    shortcuts_json_path: Optional[str] = None
+    create_shortcuts: Optional[bool] = False
+    shortcuts: Optional[list] = None
 
     @classmethod
     def __pre_deserialize__(cls, data: Any) -> Any:
@@ -33,19 +39,43 @@ class SparkCredentials(Credentials):
     def lakehouse_endpoint(self) -> str:
         # TODO: Construct Endpoint of the lakehouse from the 
         return f'{self.endpoint}/workspaces/{self.workspaceid}/lakehouses/{self.lakehouseid}/livyapi/versions/2023-12-01'
+    
+    @property
+    def shortcuts(self) -> list:
+        if self.create_shortcuts:
+            self.shortcuts = []
+
+            json_str = None
+            with open("shortcuts.json", "r") as f:
+                json_str = f.read()
+                if json_str is None:
+                    raise ValueError(f"Could not read/find JSON file.")
+                
+                for shortcut in json.loads(json_str):
+                    # convert string target to TargetName enum
+                    shortcut["target"] = TargetName(shortcut["target"])
+                    shortcut["endpoint"] = self.endpoint
+                    try:
+                        shortcut_obj = Shortcut(**shortcut)
+                    except Exception as e:
+                        raise ValueError(f"Could not parse shortcut: {shortcut} with error: {e}")
+                    self.shortcuts.append(shortcut_obj)
+        return self.shortcuts
+
+
 
     def __post_init__(self) -> None:        
         
         if self.method is None:
-            raise dbt.exceptions.DbtRuntimeError("Must specify `method` in profile")
+            raise DbtRuntimeError("Must specify `method` in profile")
         if self.workspaceid is None:
-            raise dbt.exceptions.DbtRuntimeError("Must specify `workspace guid` in profile")
+            raise DbtRuntimeError("Must specify `workspace guid` in profile")
         if self.lakehouseid is None:
-            raise dbt.exceptions.DbtRuntimeError("Must specify `lakehouse guid` in profile")
+            raise DbtRuntimeError("Must specify `lakehouse guid` in profile")
         if self.schema is None:
-            raise dbt.exceptions.DbtRuntimeError("Must specify `schema` in profile")
+            raise DbtRuntimeError("Must specify `schema` in profile")
         if self.database is not None:
-            raise dbt.exceptions.DbtRuntimeError("database property is not supported by adapter. Set database as none and use lakehouse instead.")
+            raise DbtRuntimeError("database property is not supported by adapter. Set database as none and use lakehouse instead.")
         
 
         # spark classifies database and schema as the same thing

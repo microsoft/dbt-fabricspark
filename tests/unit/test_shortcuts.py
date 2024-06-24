@@ -1,7 +1,6 @@
 import unittest
 from unittest import mock
-
-from dbt.adapters.fabricspark.shortcuts import Shortcut, TargetName, ShortcutClient
+from dbt.adapters.fabricspark.shortcut_client import Shortcut, TargetName, ShortcutClient
 
 class TestShorcutClient(unittest.TestCase):
     def test_create_shortcut_does_not_exist_succeeds(self):

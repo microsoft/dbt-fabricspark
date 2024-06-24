@@ -1,0 +1,18 @@
+"shortcut_paths" : [
+	{
+		"path": "Tables/",
+		"shortcut_table_name":"test_shortcut",
+		"target": "onelake",
+		"source_workspaceid": "asdfsdf",
+		"source_itemid": "asdfsadf",
+		"source_data_path":"asdfsdfs"
+	},
+	{
+		"path": "Tables/",
+		"shortcut_table_name":"",
+		"target": "onelake",
+		"source_workspaceid": "",
+		"source_itemid": "",
+		"source_data_path":""
+	}
+]

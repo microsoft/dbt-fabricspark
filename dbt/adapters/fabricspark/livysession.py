@@ -8,9 +8,10 @@ import re
 import datetime as dt
 from types import TracebackType
 from typing import Any
-import dbt.exceptions
-from dbt.events import AdapterLogger
-from dbt.utils import DECIMALS
+from dbt.adapters.exceptions import FailedToConnectError
+from dbt_common.exceptions import DbtDatabaseError
+from dbt.adapters.events.logging import AdapterLogger
+from dbt_common.utils.encoding import DECIMALS
 from azure.core.credentials import AccessToken
 from azure.identity import AzureCliCredential, ClientSecretCredential
 from dbt.adapters.fabricspark.fabric_spark_credentials import SparkCredentials
@@ -160,7 +161,7 @@ class LivySession:
                 self.connect_url + "/sessions/" + self.session_id,
                 headers=get_headers(self.credential, False),
             ).json()
-            if res["state"] == "starting" or res["state"] == "not_started":                
+            if res["state"] == "starting" or res["state"] == "not_started":
                 # logger.debug("Polling Session creation status - ", self.connect_url + '/sessions/' + self.session_id )
                 time.sleep(DEFAULT_POLL_WAIT)
             elif res["livyInfo"]["currentState"] == "idle":
@@ -169,7 +170,7 @@ class LivySession:
                 break
             elif res["livyInfo"]["currentState"] == "dead":
                 print("ERROR, cannot create a livy session")
-                raise dbt.exceptions.FailedToConnectException("failed to connect")
+                raise FailedToConnectError("failed to connect")
                 return
         return self.session_id
 
@@ -361,9 +362,7 @@ class LivyCursor:
             self._rows = None
             self._schema = None
 
-            raise dbt.exceptions.DbtDatabaseError(
-                "Error while executing query: " + res["output"]["evalue"]
-            )
+            raise DbtDatabaseError("Error while executing query: " + res["output"]["evalue"])
 
     def fetchall(self):
         """

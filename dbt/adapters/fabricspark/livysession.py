@@ -15,6 +15,7 @@ from dbt_common.utils.encoding import DECIMALS
 from azure.core.credentials import AccessToken
 from azure.identity import AzureCliCredential, ClientSecretCredential
 from dbt.adapters.fabricspark.fabric_spark_credentials import SparkCredentials
+from dbt.adapters.fabricspark.shortcut_client import ShortcutClient
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
 NUMBERS = DECIMALS + (int, float)
@@ -471,6 +472,18 @@ class LivySessionManager:
             __class__.livy_global_session = LivySession(credentials)
             __class__.livy_global_session.create_session(data)
             __class__.livy_global_session.is_new_session_required = False
+
+            # Access Token is generated as part of livy session, so creation of shortcuts follow livy session creation.
+            if credentials.create_shortcuts:
+                shortcut_client = ShortcutClient(
+                    accessToken.token,
+                    credentials.workspaceid,
+                    credentials.lakehouseid,
+                    credentials.endpoint,
+                    credentials.shortcuts,
+                )
+                shortcut_client.create_shortcuts(credentials.shortcuts_json_path)
+
         elif not __class__.livy_global_session.is_valid_session():
             __class__.livy_global_session.delete_session()
             __class__.livy_global_session.create_session(data)

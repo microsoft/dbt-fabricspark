@@ -1,9 +1,12 @@
 from dbt.adapters.contracts.connection import Credentials
+from dbt.adapters.events.logging import AdapterLogger
 from typing import Any, Dict, Optional, Tuple
 from dataclasses import dataclass, field
 from dbt_common.exceptions import DbtRuntimeError
 from dbt.adapters.fabricspark.shortcut import Shortcut, TargetName
 import json
+
+logger = AdapterLogger("fabricspark")
 
 
 @dataclass
@@ -42,6 +45,9 @@ class SparkCredentials(Credentials):
         json_str = None
         with open("shortcuts.json", "r") as f:
             json_str = f.read()
+
+        print(json_str)
+        logger.info("Shortcuts information is: ", json_str)
 
         if json_str is None:
             raise ValueError("Could not read/find JSON file.")

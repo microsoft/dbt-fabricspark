@@ -15,8 +15,12 @@ from dbt.tests.adapter.basic.files import (
     schema_base_yml,
 )
 
-class BaseEphemeral:
+shortcuts = """
+{"shortcuts":[{"path":"Tables/","shortcut_table_name":"test_shortcut","target":"onelake","source_workspaceid":"asdfsdf","source_itemid":"asdfsadf","source_data_path":"asdfsdfs"},{"path":"Tables/","shortcut_table_name":"","target":"onelake","source_workspaceid":"","source_itemid":"","source_data_path":""}]}
+"""
 
+
+class BaseEphemeral:
     @pytest.fixture(scope="class")
     def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
         profile = {
@@ -34,7 +38,7 @@ class BaseEphemeral:
         if profiles_config_update:
             profile.update(profiles_config_update)
         return profile
-    
+
     @pytest.fixture(scope="class")
     def project_config_update(self):
         return {"name": "ephemeral"}
@@ -50,6 +54,7 @@ class BaseEphemeral:
             "view_model.sql": ephemeral_view_sql,
             "table_model.sql": ephemeral_table_sql,
             "schema.yml": schema_base_yml,
+            "shortcuts.json": shortcuts,
         }
 
     def test_ephemeral(self, project):
@@ -82,6 +87,7 @@ class BaseEphemeral:
         manifest = get_manifest(project.project_root)
         assert len(manifest.nodes) == 4
         assert len(manifest.sources) == 1
+
 
 class TestEphemeral(BaseEphemeral):
     pass

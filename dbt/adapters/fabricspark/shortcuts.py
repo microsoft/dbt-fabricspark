@@ -60,11 +60,11 @@ class Shortcut:
         """
         return f"Shortcut: {self.shortcut_name} from {self.source_path} to {self.path}"
     
-    def connect_url(self):
+    def connect_url(self, endpoint: str = "https://api.fabric.microsoft.com/v1"):
         """
         Returns the connect URL for the shortcut.
         """
-        return f"https://api.fabric.microsoft.com/v1/workspaces/{self.source_workspace_id}/items/{self.source_item_id}/shortcuts/{self.source_path}/{self.shortcut_name}"
+        return f"{endpoint}/workspaces/{self.source_workspace_id}/items/{self.source_item_id}/shortcuts/{self.source_path}/{self.shortcut_name}"
     
     def get_target_body(self):
         """
@@ -81,7 +81,7 @@ class Shortcut:
 
 
 class ShortcutClient:
-    def __init__(self, token: str, workspace_id: str, item_id: str):
+    def __init__(self, token: str, workspace_id: str, item_id: str, endpoint: str = "https://api.fabric.microsoft.com/v1"):
         """
         Initializes a ShortcutClient object.
 
@@ -93,6 +93,7 @@ class ShortcutClient:
         self.token = token
         self.workspace_id = workspace_id
         self.item_id = item_id
+        self.endpoint = endpoint
 
     def parse_json(self, json_str: str):
         """
@@ -102,15 +103,19 @@ class ShortcutClient:
             json_str (str): The JSON string to parse.
         """
         shortcuts = []
-        for shortcut in json.loads(json_str):
-            # convert string target to TargetName enum
-            shortcut["target"] = TargetName(shortcut["target"])
-            try:
-                shortcut_obj = Shortcut(**shortcut)
-            except Exception as e:
-                raise ValueError(f"Could not parse shortcut: {shortcut} with error: {e}")
-            shortcuts.append(shortcut_obj)
-        return shortcuts
+        try:
+            parsed_json = json.loads(json_str)
+            for shortcut in parsed_json:
+                # convert string target to TargetName enum
+                shortcut["target"] = TargetName(shortcut["target"])
+                try:
+                    shortcut_obj = Shortcut(**shortcut)
+                except Exception as e:
+                    raise ValueError(f"Could not parse shortcut: {shortcut} with error: {e}")
+                shortcuts.append(shortcut_obj)
+            return shortcuts
+        except Exception as e:
+            raise ValueError(f"Could not parse JSON: {json_str} with error: {e}")
     
     def create_shortcuts(self, json_path: str, max_retries: int = 3):
         """
@@ -148,7 +153,7 @@ class ShortcutClient:
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json"
         }
-        response = requests.get(shortcut.connect_url(), headers=headers)
+        response = requests.get(shortcut.connect_url(self.endpoint), headers=headers)
         # check if the error is ItemNotFound
         if response.status_code == 404:
             return False
@@ -172,7 +177,7 @@ class ShortcutClient:
             shortcut_path (str): The path where the shortcut is located.
             shortcut_name (str): The name of the shortcut.
         """
-        connect_url = f"https://api.fabric.microsoft.com/v1/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts/{shortcut_path}/{shortcut_name}"
+        connect_url = f"{self.endpoint}/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts/{shortcut_path}/{shortcut_name}"
         headers = {
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json"
@@ -191,7 +196,7 @@ class ShortcutClient:
         if self.check_exists(shortcut):
             logger.debug(f"Shortcut {shortcut} already exists, skipping...")
             return
-        connect_url = f"https://api.fabric.microsoft.com/v1/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts"
+        connect_url = f"{self.endpoint}/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts"
         headers = {
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json"

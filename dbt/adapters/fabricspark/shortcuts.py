@@ -64,7 +64,7 @@ class Shortcut:
         """
         Returns the connect URL for the shortcut.
         """
-        return f"https://api.fabric.microsoft.com/v1/workspaces/{self.source_workspace_id}/items/{self.source_item_id}/shortcuts"
+        return f"https://dailyapi.fabric.microsoft.com/v1/workspaces/{self.source_workspace_id}/items/{self.source_item_id}/shortcuts"
     
     def get_target_body(self):
         """

@@ -476,9 +476,9 @@ class LivySessionManager:
         # the following opens an spark / sql session
         data = {"kind": "sql", "conf": credentials.livy_session_parameters}  # 'spark'
         if __class__.livy_global_session is None:
-            # __class__.livy_global_session = LivySession(credentials)
-            # __class__.livy_global_session.create_session(data)
-            # __class__.livy_global_session.is_new_session_required = False
+            __class__.livy_global_session = LivySession(credentials)
+            __class__.livy_global_session.create_session(data)
+            __class__.livy_global_session.is_new_session_required = False
             # create shortcuts, if there are any
             if credentials.shortcuts_json_path:
                 try:

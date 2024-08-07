@@ -189,7 +189,7 @@ class SparkConnectionManager(SQLConnectionManager):
             raise exc  # type: ignore
 
         if handle is None:
-            raise dbt.exceptions.FailedToConnectError("Failed to connect to Livy")
+            raise dbt.exceptions.FailedToConnectError("Failed to connect to Livy session. Common reasons for errors: \n1. Invalid/expired credentials (if using CLI authentication, re-run `az login` in your terminal) \n2. Invalid endpoint \n3. Invalid workspaceid or lakehouseid (do you have the correct permissions?) \n4. Invalid or non-existent shortcuts json path, or improperly formatted shortcuts")
         connection.handle = handle
         connection.state = ConnectionState.OPEN
         return connection

@@ -193,6 +193,9 @@ class LivySession:
             logger.error(f"Unable to close the livy session {self.session_id}, error: {ex}")
 
     def is_valid_session(self) -> bool:
+        if (self.session_id is None):
+            logger.error("Session ID is None")
+            return False
         res = requests.get(
             self.connect_url + "/sessions/" + self.session_id,
             headers=get_headers(self.credential, False),
@@ -473,9 +476,9 @@ class LivySessionManager:
         # the following opens an spark / sql session
         data = {"kind": "sql", "conf": credentials.livy_session_parameters}  # 'spark'
         if __class__.livy_global_session is None:
-            __class__.livy_global_session = LivySession(credentials)
-            __class__.livy_global_session.create_session(data)
-            __class__.livy_global_session.is_new_session_required = False
+            # __class__.livy_global_session = LivySession(credentials)
+            # __class__.livy_global_session.create_session(data)
+            # __class__.livy_global_session.is_new_session_required = False
             # create shortcuts, if there are any
             if credentials.shortcuts_json_path:
                 try:
@@ -497,9 +500,11 @@ class LivySessionManager:
 
     @staticmethod
     def disconnect() -> None:
-        if __class__.livy_global_session.is_valid_session():
+        if __class__.livy_global_session is not None and __class__.livy_global_session.is_valid_session():
             __class__.livy_global_session.delete_session()
             __class__.livy_global_session.is_new_session_required = True
+        else:
+            logger.debug("No session to disconnect")
 
 
 class LivySessionConnectionWrapper(object):

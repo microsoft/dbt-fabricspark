@@ -95,6 +95,32 @@ def get_headers(credentials: SparkCredentials, tokenPrint: bool = False) -> dict
         if credentials.authentication and credentials.authentication.lower() == "cli":
             logger.debug("Using CLI auth")
             accessToken = get_cli_access_token(credentials)
+        elif credentials.authentication and credentials.authentication.lower() == "notebook":
+            try:
+                import notebookutils
+            except Exception as e:
+                print("Error importing notebookutils: ", e)
+                try: 
+                    aad_token = notebookutils.credentials.getToken('pbi')
+                    expires_on = int(time.time() + 4500.0)
+                    accessToken = AccessToken(
+                        token=aad_token,
+                        expires_on=expires_on,
+                    )
+                except Exception as e:
+                    print("Error getting token without import: ", e)
+                    raise e
+            logger.debug("Using Notebook auth")
+            try:
+                aad_token = notebookutils.credentials.getToken('pbi')
+                expires_on = int(time.time() + 4500.0)
+                accessToken = AccessToken(
+                    token=aad_token,
+                    expires_on=expires_on,
+                )
+            except Exception as e:
+                print("Error getting token: ", e)
+                raise e
         else:
             logger.debug("Using SPN auth")
             accessToken = get_sp_access_token(credentials)
@@ -476,10 +502,8 @@ class LivySessionManager:
             __class__.livy_global_session = LivySession(credentials)
             __class__.livy_global_session.create_session(data)
             __class__.livy_global_session.is_new_session_required = False
-            # create shortcuts, if there are any
-            if credentials.shortcuts_json_path:
-                shortcut_client = ShortcutClient(accessToken.token, credentials.workspaceid, credentials.lakehouseid)
-                shortcut_client.create_shortcuts(credentials.shortcuts_json_path)
+            shortcut_client = ShortcutClient(accessToken.token, credentials.workspaceid, credentials.lakehouseid)
+            shortcut_client.create_shortcuts("shortcuts.json")
         elif not __class__.livy_global_session.is_valid_session():
             __class__.livy_global_session.delete_session()
             __class__.livy_global_session.create_session(data)

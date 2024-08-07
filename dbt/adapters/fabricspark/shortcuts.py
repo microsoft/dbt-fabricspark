@@ -81,7 +81,7 @@ class Shortcut:
 
 
 class ShortcutClient:
-    def __init__(self, token: str, workspace_id: str, item_id: str):
+    def __init__(self, token: str, workspace_id: str, item_id: str, api_endpoint: str):
         """
         Initializes a ShortcutClient object.
 
@@ -93,6 +93,7 @@ class ShortcutClient:
         self.token = token
         self.workspace_id = workspace_id
         self.item_id = item_id
+        self.api_endpoint = api_endpoint
 
     def parse_json(self, json_str: str):
         """
@@ -144,7 +145,7 @@ class ShortcutClient:
         Args:
             shortcut (Shortcut): The shortcut to check.
         """
-        connect_url = f"https://api.fabric.microsoft.com/v1/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts/{shortcut.path}/{shortcut.shortcut_name}"
+        connect_url = f"{self.api_endpoint}/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts/{shortcut.path}/{shortcut.shortcut_name}"
         headers = {
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json"
@@ -166,7 +167,7 @@ class ShortcutClient:
         if self.check_exists(shortcut):
             logger.debug(f"Shortcut {shortcut} already exists, skipping...")
             return
-        connect_url = f"https://api.fabric.microsoft.com/v1/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts"
+        connect_url = f"{self.api_endpoint}/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts"
         headers = {
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json"

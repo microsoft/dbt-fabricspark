@@ -193,6 +193,9 @@ class LivySession:
             logger.error(f"Unable to close the livy session {self.session_id}, error: {ex}")
 
     def is_valid_session(self) -> bool:
+        if (self.session_id is None):
+            logger.error("Session ID is None")
+            return False
         res = requests.get(
             self.connect_url + "/sessions/" + self.session_id,
             headers=get_headers(self.credential, False),
@@ -478,8 +481,11 @@ class LivySessionManager:
             __class__.livy_global_session.is_new_session_required = False
             # create shortcuts, if there are any
             if credentials.shortcuts_json_path:
-                shortcut_client = ShortcutClient(accessToken.token, credentials.workspaceid, credentials.lakehouseid)
-                shortcut_client.create_shortcuts(credentials.shortcuts_json_path)
+                try:
+                    shortcut_client = ShortcutClient(accessToken.token, credentials.workspaceid, credentials.lakehouseid, credentials.endpoint)
+                    shortcut_client.create_shortcuts(credentials.shortcuts_json_path)
+                except Exception as ex:
+                    logger.error(f"Unable to create shortcuts: {ex}")
         elif not __class__.livy_global_session.is_valid_session():
             __class__.livy_global_session.delete_session()
             __class__.livy_global_session.create_session(data)
@@ -494,9 +500,11 @@ class LivySessionManager:
 
     @staticmethod
     def disconnect() -> None:
-        if __class__.livy_global_session.is_valid_session():
+        if __class__.livy_global_session is not None and __class__.livy_global_session.is_valid_session():
             __class__.livy_global_session.delete_session()
             __class__.livy_global_session.is_new_session_required = True
+        else:
+            logger.debug("No session to disconnect")
 
 
 class LivySessionConnectionWrapper(object):

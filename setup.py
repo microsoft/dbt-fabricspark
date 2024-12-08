@@ -34,7 +34,8 @@ def _get_plugin_version_dict():
     )
     _semver = r"""(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)"""
     _pre = r"""((?P<prekind>a|b|rc)(?P<pre>\d+))?"""
-    _version_pattern = rf"""version\s*=\s*["']{_semver}{_pre}["']"""
+    _build = r"""(\+build[0-9]+)?"""
+    _version_pattern = rf"""version\s*=\s*["']{_semver}{_pre}{_build}["']"""
     with open(_version_path) as f:
         match = re.search(_version_pattern, f.read().strip())
         if match is None:
@@ -42,19 +43,9 @@ def _get_plugin_version_dict():
         return match.groupdict()
 
 
-# require a compatible minor version (~=), prerelease if this is a prerelease
-def _get_dbt_core_version():
-    parts = _get_plugin_version_dict()
-    minor = "{major}.{minor}.0".format(**parts)
-    pre = parts["prekind"] + "1" if parts["prekind"] else ""
-    return f"{minor}{pre}"
-
-
 package_name = "dbt-fabricspark"
-package_version = "1.7.0rc1"
-dbt_core_version = _get_dbt_core_version()
-print(f"printing version --------- {dbt_core_version}")
-description = """The Apache Spark adapter plugin for dbt"""
+package_version = "1.8.0b1"
+description = """The Microsoft Fabric Spark adapter plugin for dbt"""
 
 setup(
     name=package_name,
@@ -68,10 +59,12 @@ setup(
     packages=find_namespace_packages(include=["dbt", "dbt.*"]),
     include_package_data=True,
     install_requires=[
-        "dbt-core~={}".format(dbt_core_version),
+        "dbt-common>=0.1.0a1,<2.0",
+        "dbt-adapters>=0.1.0a1,<2.0",
+        "dbt-core>=1.8.0a1",
         "azure-identity>=1.13.0",
         "azure-core>=1.26.4",
-        "azure-cli==2.60.0"
+        "azure-cli==2.60.0",
     ],
     zip_safe=False,
     classifiers=[

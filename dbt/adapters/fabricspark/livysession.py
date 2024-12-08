@@ -15,14 +15,14 @@ from dbt_common.utils.encoding import DECIMALS
 from azure.core.credentials import AccessToken
 from azure.identity import AzureCliCredential, ClientSecretCredential
 from dbt.adapters.fabricspark.fabric_spark_credentials import SparkCredentials
-from dbt.adapters.fabricspark.shortcut_client import ShortcutClient
+from dbt.adapters.fabricspark.shortcuts import ShortcutClient
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
 NUMBERS = DECIMALS + (int, float)
 
 livysession_credentials: SparkCredentials
 
-DEFAULT_POLL_WAIT = 45
+DEFAULT_POLL_WAIT = 10
 DEFAULT_POLL_STATEMENT_WAIT = 5
 AZURE_CREDENTIAL_SCOPE = "https://analysis.windows.net/powerbi/api/.default"
 accessToken: AccessToken = None
@@ -90,12 +90,37 @@ def get_sp_access_token(credentials: SparkCredentials) -> AccessToken:
     return accessToken
 
 
+def get_default_access_token(credentials: SparkCredentials) -> AccessToken:
+    """
+    Get an Azure access token using the SP Default Credentials.
+
+    Parameters
+    ----------
+    credentials : FabricCredentials
+        Credentials.
+
+    Returns
+    -------
+    out : AccessToken
+        The access token.
+    """
+    expires_on = 1699999999
+
+    # Create an AccessToken instance
+    accessToken = AccessToken(token=credentials.accessToken, expires_on=expires_on)
+    logger.info("SPN - Default- Fetched Access Token")
+    return accessToken
+
+
 def get_headers(credentials: SparkCredentials, tokenPrint: bool = False) -> dict[str, str]:
     global accessToken
     if accessToken is None or is_token_refresh_necessary(accessToken.expires_on):
         if credentials.authentication and credentials.authentication.lower() == "cli":
             logger.debug("Using CLI auth")
             accessToken = get_cli_access_token(credentials)
+        elif credentials.authentication and credentials.authentication.lower() == "int_tests":
+            logger.debug("Using int_tests auth")
+            accessToken = get_default_access_token(credentials)
         else:
             logger.debug("Using SPN auth")
             accessToken = get_sp_access_token(credentials)
@@ -129,6 +154,7 @@ class LivySession:
     def create_session(self, data) -> str:
         # Create sessions
         response = None
+        print("Creating Livy session (this may take a few minutes)")
         try:
             response = requests.post(
                 self.connect_url + "/sessions",
@@ -172,7 +198,7 @@ class LivySession:
             elif res["livyInfo"]["currentState"] == "dead":
                 print("ERROR, cannot create a livy session")
                 raise FailedToConnectError("failed to connect")
-                return
+        print("Livy session created successfully")
         return self.session_id
 
     def delete_session(self) -> None:
@@ -193,12 +219,17 @@ class LivySession:
             logger.error(f"Unable to close the livy session {self.session_id}, error: {ex}")
 
     def is_valid_session(self) -> bool:
+        if self.session_id is None:
+            logger.error("Session ID is None")
+            return False
         res = requests.get(
             self.connect_url + "/sessions/" + self.session_id,
             headers=get_headers(self.credential, False),
         ).json()
 
-        return res["livyInfo"]["currentState"] == "idle"
+        # we can reuse the session so long as it is not dead, killed, or being shut down
+        invalid_states = ["dead", "shutting_down", "killed"]
+        return res["livyInfo"]["currentState"] not in invalid_states
 
 
 # cursor object - wrapped for livy API
@@ -468,39 +499,44 @@ class LivySessionManager:
     def connect(credentials: SparkCredentials) -> LivyConnection:
         # the following opens an spark / sql session
         data = {"kind": "sql", "conf": credentials.livy_session_parameters}  # 'spark'
-        if __class__.livy_global_session is None:
-            __class__.livy_global_session = LivySession(credentials)
-            __class__.livy_global_session.create_session(data)
-            __class__.livy_global_session.is_new_session_required = False
-
-            # Access Token is generated as part of livy session, so creation of shortcuts follow livy session creation.
+        if LivySessionManager.livy_global_session is None:
+            LivySessionManager.livy_global_session = LivySession(credentials)
+            LivySessionManager.livy_global_session.create_session(data)
+            LivySessionManager.livy_global_session.is_new_session_required = False
+            # create shortcuts, if there are any
             if credentials.create_shortcuts:
-                shortcut_client = ShortcutClient(
-                    accessToken.token,
-                    credentials.workspaceid,
-                    credentials.lakehouseid,
-                    credentials.endpoint,
-                    credentials.shortcuts,
-                )
-                shortcut_client.create_shortcuts(credentials.shortcuts_json_path)
-
-        elif not __class__.livy_global_session.is_valid_session():
-            __class__.livy_global_session.delete_session()
-            __class__.livy_global_session.create_session(data)
-            __class__.livy_global_session.is_new_session_required = False
-        elif __class__.livy_global_session.is_new_session_required:
-            __class__.livy_global_session.create_session(data)
-            __class__.livy_global_session.is_new_session_required = False
+                try:
+                    shortcut_client = ShortcutClient(
+                        accessToken.token,
+                        credentials.workspaceid,
+                        credentials.lakehouseid,
+                        credentials.endpoint,
+                    )
+                    shortcut_client.create_shortcuts(credentials.shortcuts_json_str)
+                except Exception as ex:
+                    logger.error(f"Unable to create shortcuts: {ex}")
+        elif not LivySessionManager.livy_global_session.is_valid_session():
+            LivySessionManager.livy_global_session.delete_session()
+            LivySessionManager.livy_global_session.create_session(data)
+            LivySessionManager.livy_global_session.is_new_session_required = False
+        elif LivySessionManager.livy_global_session.is_new_session_required:
+            LivySessionManager.livy_global_session.create_session(data)
+            LivySessionManager.livy_global_session.is_new_session_required = False
         else:
-            logger.debug(f"Reusing session: {__class__.livy_global_session.session_id}")
-        livyConnection = LivyConnection(credentials, __class__.livy_global_session)
+            logger.debug(f"Reusing session: {LivySessionManager.livy_global_session.session_id}")
+        livyConnection = LivyConnection(credentials, LivySessionManager.livy_global_session)
         return livyConnection
 
     @staticmethod
     def disconnect() -> None:
-        if __class__.livy_global_session.is_valid_session():
-            __class__.livy_global_session.delete_session()
-            __class__.livy_global_session.is_new_session_required = True
+        if (
+            LivySessionManager.livy_global_session is not None
+            and LivySessionManager.livy_global_session.is_valid_session()
+        ):
+            LivySessionManager.livy_global_session.delete_session()
+            LivySessionManager.livy_global_session.is_new_session_required = True
+        else:
+            logger.debug("No session to disconnect")
 
 
 class LivySessionConnectionWrapper(object):
@@ -514,10 +550,10 @@ class LivySessionConnectionWrapper(object):
         self._cursor = self.handle.cursor()
         return self
 
-    def cancel(self) -> None:
+    def cancel(self):
         logger.debug("NotImplemented: cancel")
 
-    def close(self) -> None:
+    def close(self):
         self.handle.close()
 
     def rollback(self, *args, **kwargs):
@@ -541,7 +577,7 @@ class LivySessionConnectionWrapper(object):
         return self._cursor.description
 
     @classmethod
-    def _fix_binding(cls, value):
+    def _fix_binding(cls, value) -> float | str:
         """Convert complex datatypes to primitives that can be loaded by
         the Spark driver"""
         if isinstance(value, NUMBERS):

@@ -9,49 +9,86 @@
 # branch, and when manually triggered.
 
 name: Adapter Integration Tests
-on:  # yamllint disable-line rule:truthy
+on:
   workflow_dispatch:
   pull_request:
     branches:
-      - 'stale*' # Currently setting this inactive as Fabric Spark adapter does not SPN auth.
+      - "main"
+      - "*.latest"
+      - "v*"
 
-# explicitly turn off permissions for `GITHUB_TOKEN`
-permissions: read-all
+permissions:
+  contents: read
+  packages: read
 
-# will cancel previous workflows triggered by the same event and for the same ref for PRs or same SHA otherwise
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ contains(github.event_name, 'pull_request_target') && github.event.pull_request.head.ref || github.sha }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 defaults:
   run:
     shell: bash
+
 jobs:
-  test:
-    name: ${{ matrix.test }}
+  setup:
+    name: Fetch Access Token
+    runs-on: ubuntu-latest
+    outputs:
+      access_token: ${{ steps.fetch_token.outputs.access_token }}
+    steps:
+      - name: Azure login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.DBT_AZURE_SP_NAME }}
+          tenant-id: ${{ secrets.DBT_AZURE_TENANT }}
+          allow-no-subscriptions: true
+          federated-token: true
+
+      - name: Fetch Access Token
+        id: fetch_token
+        run: |
+          pip install azure-identity pyodbc azure-core
+
+          python - <<EOF
+          from azure.core.credentials import AccessToken
+          from azure.identity import DefaultAzureCredential
+          try:
+              credential = DefaultAzureCredential()
+              token = credential.get_token("https://analysis.windows.net/powerbi/api/.default")
+              print(f"::set-output name=access_token::{token.token}")
+          except Exception as e:
+              raise RuntimeError(f"Failed to fetch token: {e}")
+          EOF
+
+  tests:
+    name: Functional Tests
+    needs: setup
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false
       matrix:
-        test:
-          - "az_spn"
-    steps:
-      - name: AZ CLI login
-        run: az login --service-principal --username="${AZURE_CLIENT_ID}" --password="${AZURE_CLIENT_SECRET}" --tenant="${AZURE_TENANT_ID}"
-        env:
-            AZURE_CLIENT_ID: ${{ secrets.DBT_FABRIC_SPARK_CLIENT_ID }}
-            AZURE_CLIENT_SECRET: ${{ secrets.DBT_FABRIC_SPARK_CLIENT_SECRET }}
-            AZURE_TENANT_ID: ${{ secrets.DBT_FABRIC_SPARK_TENANT_ID }}
+        test_file:
+          - tests/functional/adapter/basic/test_base.py
+          - tests/functional/adapter/basic/test_empty.py
+          - tests/functional/adapter/basic/test_ephemeral.py
+          - tests/functional/adapter/basic/test_generic_tests.py
+          - tests/functional/adapter/basic/test_incremental.py
+          - tests/functional/adapter/basic/test_singular_tests_ephemeral.py
+          - tests/functional/adapter/basic/test_snapshot_check_cols.py
+          - tests/functional/adapter/basic/tests_snapshot_timestamp.py
 
+    steps:
       - uses: actions/checkout@v4
+
       - name: Install dependencies
         run: pip install -r dev_requirements.txt
 
-      - name: Run functional tests
+      - name: Run Functional Test ${{ matrix.test_file }}
         env:
-            DBT_FABRIC_SPARK_WORKSPACE_ID: ${{ secrets.DBT_FABRIC_SPARK_WORKSPACE_ID }}
-            DBT_FABRIC_SPARK_LAKEHOUSE_ID: ${{ secrets.DBT_FABRIC_SPARK_LAKEHOUSE_ID }}
-            DBT_FABRIC_SPARK_CLIENT_ID: ${{ secrets.DBT_FABRIC_SPARK_CLIENT_ID }}
-            DBT_FABRIC_SPARK_CLIENT_SECRET: ${{ secrets.DBT_FABRIC_SPARK_CLIENT_SECRET }}
-            DBT_FABRIC_SPARK_TENANT_ID: ${{ secrets.DBT_FABRIC_SPARK_TENANT_ID }}
-        run: pytest -ra -v tests/functional --profile "${{ matrix.test }}"
+          WORKSPACE_ID: ${{ secrets.WORKSPACE_ID }}
+          LAKEHOUSE_ID: ${{ secrets.LAKEHOUSE_ID }}
+          LAKEHOUSE_NAME: ${{ secrets.LAKEHOUSE_NAME }}
+          SCHEMA_NAME: ${{ secrets.LAKEHOUSE_NAME }}
+          CLIENT_ID: ${{ secrets.DBT_AZURE_SP_NAME }}
+          TENANT_ID: ${{ secrets.DBT_AZURE_TENANT }}
+          FABRIC_INTEGRATION_TESTS_TOKEN: ${{ needs.setup.outputs.access_token }}
+        run: pytest -ra -v ${{ matrix.test_file }} --profile "int_tests"

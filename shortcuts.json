@@ -1,20 +1,12 @@
 {
     "shortcuts" : [
 	{
-		"path": "Tables/",
-		"shortcut_table_name":"test_shortcut",
+		"path": "Tables/dbo",
+		"shortcut_name":"test_Data",
 		"target": "onelake",
-		"source_workspaceid": "asdfsdf",
-		"source_itemid": "asdfsadf",
-		"source_data_path":"asdfsdfs"
-	},
-	{
-		"path": "Tables/",
-		"shortcut_table_name":"",
-		"target": "onelake",
-		"source_workspaceid": "",
-		"source_itemid": "",
-		"source_data_path":""
+		"source_workspace_id": "47a7d44e-203e-44d2-87ad-41ed3a76eaef",
+		"source_item_id": "48adc03a-215a-4c9c-9554-5cd2fdc9040f",
+		"source_path":"Tables/dbo/test_Data"
 	}
 ]
 }

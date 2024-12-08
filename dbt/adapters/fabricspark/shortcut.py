@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 from enum import Enum
 
 
@@ -10,7 +10,8 @@ class TargetName(Enum):
 @dataclass
 class Shortcut:
     """
-    A shortcut that can be created for different target systems (onelake).
+    A shortcut that can be created in different target systems.
+
     Attributes:
         path (str): The path where the shortcut will be created.
         name (str): The name of the shortcut.
@@ -27,16 +28,15 @@ class Shortcut:
     """
 
     # the path where the shortcut will be created
-    path: str = None
-    shortcut_name: str = None
-    target: TargetName = None
-    endpoint: str = None
+    path: Optional[str] = ""
+    shortcut_name: Optional[str] = ""
+    target: TargetName = TargetName.onelake
     # onelake specific
-    source_path: Optional[str] = None
-    source_workspace_id: Optional[str] = None
-    source_item_id: Optional[str] = None
+    source_path: Optional[str] = ""
+    source_workspace_id: Optional[str] = ""
+    source_item_id: Optional[str] = ""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.path is None:
             raise ValueError("destination_path is required")
         if self.shortcut_name is None:
@@ -54,8 +54,28 @@ class Shortcut:
             if self.source_item_id is None:
                 raise ValueError(f"source_item_id is required for {self.target}")
 
-    def __str__(self):
+    def __str__(self) -> str:
         """
         Returns a string representation of the Shortcut object.
         """
         return f"Shortcut: {self.shortcut_name} from {self.source_path} to {self.path}"
+
+    def connect_url(self, endpoint: str = "https://api.fabric.microsoft.com/v1") -> str:
+        """
+        Returns the connect URL for the shortcut.
+        """
+        return f"{endpoint}/workspaces/{self.source_workspace_id}/items/{self.source_item_id}/shortcuts/{self.source_path}/{self.shortcut_name}"
+
+    def get_target_body(self) -> dict[str, Any]:
+        """
+        Returns the target body for the shortcut based on the target attribute.
+        """
+        if self.target == TargetName.onelake:
+            return {
+                "type": "OneLake",
+                "onelake": {
+                    "workspaceId": self.source_workspace_id,
+                    "itemId": self.source_item_id,
+                    "path": self.source_path,
+                },
+            }

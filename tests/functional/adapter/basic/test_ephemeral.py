@@ -15,10 +15,6 @@ from dbt.tests.adapter.basic.files import (
     schema_base_yml,
 )
 
-shortcuts = """
-{"shortcuts":[{"path":"Tables/","shortcut_table_name":"test_shortcut","target":"onelake","source_workspaceid":"asdfsdf","source_itemid":"asdfsadf","source_data_path":"asdfsdfs"},{"path":"Tables/","shortcut_table_name":"","target":"onelake","source_workspaceid":"","source_itemid":"","source_data_path":""}]}
-"""
-
 
 class BaseEphemeral:
     @pytest.fixture(scope="class")
@@ -54,7 +50,6 @@ class BaseEphemeral:
             "view_model.sql": ephemeral_view_sql,
             "table_model.sql": ephemeral_table_sql,
             "schema.yml": schema_base_yml,
-            "shortcuts.json": shortcuts,
         }
 
     def test_ephemeral(self, project):

@@ -56,7 +56,8 @@ jobs:
           try:
               credential = DefaultAzureCredential()
               token = credential.get_token("https://analysis.windows.net/powerbi/api/.default")
-              print(f"::set-output name=accesstoken::{token.token}")
+              with open(os.getenv('GITHUB_OUTPUT'), 'a') as output_file:
+                  output_file.write(f"accesstoken={token.token}\n")
           except Exception as e:
               raise RuntimeError(f"Failed to fetch token: {e}")
           EOF
@@ -67,7 +68,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Print Token
-        run: echo "Token from Job 1 ${{ needs.setup.outputs.accesstoken }}"
+        run: echo "Token is ${{ needs.setup.outputs.accesstoken }}"
 
   tests:
     name: Functional Tests

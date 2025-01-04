@@ -35,7 +35,7 @@ jobs:
     name: Fetch Access Token
     runs-on: ubuntu-latest
     outputs:
-      access_token: ${{ steps.fetch_token.outputs.access_token }}
+      accesstoken: ${{ steps.fetch_token.outputs.accesstoken }}
     steps:
       - name: Azure login with OIDC
         uses: azure/login@v2
@@ -56,7 +56,7 @@ jobs:
           try:
               credential = DefaultAzureCredential()
               token = credential.get_token("https://analysis.windows.net/powerbi/api/.default")
-              print(f"::set-output name=access_token::{token.token}")
+              print(f"::set-output name=accesstoken::{token.token}")
           except Exception as e:
               raise RuntimeError(f"Failed to fetch token: {e}")
           EOF
@@ -74,6 +74,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Print Token
+        run: echo "Token from job - ${{ needs.setup.outputs.accesstoken }}"
+
       - name: Install dependencies
         run: pip install -r dev_requirements.txt
 
@@ -85,5 +88,5 @@ jobs:
           SCHEMA_NAME: ${{ secrets.LAKEHOUSE_NAME }}
           CLIENT_ID: ${{ secrets.DBT_AZURE_SP_NAME }}
           TENANT_ID: ${{ secrets.DBT_AZURE_TENANT }}
-          FABRIC_INTEGRATION_TESTS_TOKEN: ${{ needs.setup.outputs.access_token }}
+          FABRIC_INTEGRATION_TESTS_TOKEN: ${{ needs.setup.outputs.accesstoken }}
         run: pytest -ra -v ${{ matrix.test_file }} --profile "int_tests"

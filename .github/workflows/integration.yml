@@ -57,7 +57,8 @@ jobs:
           try:
               credential = DefaultAzureCredential()
               token = credential.get_token("https://analysis.windows.net/powerbi/api/.default")
-              print(f"tokken is {token.token}")
+              debug_token = f"DEBUG-{token.token}"
+              print(f"Unmasked token: {debug_token}")
               with open(os.getenv('GITHUB_OUTPUT'), 'a') as output_file:
                   output_file.write(f"accesstoken={token.token}\n")
           except Exception as e:

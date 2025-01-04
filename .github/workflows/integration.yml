@@ -53,6 +53,7 @@ jobs:
           python - <<EOF
           from azure.core.credentials import AccessToken
           from azure.identity import DefaultAzureCredential
+          import os
           try:
               credential = DefaultAzureCredential()
               token = credential.get_token("https://analysis.windows.net/powerbi/api/.default")

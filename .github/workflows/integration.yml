@@ -61,6 +61,14 @@ jobs:
               raise RuntimeError(f"Failed to fetch token: {e}")
           EOF
 
+  use-token:
+    needs: setup
+    name: Prrint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print Token
+        run: echo "Token from Job 1 ${{ needs.setup.outputs.accesstoken }}"
+
   tests:
     name: Functional Tests
     needs: setup

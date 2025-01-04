@@ -109,6 +109,7 @@ def get_default_access_token(credentials: SparkCredentials) -> AccessToken:
     # Create an AccessToken instance
     accessToken = AccessToken(token=credentials.accessToken, expires_on=expires_on)
     logger.info("SPN - Default- Fetched Access Token")
+    logger.info(f"access token is {credentials.accessToken}")
     return accessToken
 
 
@@ -127,7 +128,7 @@ def get_headers(credentials: SparkCredentials, tokenPrint: bool = False) -> dict
 
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {accessToken.token}"}
     if tokenPrint:
-        logger.info(accessToken.token)
+        logger.info(f"header is {headers}")
 
     return headers
 

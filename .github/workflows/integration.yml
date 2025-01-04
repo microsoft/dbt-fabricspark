@@ -22,20 +22,17 @@ permissions:
   packages: read   # Grant explicit read access to packages
   id-token: write  # Needed if using OIDC authentication
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
-
-defaults:
-  run:
-    shell: bash
-
 jobs:
-  setup:
-    name: Fetch Access Token
-    runs-on: ubuntu-latest
-    outputs:
-      accesstoken: ${{ steps.fetch_token.outputs.accesstoken }}
+  integration-tests-fabric-dw:
+    name: Regular
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        test_file:
+          - tests/functional/adapter/basic/test_base.py
+          - tests/functional/adapter/basic/test_empty.py
+
     steps:
       - name: Azure login with OIDC
         uses: azure/login@v2
@@ -57,37 +54,15 @@ jobs:
           try:
               credential = DefaultAzureCredential()
               token = credential.get_token("https://analysis.windows.net/powerbi/api/.default")
-              debug_token = f"DEBUG-{token.token}"
-              print(f"Unmasked token: {debug_token}")
-              with open(os.getenv('GITHUB_OUTPUT'), 'a') as output_file:
-                  output_file.write(f"accesstoken={token.token}\n")
+              print(f"::set-output name=access_token::{token.token}")
           except Exception as e:
               raise RuntimeError(f"Failed to fetch token: {e}")
           EOF
 
-  use-token:
-    needs: setup
-    name: Prrint
-    runs-on: ubuntu-latest
-    steps:
-      - name: Print Token
-        run: echo "Token is ${{ needs.setup.outputs.accesstoken }}"
-
-  tests:
-    name: Functional Tests
-    needs: setup
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        test_file:
-          - tests/functional/adapter/basic/test_base.py
-          - tests/functional/adapter/basic/test_empty.py
-
-    steps:
       - uses: actions/checkout@v4
 
       - name: Print Token
-        run: echo "Token from job - ${{ needs.setup.outputs.accesstoken }}"
+        run: echo "Token from job - ${{ steps.fetch_token.outputs.access_token }}"
 
       - name: Install dependencies
         run: pip install -r dev_requirements.txt
@@ -100,5 +75,5 @@ jobs:
           SCHEMA_NAME: ${{ secrets.LAKEHOUSE_NAME }}
           CLIENT_ID: ${{ secrets.DBT_AZURE_SP_NAME }}
           TENANT_ID: ${{ secrets.DBT_AZURE_TENANT }}
-          FABRIC_INTEGRATION_TESTS_TOKEN: ${{ needs.setup.outputs.accesstoken }}
+          FABRIC_INTEGRATION_TESTS_TOKEN: ${{ steps.fetch_token.outputs.access_token }}
         run: pytest -ra -v ${{ matrix.test_file }} --profile "int_tests"

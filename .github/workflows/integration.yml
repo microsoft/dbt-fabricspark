@@ -16,7 +16,7 @@ on:
       - "main"
       - "*.latest"
       - "v*"
-
+runs-on: ubuntu-latest
 permissions:
   contents: read   # Required to access repository files
   packages: read   # Grant explicit read access to packages

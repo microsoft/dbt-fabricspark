@@ -116,18 +116,18 @@ def get_headers(credentials: SparkCredentials, tokenPrint: bool = False) -> dict
     global accessToken
     if accessToken is None or is_token_refresh_necessary(accessToken.expires_on):
         if credentials.authentication and credentials.authentication.lower() == "cli":
-            logger.debug("Using CLI auth")
+            logger.info("Using CLI auth")
             accessToken = get_cli_access_token(credentials)
         elif credentials.authentication and credentials.authentication.lower() == "int_tests":
-            logger.debug("Using int_tests auth")
+            logger.info("Using int_tests auth")
             accessToken = get_default_access_token(credentials)
         else:
-            logger.debug("Using SPN auth")
+            logger.info("Using SPN auth")
             accessToken = get_sp_access_token(credentials)
 
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {accessToken.token}"}
     if tokenPrint:
-        logger.debug(accessToken.token)
+        logger.info(accessToken.token)
 
     return headers
 
@@ -156,6 +156,7 @@ class LivySession:
         response = None
         print("Creating Livy session (this may take a few minutes)")
         try:
+            logger.debug("Session URL is ", self.connect_url)
             response = requests.post(
                 self.connect_url + "/sessions",
                 data=json.dumps(data),

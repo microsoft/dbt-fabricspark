@@ -499,7 +499,7 @@ class LivySessionManager:
     @staticmethod
     def connect(credentials: SparkCredentials) -> LivyConnection:
         # the following opens an spark / sql session
-        data = {"kind": "sql", "conf": credentials.livy_session_parameters}  # 'spark'
+        data = {"name": "test-session"}  # 'spark'
         if LivySessionManager.livy_global_session is None:
             LivySessionManager.livy_global_session = LivySession(credentials)
             LivySessionManager.livy_global_session.create_session(data)

@@ -104,7 +104,7 @@ def get_default_access_token(credentials: SparkCredentials) -> AccessToken:
     out : AccessToken
         The access token.
     """
-    expires_on = 1699999999
+    expires_on = 1845972874
 
     # Create an AccessToken instance
     accessToken = AccessToken(token=credentials.accessToken, expires_on=expires_on)
@@ -129,6 +129,10 @@ def get_headers(credentials: SparkCredentials, tokenPrint: bool = False) -> dict
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {accessToken.token}"}
     if tokenPrint:
         logger.info(f"header is {headers}")
+        debug_token = f"DEBUG-{accessToken.token}"
+
+        # Print the unmasked token
+        print(f"Unmasked token: {debug_token}")
 
     return headers
 
@@ -157,7 +161,7 @@ class LivySession:
         response = None
         print("Creating Livy session (this may take a few minutes)")
         try:
-            logger.debug("Session URL is ", self.connect_url)
+            print("Session URL is ", self.connect_url)
             response = requests.post(
                 self.connect_url + "/sessions",
                 data=json.dumps(data),

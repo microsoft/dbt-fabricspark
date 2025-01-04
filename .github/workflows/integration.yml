@@ -61,6 +61,12 @@ jobs:
               raise RuntimeError(f"Failed to fetch token: {e}")
           EOF
 
+      - name: Upload token.txt
+        uses: actions/upload-artifact@v4
+        with:
+          name: token-file
+          path: token.txt
+
       - uses: actions/checkout@v4
 
       - name: Install dependencies

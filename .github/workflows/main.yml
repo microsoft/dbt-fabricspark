@@ -23,7 +23,10 @@ on:
   pull_request:
   workflow_dispatch:
 
-permissions: read-all
+permissions:
+  contents: read   # Required to access repository files
+  packages: read   # Grant explicit read access to packages
+  id-token: write  # Needed if using OIDC authentication
 
 # will cancel previous workflows triggered by the same event and for the same ref for PRs or same SHA otherwise
 concurrency:
@@ -63,8 +66,7 @@ jobs:
           python -m pip install mypy==0.942
           python -m pip install types-requests
           mypy --version
-          python -m pip install -r requirements.txt
-          python -m pip install -r dev-requirements.txt
+          python -m pip install -r dev_requirements.txt
           dbt --version
 
       - name: Run pre-commit hooks

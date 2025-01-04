@@ -21,6 +21,11 @@ on:  # yamllint disable-line rule:truthy
     tags:
       - 'v*'
 
+permissions:
+  contents: read   # Required to access repository files
+  packages: read   # Grant explicit read access to packages
+  id-token: write  # Needed if using OIDC authentication
+
 jobs:
   release-version:
     name: Release new version
@@ -33,7 +38,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install -r dev-requirements.txt
+        run: pip install -r dev_requirements.txt
 
       - name: Initialize .pypirc
         run: |

@@ -16,15 +16,15 @@ on:
       - "main"
       - "*.latest"
       - "v*"
-runs-on: ubuntu-latest
-permissions:
-  contents: read   # Required to access repository files
-  packages: read   # Grant explicit read access to packages
-  id-token: write  # Needed if using OIDC authentication
 
 jobs:
   integration-tests-fabric-dw:
     name: Regular
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read   # Required to access repository files
+      packages: read   # Grant explicit read access to packages
+      id-token: write  # Needed if using OIDC authentication
     strategy:
       fail-fast: false
       max-parallel: 1

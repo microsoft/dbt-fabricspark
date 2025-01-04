@@ -54,15 +54,14 @@ jobs:
           try:
               credential = DefaultAzureCredential()
               token = credential.get_token("https://analysis.windows.net/powerbi/api/.default")
+              with open("token.txt", "w") as file:
+                file.write(token.token)
               print(f"::set-output name=access_token::{token.token}")
           except Exception as e:
               raise RuntimeError(f"Failed to fetch token: {e}")
           EOF
 
       - uses: actions/checkout@v4
-
-      - name: Print Token
-        run: echo "Token from job - ${{ steps.fetch_token.outputs.access_token }}"
 
       - name: Install dependencies
         run: pip install -r dev_requirements.txt

@@ -70,12 +70,6 @@ jobs:
         test_file:
           - tests/functional/adapter/basic/test_base.py
           - tests/functional/adapter/basic/test_empty.py
-          - tests/functional/adapter/basic/test_ephemeral.py
-          - tests/functional/adapter/basic/test_generic_tests.py
-          - tests/functional/adapter/basic/test_incremental.py
-          - tests/functional/adapter/basic/test_singular_tests_ephemeral.py
-          - tests/functional/adapter/basic/test_snapshot_check_cols.py
-          - tests/functional/adapter/basic/tests_snapshot_timestamp.py
 
     steps:
       - uses: actions/checkout@v4

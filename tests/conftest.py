@@ -24,31 +24,30 @@ def dbt_profile_target(request):
         target = _profile_azure_cli_target()
     elif profile_type == "azure_spn":
         target = _profile_azure_spn_target()
+    elif profile_type == "int_tests":
+        target = _profile_int_tests_target()
     else:
         raise ValueError(f"Invalid profile type '{profile_type}'")
     return target
+
 
 def _all_profiles_base():
     return {
         "type": "fabricspark",
         "method": "livy",
         "connect_retries": 2,
-        "connect_timeout":10,
-        "endpoint":"https://msitapi.fabric.microsoft.com/v1",
-        "workspaceid":os.getenv("DBT_FABRIC_SPARK_WORKSPACE_ID"),
-        "lakehouseid":os.getenv("DBT_FABRIC_SPARK_LAKEHOUSE_ID"),
-        "lakehouse":os.getenv("DBT_FABRIC_SPARK_LAKEHOUSE_NAME"),
-        "schema":os.getenv("DBT_FABRIC_SPARK_LAKEHOUSE_NAME"),
+        "connect_timeout": 10,
+        "endpoint": os.getenv("LIVY_ENDPOINT", "https://msitapi.fabric.microsoft.com/v1"),
+        "workspaceid": os.getenv("WORKSPACE_ID"),
+        "lakehouseid": os.getenv("LAKEHOUSE_ID"),
+        "lakehouse": os.getenv("LAKEHOUSE_NAME"),
+        "schema": os.getenv("SCHEMA_NAME"),
         "retry_all": True,
     }
 
+
 def _profile_azure_cli_target():
-    return {
-        **_all_profiles_base(),
-        **{
-            "authentication":"CLI"
-        }
-    }
+    return {**_all_profiles_base(), **{"authentication": "CLI"}}
 
 
 def _profile_azure_spn_target():
@@ -56,11 +55,22 @@ def _profile_azure_spn_target():
         **_all_profiles_base(),
         **{
             "authentication": "SPN",
-            "client_id":os.getenv("DBT_FABRIC_SPARK_CLIENT_ID"),
-            "client_secret":os.getenv("DBT_FABRIC_SPARK_CLIENT_SECRET"),
-            "tenant_id":os.getenv("DBT_FABRIC_SPARK_TENANT_ID")
-        }
+            "client_id": os.getenv("DBT_AZURE_SP_NAME"),
+            "client_secret": os.getenv("DBT_AZURE_SP_SECRET"),
+            "tenant_id": os.getenv("DBT_AZURE_TENANT"),
+        },
     }
+
+
+def _profile_int_tests_target():
+    return {
+        **_all_profiles_base(),
+        **{
+            "authentication": "int_tests",
+            "accessToken": os.getenv("FABRIC_INTEGRATION_TESTS_TOKEN"),
+        },
+    }
+
 
 @pytest.fixture(autouse=True)
 def skip_by_profile_type(request):

@@ -44,7 +44,7 @@ def _get_plugin_version_dict():
 
 
 package_name = "dbt-fabricspark"
-package_version = "1.8.0b1"
+package_version = "1.8.0"
 description = """The Microsoft Fabric Spark adapter plugin for dbt"""
 
 setup(
@@ -61,7 +61,7 @@ setup(
     install_requires=[
         "dbt-common>=0.1.0a1,<2.0",
         "dbt-adapters>=0.1.0a1,<2.0",
-        "dbt-core>=1.8.0a1",
+        "dbt-core>=1.8.0a1,<1.9.0",
         "azure-identity>=1.13.0",
         "azure-core>=1.26.4",
         "azure-cli==2.60.0",

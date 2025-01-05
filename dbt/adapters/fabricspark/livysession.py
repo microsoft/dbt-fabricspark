@@ -21,7 +21,7 @@ NUMBERS = DECIMALS + (int, float)
 
 livysession_credentials: SparkCredentials
 
-DEFAULT_POLL_WAIT = 45
+DEFAULT_POLL_WAIT = 10
 DEFAULT_POLL_STATEMENT_WAIT = 5
 AZURE_CREDENTIAL_SCOPE = "https://analysis.windows.net/powerbi/api/.default"
 accessToken: AccessToken = None
@@ -89,19 +89,44 @@ def get_sp_access_token(credentials: SparkCredentials) -> AccessToken:
     return accessToken
 
 
+def get_default_access_token(credentials: SparkCredentials) -> AccessToken:
+    """
+    Get an Azure access token using the SP Default Credentials.
+
+    Parameters
+    ----------
+    credentials : FabricCredentials
+        Credentials.
+
+    Returns
+    -------
+    out : AccessToken
+        The access token.
+    """
+    expires_on = 1845972874
+
+    # Create an AccessToken instance
+    accessToken = AccessToken(token=credentials.accessToken, expires_on=expires_on)
+    logger.info("SPN - Default- Fetched Access Token")
+    return accessToken
+
+
 def get_headers(credentials: SparkCredentials, tokenPrint: bool = False) -> dict[str, str]:
     global accessToken
     if accessToken is None or is_token_refresh_necessary(accessToken.expires_on):
         if credentials.authentication and credentials.authentication.lower() == "cli":
-            logger.debug("Using CLI auth")
+            logger.info("Using CLI auth")
             accessToken = get_cli_access_token(credentials)
+        elif credentials.authentication and credentials.authentication.lower() == "int_tests":
+            logger.info("Using int_tests auth")
+            accessToken = get_default_access_token(credentials)
         else:
-            logger.debug("Using SPN auth")
+            logger.info("Using SPN auth")
             accessToken = get_sp_access_token(credentials)
 
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {accessToken.token}"}
     if tokenPrint:
-        logger.debug(accessToken.token)
+        print(f"token is : {accessToken.token}")
 
     return headers
 
@@ -466,7 +491,10 @@ class LivySessionManager:
     @staticmethod
     def connect(credentials: SparkCredentials) -> LivyConnection:
         # the following opens an spark / sql session
-        data = {"kind": "sql", "conf": credentials.livy_session_parameters}  # 'spark'
+        data = {
+            "name": "dbt-spark-session",
+            "conf": credentials.livy_session_parameters,
+        }  # 'spark'
         if __class__.livy_global_session is None:
             __class__.livy_global_session = LivySession(credentials)
             __class__.livy_global_session.create_session(data)

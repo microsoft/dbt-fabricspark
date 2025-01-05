@@ -1,95 +1,57 @@
-{% macro fabricspark__get_binding_char() %}
-  {{ return('?' if target.method == 'odbc' else '%s') }}
-{% endmacro %}
+{% materialization seed, adapter = 'fabricspark' %}
 
+  {%- set identifier = model['alias'] -%}
+  {%- set full_refresh_mode = (should_full_refresh()) -%}
 
-{% macro fabricspark__reset_csv_table(model, full_refresh, old_relation, agate_table) %}
-    {% if old_relation %}
-        {{ adapter.drop_relation(old_relation) }}
-    {% endif %}
-    {% set sql = create_csv_table(model, agate_table) %}
-    {{ return(sql) }}
-{% endmacro %}
+  {%- set old_relation = adapter.get_relation(database=database, schema=schema, identifier=identifier) -%}
 
-{% macro calc_batch_size(num_columns) %}
-    {#
-        Spark SQL  allows for a max of ~11000 parameters in a single statement.
-        Check if the max_batch_size fits with the number of columns, otherwise
-        reduce the batch size so it fits.
-    #}
-    {% set max_batch_size = get_batch_size() %}
-    {% set calculated_batch = (6000 / num_columns)-1|int %}
-    {% set batch_size = [max_batch_size, calculated_batch] | min %}
+  {%- set exists_as_table = (old_relation is not none and old_relation.is_table) -%}
+  {%- set exists_as_view = (old_relation is not none and old_relation.is_view) -%}
 
-    {{ return(batch_size) }}
-{%  endmacro %}
+  {%- set grant_config = config.get('grants') -%}
+  {%- set agate_table = load_agate_table() -%}
+  -- grab current tables grants config for comparison later on
 
-{% macro fabricspark__get_batch_size() %}
-  {{ return(500) }}
-{% endmacro %}
+  {%- do store_result('agate_table', response='OK', agate_table=agate_table) -%}
 
-{% macro fabricspark__load_csv_rows(model, agate_table) %}
+  {{ run_hooks(pre_hooks, inside_transaction=False) }}
 
-  {% set batch_size = calc_batch_size(agate_table.column_names|length) %}
-  {% set column_override = model['config'].get('column_types', {}) %}
+  -- `BEGIN` happens here:
+  {{ run_hooks(pre_hooks, inside_transaction=True) }}
 
-  {% set statements = [] %}
-  {{ log("Inserting batches of " ~ batch_size ~ " records") }}
-  {% for chunk in agate_table.rows | batch(batch_size) %}
-      {% set bindings = [] %}
+  -- build model
+  {% set create_table_sql = "" %}
+  {% if exists_as_view %}
+    {{ exceptions.raise_compiler_error("Cannot seed to '{}', it is a view".format(old_relation.render())) }}
+  {% elif exists_as_table %}
+    {% set create_table_sql = reset_csv_table(model, full_refresh_mode, old_relation, agate_table) %}
+  {% else %}
+    {% set create_table_sql = create_csv_table(model, agate_table) %}
+  {% endif %}
 
-      {% for row in chunk %}
-          {% do bindings.extend(row) %}
-      {% endfor %}
+  {% set code = 'CREATE' if full_refresh_mode else 'INSERT' %}
+  {% set rows_affected = (agate_table.rows | length) %}
+  {% set sql = load_csv_rows(model, agate_table) %}
 
-      {% set sql %}
-          insert into {{ this.render() }} values
-          {% for row in chunk -%}
-              ({%- for col_name in agate_table.column_names -%}
-                  {%- set inferred_type = adapter.convert_type(agate_table, loop.index0) -%}
-                  {%- set type = column_override.get(col_name, inferred_type) -%}
-                    cast({{ get_binding_char() }} as {{type}})
-                  {%- if not loop.last%},{%- endif %}
-              {%- endfor -%})
-              {%- if not loop.last%},{%- endif %}
-          {%- endfor %}
-      {% endset %}
+  {% call noop_statement('main', code ~ ' ' ~ rows_affected, code, rows_affected) %}
+    {{ get_csv_sql(create_table_sql, sql) }};
+  {% endcall %}
 
-      {% do adapter.add_query(sql, bindings=bindings, abridge_sql_log=True) %}
+  {% set target_relation = this.incorporate(type='table') %}
 
-      {% if loop.index0 == 0 %}
-          {% do statements.append(sql) %}
-      {% endif %}
-  {% endfor %}
+  {% set should_revoke = should_revoke(old_relation, full_refresh_mode) %}
+  {% do persist_docs(target_relation, model) %}
 
-  {# Return SQL so we can render it out into the compiled files #}
-  {{ return(statements[0]) }}
-{% endmacro %}
+  {% if full_refresh_mode or not exists_as_table %}
+    {% do create_indexes(target_relation) %}
+  {% endif %}
 
+  {{ run_hooks(post_hooks, inside_transaction=True) }}
 
-{% macro fabricspark__create_csv_table(model, agate_table) %}
-  {%- set column_override = model['config'].get('column_types', {}) -%}
-  {%- set quote_seed_column = model['config'].get('quote_columns', None) -%}
+  -- `COMMIT` happens here
+  {{ adapter.commit() }}
 
-  {% set sql %}
-    create table {{ this.render() }} (
-        {%- for col_name in agate_table.column_names -%}
-            {%- set inferred_type = adapter.convert_type(agate_table, loop.index0) -%}
-            {%- set type = column_override.get(col_name, inferred_type) -%}
-            {%- set column_name = (col_name | string) -%}
-            {{ adapter.quote_seed_column(column_name, quote_seed_column) }} {{ type }} {%- if not loop.last -%}, {%- endif -%}
-        {%- endfor -%}
-    )
-    {{ file_format_clause() }}
-    {{ partition_cols(label="partitioned by") }}
-    {{ clustered_cols(label="clustered by") }}
-    {{ location_clause() }}
-    {{ comment_clause() }}
-  {% endset %}
+  {{ run_hooks(post_hooks, inside_transaction=False) }}
+  {{ return({'relations': [target_relation]}) }}
 
-  {% call statement('_') -%}
-    {{ sql }}
-  {%- endcall %}
-
-  {{ return(sql) }}
-{% endmacro %}
+{% endmaterialization %}

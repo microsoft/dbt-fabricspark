@@ -1,26 +1,30 @@
 from dbt.adapters.contracts.connection import Credentials
+from dbt.adapters.events.logging import AdapterLogger
 from typing import Any, Dict, Optional, Tuple
 from dataclasses import dataclass, field
 from dbt_common.exceptions import DbtRuntimeError
+
+logger = AdapterLogger("fabricspark")
 
 
 @dataclass
 class SparkCredentials(Credentials):
     schema: Optional[str] = None  # type: ignore
     method: str = "livy"
-    workspaceid: str = None
-    database: Optional[str] = None
-    lakehouse: str = None
-    lakehouseid: str = None  # type: ignore
-    endpoint: Optional[str] = "https://msitapi.fabric.microsoft.com/v1"
+    workspaceid: Optional[str] = None
+    database: Optional[str] = None  # type: ignore
+    lakehouse: Optional[str] = None
+    lakehouseid: Optional[str] = None
+    endpoint: str = "https://msitapi.fabric.microsoft.com/v1"
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
     tenant_id: Optional[str] = None
-    authentication: str = "CLI"
+    authentication: str = "az_cli"
     connect_retries: int = 1
     connect_timeout: int = 10
     livy_session_parameters: Dict[str, Any] = field(default_factory=dict)
     retry_all: bool = False
+    accessToken: Optional[str] = None
 
     @classmethod
     def __pre_deserialize__(cls, data: Any) -> Any:
@@ -48,27 +52,13 @@ class SparkCredentials(Credentials):
                 "database property is not supported by adapter. Set database as none and use lakehouse instead."
             )
 
-        # spark classifies database and schema as the same thing
-        if (
-            self.lakehouse is not None
-            and self.lakehouse != self.schema
-            and self.schema is not None
-        ):
-            # raise DbtRuntimeError(
-            #     f"    schema: {self.schema} \n"
-            #     f"    lakehouse: {self.lakehouse} \n"
-            #     f"On Spark, lakehouse must be omitted or have the same value as"
-            # #     f" schema."
-            # # )
-            self.schema = self.lakehouse
-
     @property
     def type(self) -> str:
         return "fabricspark"
 
     @property
     def unique_field(self) -> str:
-        return self.lakehouseid  # type: ignore
+        return self.lakehouseid
 
     def _connection_keys(self) -> Tuple[str, ...]:
         return "workspaceid", "lakehouseid", "lakehouse", "endpoint", "schema"

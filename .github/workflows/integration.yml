@@ -53,7 +53,7 @@ jobs:
           import os
           try:
               credential = DefaultAzureCredential()
-              token = credential.get_token("https://analysis.windows.net/powerbi/api/.default")
+              token = credential.get_token("https://api.fabric.microsoft.com/.default")
               with open("token.txt", "w") as file:
                 file.write(token.token)
               print(f"::set-output name=access_token::{token.token}")

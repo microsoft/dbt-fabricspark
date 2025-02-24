@@ -47,7 +47,7 @@ jobs:
         run: |
           TIMESTAMP=$(date +"%Y%m%d%H%M%S")
           TEST_FILE="${{ matrix.test_file }}"
-          BASENAME=$(basename "$TEST_FILE")  # Extract file name
+          BASENAME=$(echo "$TEST_FILE" | awk -F/ '{print $NF}')
           CLEAN_TEST_FILE="${BASENAME%.*}"   # Remove file extension
 
           LAKEHOUSE_NAME="dbt_test_${TIMESTAMP}_${CLEAN_TEST_FILE}"

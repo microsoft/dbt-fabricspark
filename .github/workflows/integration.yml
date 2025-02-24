@@ -42,6 +42,23 @@ jobs:
           allow-no-subscriptions: true
           federated-token: true
 
+      - name: Generate Unique Names
+        id: name_generation
+        run: |
+          TIMESTAMP=$(date +"%Y%m%d%H%M%S")
+          TEST_FILE="${{ matrix.test_file }}"
+          BASENAME=$(basename "$TEST_FILE")  # Extract file name
+          CLEAN_TEST_FILE="${BASENAME%.*}"   # Remove file extension
+
+          LAKEHOUSE_NAME="dbt_test_${TIMESTAMP}_${CLEAN_TEST_FILE}"
+          TOKEN_FILE="token_${CLEAN_TEST_FILE}.txt"
+
+          echo "Lakehouse Name: $LAKEHOUSE_NAME"
+          echo "Token File: $TOKEN_FILE"
+
+          echo "::set-output name=lakehouse_name::$LAKEHOUSE_NAME"
+          echo "::set-output name=token_file::$TOKEN_FILE"
+
       - name: Fetch Access Token
         id: fetch_token
         run: |
@@ -54,18 +71,52 @@ jobs:
           try:
               credential = DefaultAzureCredential()
               token = credential.get_token("https://analysis.windows.net/powerbi/api")
-              with open("token.txt", "w") as file:
+              token_file = "${{ steps.name_generation.outputs.token_file }}"
+              with open(token_file, "w") as file:
                 file.write(token.token)
               print(f"::set-output name=access_token::{token.token}")
           except Exception as e:
               raise RuntimeError(f"Failed to fetch token: {e}")
           EOF
 
-      - name: Upload token.txt
+      - name: Upload Token File
         uses: actions/upload-artifact@v4
         with:
-          name: token-file
-          path: token.txt
+          name: token-file-${{ matrix.test_file }}
+          path: ${{ steps.name_generation.outputs.token_file }}
+
+      - name: Create Fabric Lakehouse
+        id: create_lakehouse
+        run: |
+          pip install requests
+
+          python - <<EOF
+          import requests
+
+          access_token = "${{ steps.fetch_token.outputs.access_token }}"
+          workspace_id = "${{ secrets.WORKSPACE_ID }}"
+          lakehouse_name = "${{ steps.name_generation.outputs.lakehouse_name }}"
+
+          url = f"https://msitapi.fabric.microsoft.com/v1/workspaces/{workspace_id}/lakehouses"
+          headers = {
+              "Authorization": f"Bearer {access_token}",
+              "Content-Type": "application/json"
+          }
+          payload = {
+              "displayName": lakehouse_name,
+              "description": f"Lakehouse created for test: {lakehouse_name}"
+          }
+
+          response = requests.post(url, json=payload, headers=headers)
+
+          if response.status_code == 201:
+              lakehouse_id = response.json().get("id")
+              print(f"Lakehouse '{lakehouse_name}' created successfully.")
+              print(f"::set-output name=lakehouse_id::{lakehouse_id}")
+          else:
+              print("Failed to create Lakehouse:", response.text)
+              exit(1)
+          EOF
 
       - uses: actions/checkout@v4
 
@@ -75,10 +126,36 @@ jobs:
       - name: Run Functional Test ${{ matrix.test_file }}
         env:
           WORKSPACE_ID: ${{ secrets.WORKSPACE_ID }}
-          LAKEHOUSE_ID: ${{ secrets.LAKEHOUSE_ID }}
-          LAKEHOUSE_NAME: ${{ secrets.LAKEHOUSE_NAME }}
-          SCHEMA_NAME: ${{ secrets.LAKEHOUSE_NAME }}
+          LAKEHOUSE_ID: ${{ steps.create_lakehouse.outputs.lakehouse_id }}
+          LAKEHOUSE_NAME: ${{ steps.name_generation.outputs.lakehouse_name }}
+          SCHEMA_NAME: ${{ steps.name_generation.outputs.lakehouse_name }}
           CLIENT_ID: ${{ secrets.DBT_AZURE_SP_NAME }}
           TENANT_ID: ${{ secrets.DBT_AZURE_TENANT }}
           FABRIC_INTEGRATION_TESTS_TOKEN: ${{ steps.fetch_token.outputs.access_token }}
         run: pytest -ra -v ${{ matrix.test_file }} --profile "int_tests"
+
+      - name: Delete Fabric Lakehouse
+        if: always() && steps.create_lakehouse.outputs.lakehouse_id
+        run: |
+          pip install requests
+
+          python - <<EOF
+          import requests
+
+          access_token = "${{ steps.fetch_token.outputs.access_token }}"
+          workspace_id = "${{ secrets.WORKSPACE_ID }}"
+          lakehouse_id = "${{ steps.create_lakehouse.outputs.lakehouse_id }}"
+
+          url = f"https://api.fabric.microsoft.com/v1/workspaces/{workspace_id}/lakehouses/{lakehouse_id}"
+          headers = {
+              "Authorization": f"Bearer {access_token}",
+              "Content-Type": "application/json"
+          }
+
+          response = requests.delete(url, headers=headers)
+
+          if response.status_code == 200:
+              print(f"Lakehouse '{lakehouse_id}' deleted successfully.")
+          else:
+              print("Failed to delete Lakehouse:", response.text)
+          EOF

@@ -82,7 +82,7 @@ jobs:
       - name: Upload Token File
         uses: actions/upload-artifact@v4
         with:
-          name: token-file-${{ matrix.test_file }}
+          name: token-file
           path: ${{ steps.name_generation.outputs.token_file }}
 
       - name: Create Fabric Lakehouse

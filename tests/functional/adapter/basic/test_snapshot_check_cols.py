@@ -30,11 +30,14 @@ class BaseSnapshotCheckCols:
     @pytest.fixture(scope="class")
     def snapshots(self):
         return {
-            "cc_all_snapshot.sql": cc_all_snapshot_sql.replace("target_database=database","target_database=\"dbttest\"").replace("target_schema=schema","target_schema=\"dbttest\""),
-            "cc_date_snapshot.sql": cc_date_snapshot_sql.replace("target_database=database","target_database=\"dbttest\"").replace("target_schema=schema","target_schema=\"dbttest\""),
-            "cc_name_snapshot.sql": cc_name_snapshot_sql.replace("target_database=database","target_database=\"dbttest\"").replace("target_schema=schema","target_schema=\"dbttest\""),
+            # "cc_all_snapshot.sql": cc_all_snapshot_sql.replace("target_database=database","target_database=\"dbtlhinttests\"").replace("target_schema=schema","target_schema=\"dbtlhinttests\""),
+            # "cc_date_snapshot.sql": cc_date_snapshot_sql.replace("target_database=database","target_database=\"dbtlhinttests\"").replace("target_schema=schema","target_schema=\"dbtlhinttests\""),
+            # "cc_name_snapshot.sql": cc_name_snapshot_sql.replace("target_database=database","target_database=\"dbtlhinttests\"").replace("target_schema=schema","target_schema=\"dbtlhinttests\""),
+            "cc_all_snapshot.sql": cc_all_snapshot_sql,
+            "cc_date_snapshot.sql": cc_date_snapshot_sql,
+            "cc_name_snapshot.sql": cc_name_snapshot_sql,
         }
-    
+
     @pytest.fixture(scope="class")
     def project_config_update(self):
         return {
@@ -45,7 +48,7 @@ class BaseSnapshotCheckCols:
                 "+file_format": "delta",
             },
         }
-    
+
     @pytest.fixture(scope="class")
     def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
         profile = {

@@ -418,7 +418,6 @@ class SparkAdapter(SQLAdapter):
         return agate.Table.from_object(columns, column_types=DEFAULT_TYPE_TESTER)
 
     def check_schema_exists(self, database: str, schema: str) -> bool:
-        logger.debug("database name is ", database)
         results = self.execute_macro(LIST_SCHEMAS_MACRO_NAME, kwargs={"database": database})
 
         exists = True if schema in [row[0] for row in results] else False

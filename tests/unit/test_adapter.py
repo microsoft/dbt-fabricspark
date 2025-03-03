@@ -5,7 +5,7 @@ import dbt.flags as flags
 from dbt.exceptions import DbtRuntimeError
 from agate import Row
 from dbt.adapters.fabricspark import SparkAdapter, SparkRelation
-from dbt.utils import config_from_parts_or_dicts
+from .utils import config_from_parts_or_dicts
 
 
 class TestSparkAdapter(unittest.TestCase):

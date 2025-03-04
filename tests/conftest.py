@@ -50,7 +50,14 @@ def _all_profiles_base():
 
 
 def _profile_azure_cli_target():
-    return {**_all_profiles_base(), **{"authentication": "CLI"}}
+    spark_config = {
+        "session_name": os.getenv("SESSION_NAME", "example-session"),
+        "tags": {
+            "project": os.getenv("SESSION_NAME", "example-session"),
+            "user": "pvenkat@microsoft.com",
+        },
+    }
+    return {**_all_profiles_base(), **{"authentication": "CLI"}, **{"spark_config": spark_config}}
 
 
 def _profile_azure_spn_target():

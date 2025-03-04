@@ -22,12 +22,28 @@ class SparkCredentials(Credentials):
     authentication: str = "az_cli"
     connect_retries: int = 1
     connect_timeout: int = 10
-    livy_session_parameters: Dict[str, Any] = field(default_factory=dict)
     create_shortcuts: Optional[bool] = False
     retry_all: bool = False
     shortcuts_json_str: Optional[str] = None
     lakehouse_schemas_enabled: bool = False
     accessToken: Optional[str] = None
+
+    # spark_config:
+    #     name: "example-session"
+    #     archives:
+    #         - "example-archive.zip"
+    #     conf:
+    #         spark.executor.memory: "2g"
+    #         spark.executor.cores: "2"
+    #     tags:
+    #         project: "example-project"
+    #         user: "example-user"
+    #     driverMemory: "2g"
+    #     driverCores: 2
+    #     executorMemory: "4g"
+    #     executorCores: 4
+    #     numExecutors: 3
+    spark_config: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def __pre_deserialize__(cls, data: Any) -> Any:
@@ -61,6 +77,14 @@ class SparkCredentials(Credentials):
 
         if not self.lakehouse_schemas_enabled and self.lakehouse is not None:
             self.schema = self.lakehouse
+
+        """ Validate spark_config fields manually. """
+        # other keys - "archives", "conf", "tags", "driverMemory", "driverCores", "executorMemory", "executorCores", "numExecutors"
+        required_keys = ["name"]
+
+        for key in required_keys:
+            if key not in self.spark_config:
+                raise ValueError(f"Missing required key: {key}")
 
     @property
     def type(self) -> str:

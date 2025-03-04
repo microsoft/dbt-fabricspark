@@ -65,7 +65,6 @@ def get_cli_access_token(credentials: SparkCredentials) -> AccessToken:
     """
     _ = credentials
     accessToken = AzureCliCredential().get_token(AZURE_CREDENTIAL_SCOPE)
-    logger.debug("CLI - Fetched Access Token")
     return accessToken
 
 
@@ -86,7 +85,6 @@ def get_sp_access_token(credentials: SparkCredentials) -> AccessToken:
     accessToken = ClientSecretCredential(
         str(credentials.tenant_id), str(credentials.client_id), str(credentials.client_secret)
     ).get_token(AZURE_CREDENTIAL_SCOPE)
-    logger.info("SPN - Fetched Access Token")
     return accessToken
 
 
@@ -108,7 +106,6 @@ def get_default_access_token(credentials: SparkCredentials) -> AccessToken:
 
     # Create an AccessToken instance
     accessToken = AccessToken(token=credentials.accessToken, expires_on=expires_on)
-    logger.info("SPN - Default- Fetched Access Token")
     return accessToken
 
 
@@ -127,7 +124,7 @@ def get_headers(credentials: SparkCredentials, tokenPrint: bool = False) -> dict
 
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {accessToken.token}"}
     if tokenPrint:
-        print(f"token is : {accessToken.token}")
+        logger.debug(f"token is : {accessToken.token}")
 
     return headers
 
@@ -154,28 +151,30 @@ class LivySession:
     def create_session(self, data) -> str:
         # Create sessions
         response = None
-        print("Creating Livy session (this may take a few minutes)")
+        logger.debug("Creating Livy session (this may take a few minutes)")
         try:
-            print(f"data is {data}")
+            # logger.debug(f"data is {data}")
             response = requests.post(
                 self.connect_url + "/sessions",
                 data=json.dumps(data),
-                headers=get_headers(self.credential, True),
+                headers=get_headers(self.credential, False),
             )
             if response.status_code == 200:
                 logger.debug("Initiated Livy Session...")
             response.raise_for_status()
         except requests.exceptions.ConnectionError as c_err:
-            print("Connection Error :", c_err)
+            raise Exception("Connection Error :", c_err.response.json())
         except requests.exceptions.HTTPError as h_err:
-            print("Http Error: ", h_err)
+            raise Exception("Http Error: ", h_err.response.json())
         except requests.exceptions.Timeout as t_err:
-            print("Timeout Error: ", t_err)
+            raise Exception("Timeout Error: ", t_err.response.json())
         except requests.exceptions.RequestException as a_err:
-            print("Authorization Error: ", a_err)
+            raise Exception("Authorization Error: ", a_err.response.json())
+        except Exception as ex:
+            raise Exception(ex) from ex
 
         if response is None:
-            raise Exception("Invalid response from livy server")
+            raise Exception("Invalid response from Livy server")
 
         self.session_id = None
         try:
@@ -183,7 +182,14 @@ class LivySession:
         except requests.exceptions.JSONDecodeError as json_err:
             raise Exception("Json decode error to get session_id") from json_err
 
-        # Wait for started state
+        # Wait for the session to start
+        self.wait_for_session_start()
+
+        logger.debug("Livy session created successfully")
+        return self.session_id
+
+    def wait_for_session_start(self) -> None:
+        """Wait for the Livy session to reach the 'idle' state."""
         while True:
             res = requests.get(
                 self.connect_url + "/sessions/" + self.session_id,
@@ -197,10 +203,8 @@ class LivySession:
                 self.is_new_session_required = False
                 break
             elif res["livyInfo"]["currentState"] == "dead":
-                print("ERROR, cannot create a livy session")
+                logger.error("ERROR, cannot create a livy session")
                 raise FailedToConnectError("failed to connect")
-        print("Livy session created successfully")
-        return self.session_id
 
     def delete_session(self) -> None:
         logger.debug(f"Closing the livy session: {self.session_id}")
@@ -447,7 +451,6 @@ class LivyConnection:
         self.credential: SparkCredentials = credentials
         self.connect_url = credentials.lakehouse_endpoint
         self.session_id = livy_session.session_id
-        self.livy_session_parameters = credentials.livy_session_parameters
 
         self._cursor = LivyCursor(self.credential, livy_session)
 
@@ -499,7 +502,7 @@ class LivySessionManager:
     @staticmethod
     def connect(credentials: SparkCredentials) -> LivyConnection:
         # the following opens an spark / sql session
-        data = {"name": "test-session"}  # 'spark'
+        data = credentials.spark_config
         if LivySessionManager.livy_global_session is None:
             LivySessionManager.livy_global_session = LivySession(credentials)
             LivySessionManager.livy_global_session.create_session(data)

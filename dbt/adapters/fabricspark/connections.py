@@ -141,18 +141,14 @@ class SparkConnectionManager(SQLConnectionManager):
         for i in range(1 + creds.connect_retries):
             try:
                 if creds.method == SparkConnectionMethod.LIVY:
-                    try:
-                        thread_id = cls.get_thread_identifier()
-                        if thread_id not in cls.connection_managers:
-                            cls.connection_managers[thread_id] = LivySessionManager()
-                        handle = LivySessionConnectionWrapper(
-                            cls.connection_managers[thread_id].connect(creds)
-                        )
-                        connection.state = ConnectionState.OPEN
-                        # SparkConnectionManager.fetch_spark_version(handle)
-                    except Exception as ex:
-                        logger.debug("Connection error: {}".format(ex))
-                        connection.state = ConnectionState.FAIL
+                    thread_id = cls.get_thread_identifier()
+                    if thread_id not in cls.connection_managers:
+                        cls.connection_managers[thread_id] = LivySessionManager()
+                    handle = LivySessionConnectionWrapper(
+                        cls.connection_managers[thread_id].connect(creds)
+                    )
+                    connection.state = ConnectionState.OPEN
+
                 else:
                     raise DbtConfigError(f"invalid credential method: {creds.method}")
                 break
@@ -185,14 +181,12 @@ class SparkConnectionManager(SQLConnectionManager):
                     logger.warning(msg)
                     time.sleep(creds.connect_timeout)
                 else:
-                    raise FailedToConnectError("failed to connect") from e
+                    raise FailedToConnectError(
+                        f"failed to connect: {str(e)}. If the error did not help, common reasons for errors: \n1. Invalid/expired credentials (if using CLI authentication, re-run `az login` in your terminal) \n2. Invalid endpoint \n3. Invalid workspaceid or lakehouseid (do you have the correct permissions?) \n4. Invalid or non-existent shortcuts json path, or improperly formatted shortcuts"
+                    ) from e
         else:
             raise exc  # type: ignore
 
-        if handle is None:
-            raise FailedToConnectError(
-                "Failed to connect to Livy session. Common reasons for errors: \n1. Invalid/expired credentials (if using CLI authentication, re-run `az login` in your terminal) \n2. Invalid endpoint \n3. Invalid workspaceid or lakehouseid (do you have the correct permissions?) \n4. Invalid or non-existent shortcuts json path, or improperly formatted shortcuts"
-            )
         connection.handle = handle
         connection.state = ConnectionState.OPEN
         return connection

@@ -44,7 +44,7 @@ def _get_plugin_version_dict():
 
 
 package_name = "dbt-fabricspark"
-package_version = "1.8.0b1"
+package_version = "1.8.0b2"
 description = """The Microsoft Fabric Spark adapter plugin for dbt"""
 
 setup(

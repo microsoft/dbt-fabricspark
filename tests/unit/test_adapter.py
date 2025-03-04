@@ -41,7 +41,6 @@ class TestSparkAdapter(unittest.TestCase):
                         "connect_timeout": 10,
                         "threads": 1,
                         "endpoint": "https://dailyapi.fabric.microsoft.com/v1",
-                        "livy_session_parameters": {"spark.driver.memory": "4g"},
                     }
                 },
                 "target": "test",
@@ -289,7 +288,6 @@ class TestSparkAdapter(unittest.TestCase):
                     "connect_timeout": 10,
                     "threads": 1,
                     "endpoint": "https://dailyapi.fabric.microsoft.com/v1",
-                    "livy_session_parameters": {"spark.driver.memory": "4g"},
                 }
             },
             "target": "test",

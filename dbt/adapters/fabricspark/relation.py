@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from dbt.adapters.base.relation import BaseRelation, Policy
 
 from dbt.exceptions import DbtRuntimeError
-from dbt.events import AdapterLogger
+from dbt.adapters.events.logging import AdapterLogger
 
 logger = AdapterLogger("fabricspark")
 

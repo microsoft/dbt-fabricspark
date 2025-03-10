@@ -1,4 +1,4 @@
-from dbt.adapters.base import Credentials
+from dbt.adapters.contracts.connection import Credentials
 from typing import Any, Dict, Optional, Tuple
 from dataclasses import dataclass, field
 import dbt.exceptions
@@ -56,7 +56,8 @@ class SparkCredentials(Credentials):
             #     f"On Spark, lakehouse must be omitted or have the same value as"
             # #     f" schema."
             # # )
-            self.schema = self.lakehouse      
+            self.schema = f"{self.lakehouse}.{self.schema}"    # Support Fabric Lakehouse schema
+            # self.schema = self.lakehouse
 
     @property
     def type(self) -> str:

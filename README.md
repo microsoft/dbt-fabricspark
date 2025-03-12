@@ -7,6 +7,8 @@ dbt-FabricSpark is an adapter that connects dbt to Microsoft Fabric Lakehouse, f
 - **Enhanced Functionality**: Bug fixes and optimizations for better compatibility with Microsoft Fabric Lakehouse.
 - **Seamless Integration**: Fully compatible with dbt’s existing workflow. (i.e. use the same dbt-core package to manage your warehouse and lakehouse.)
 
+[![Introduction Video](https://www.bilibili.com/video/BV1jcQnYsEh3)](https://www.bilibili.com/video/BV1jcQnYsEh3)
+
 ## Quick Start
 
 This quick demo shows how to convert parent-child pairs into hierarchical path strings in Microsoft Fabric Lakehouse using a dbt project. In practical scenarios, it displays the hierarchical relationship of financial account structures (also known as COA, Chart of Accounts), such as `EBITDA > NOI > Revenue > Sales Income`. To simplify data representation, administrative data from Shanghai is used.

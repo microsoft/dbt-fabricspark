@@ -29,9 +29,13 @@
     {{ adapter.drop_relation(existing_relation.incorporate(type=old_relation_type)) }}
   {% endif %}
 
-  -- build model
+  -- build model, support Python models, wlliang02@glp.com
   {%- call statement('main', language=language) -%}
-    {{ create_table_as(False, target_relation, compiled_code, language) }}
+    {%- if language == 'sql' -%}
+      {{ create_table_as(False, target_relation, compiled_code, language) }}
+    {%- elif language == 'python' -%}
+      {{ py_write_table(compiled_code, target_relation) }}
+    {% endif %}
   {%- endcall -%}
 
   /*
@@ -99,6 +103,14 @@ else:
   raise Exception(msg)
 
 df.write.mode("overwrite").format("{{ config.get('file_format', 'delta') }}").option("overwriteSchema", "true").saveAsTable("{{ target_relation }}")
+import json
+# Do not print the whole dataframe, only the first 10 rows for performance reasons
+sample_df = df.limit(10).na.fill("null")
+result = {
+    'data': [ list(json.loads(row).values()) for row in sample_df.toJSON().collect() ],
+    'schema': df.schema.jsonValue()
+}
+%json result
 {%- endmacro -%}
 
 {%macro py_script_comment()%}

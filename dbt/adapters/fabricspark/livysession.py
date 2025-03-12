@@ -9,12 +9,14 @@ import datetime as dt
 from types import TracebackType
 from typing import Any
 import dbt.exceptions
-from dbt.events import AdapterLogger
+from dbt.adapters.events.logging import AdapterLogger
 from dbt.utils import DECIMALS
 from azure.core.credentials import AccessToken
 from azure.identity import AzureCliCredential, ClientSecretCredential
 from dbt.adapters.fabricspark.fabric_spark_credentials import SparkCredentials
 from dbt.adapters.fabricspark.shortcuts import ShortcutClient
+import textwrap
+from dbt_common.exceptions import DbtDatabaseError
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
 NUMBERS = DECIMALS + (int, float)
@@ -101,7 +103,7 @@ def get_headers(credentials: SparkCredentials, tokenPrint: bool = False) -> dict
 
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {accessToken.token}"}
     if tokenPrint:
-        logger.debug(accessToken.token)
+        logger.debug("accessToken:"+accessToken.token)
 
     return headers
 
@@ -193,9 +195,6 @@ class LivySession:
             logger.error(f"Unable to close the livy session {self.session_id}, error: {ex}")
 
     def is_valid_session(self) -> bool:
-        if (self.session_id is None):
-            logger.error("Session ID is None")
-            return False
         res = requests.get(
             self.connect_url + "/sessions/" + self.session_id,
             headers=get_headers(self.credential, False),
@@ -279,13 +278,14 @@ class LivyCursor:
         """
         self._rows = None
 
-    def _submitLivyCode(self, code) -> Response:
+    # Add language parameter for diffrent workloads(sql/pyspark).
+    def _submitLivyCode(self, code, language="sql") -> Response:
         if self.livy_session.is_new_session_required:
             LivySessionManager.connect(self.credential)
             self.session_id = self.livy_session.session_id
 
-        # Submit code
-        data = {"code": code, "kind": "sql"}
+        # Submit code. Enable pyspark tasks.
+        data = {"code": code, "kind": language}
         logger.debug(
             f"Submitted: {data} {self.connect_url + '/sessions/' + self.session_id + '/statements'}"
         )
@@ -309,6 +309,10 @@ class LivyCursor:
         code = re.sub(r"\s*/\*(.|\n)*?\*/\s*", "\n", sql, re.DOTALL).strip()
         return code
 
+    # Trim any common leading whitespace in Python codes.
+    def _getLivyPyspark(self, code) -> str:
+        return textwrap.dedent(code)
+
     def _getLivyResult(self, res_obj) -> Response:
         json_res = res_obj.json()
         while True:
@@ -326,14 +330,17 @@ class LivyCursor:
                 return res
             time.sleep(DEFAULT_POLL_STATEMENT_WAIT)
 
-    def execute(self, sql: str, *parameters: Any) -> None:
+    # Support pyspark tasks.
+    def execute(self, code: str, language: str, *parameters: Any) -> None:
         """
-        Execute a sql statement.
+        Execute a sql statement or a pyspark statement.
 
         Parameters
         ----------
-        sql : str
-            Execute a sql statement.
+        code : str
+            Execute a sql statement or a pyspark statement.
+        language : str
+            Specify workloads: sql/pyspark
         *parameters : Any
             The parameters.
 
@@ -346,15 +353,20 @@ class LivyCursor:
         ------
         https://github.com/mkleehammer/pyodbc/wiki/Cursor#executesql-parameters
         """
+        # print("LivyCursor.execute()".center(80,'-'))
+        # print(f"language={language}")
+        # print(code)
         if len(parameters) > 0:
-            sql = sql % parameters
+            code = code % parameters
 
         # TODO: handle parameterised sql
 
-        res = self._getLivyResult(self._submitLivyCode(self._getLivySQL(sql)))
+        # final process for submition
+        final_code = self._getLivyPyspark(code) if language == "pyspark" else self._getLivySQL(code)
+        
+        res = self._getLivyResult(self._submitLivyCode(final_code, language))
         logger.debug(res)
         if res["output"]["status"] == "ok":
-            # values = res['output']['data']['application/json']
             values = res["output"]["data"]["application/json"]
             if len(values) >= 1:
                 self._rows = values["data"]  # values[0]['values']
@@ -367,8 +379,7 @@ class LivyCursor:
         else:
             self._rows = None
             self._schema = None
-
-            raise dbt.exceptions.DbtDatabaseError(
+            raise DbtDatabaseError(
                 "Error while executing query: " + res["output"]["evalue"]
             )
 
@@ -481,11 +492,8 @@ class LivySessionManager:
             __class__.livy_global_session.is_new_session_required = False
             # create shortcuts, if there are any
             if credentials.shortcuts_json_path:
-                try:
-                    shortcut_client = ShortcutClient(accessToken.token, credentials.workspaceid, credentials.lakehouseid, credentials.endpoint)
-                    shortcut_client.create_shortcuts(credentials.shortcuts_json_path)
-                except Exception as ex:
-                    logger.error(f"Unable to create shortcuts: {ex}")
+                shortcut_client = ShortcutClient(accessToken.token, credentials.workspaceid, credentials.lakehouseid)
+                shortcut_client.create_shortcuts(credentials.shortcuts_json_path)
         elif not __class__.livy_global_session.is_valid_session():
             __class__.livy_global_session.delete_session()
             __class__.livy_global_session.create_session(data)
@@ -500,11 +508,9 @@ class LivySessionManager:
 
     @staticmethod
     def disconnect() -> None:
-        if __class__.livy_global_session is not None and __class__.livy_global_session.is_valid_session():
+        if __class__.livy_global_session.is_valid_session():
             __class__.livy_global_session.delete_session()
             __class__.livy_global_session.is_new_session_required = True
-        else:
-            logger.debug("No session to disconnect")
 
 
 class LivySessionConnectionWrapper(object):
@@ -530,15 +536,23 @@ class LivySessionConnectionWrapper(object):
     def fetchall(self):
         return self._cursor.fetchall()
 
-    def execute(self, sql, bindings=None):
+    # Add language parameter
+    def execute(self, sql, language, bindings=None):
+        # print("LivySessionConnectionWrapper.execute()".center(80,'-'))
+        # print(f"language={language}")
+        # TODO: get model language from job context and use that here
+        if language not in ['sql','pyspark']:
+            language = 'sql'
+        if 'def model(dbt, session):' in sql:
+            language = 'pyspark'
         if sql.strip().endswith(";"):
             sql = sql.strip()[:-1]
 
         if bindings is None:
-            self._cursor.execute(sql)
+            self._cursor.execute(sql, language)
         else:
             bindings = [self._fix_binding(binding) for binding in bindings]
-            self._cursor.execute(sql, *bindings)
+            self._cursor.execute(sql, language, *bindings)
 
     @property
     def description(self):

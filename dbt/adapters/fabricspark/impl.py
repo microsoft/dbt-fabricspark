@@ -1,25 +1,28 @@
 import re
 from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Union, Tuple, Callable, Set
+from typing import Any, Dict, Iterable, List, Optional, Union, Tuple, Callable, Set, Type
 from dbt.adapters.base.relation import InformationSchema
 from dbt.contracts.graph.manifest import Manifest
 from typing_extensions import TypeAlias
 import agate
 import dbt
 import dbt.exceptions
-from dbt.adapters.base import AdapterConfig
+from dbt.adapters.base import AdapterConfig, PythonJobHelper
 from dbt.adapters.base.impl import catch_as_completed, ConstraintSupport
 from dbt.adapters.sql import SQLAdapter
 from dbt.adapters.fabricspark import SparkConnectionManager
 from dbt.adapters.fabricspark import SparkRelation
 from dbt.adapters.fabricspark import SparkColumn
 from dbt.adapters.base import BaseRelation
-from dbt.clients.agate_helper import DEFAULT_TYPE_TESTER
+from dbt_common.clients.agate_helper import DEFAULT_TYPE_TESTER
 from dbt.contracts.graph.nodes import ConstraintType
-from dbt.contracts.relation import RelationType
-from dbt.events import AdapterLogger
-from dbt.utils import executor, AttrDict
+from dbt.adapters.contracts.relation import RelationType
+from dbt.adapters.events.logging import AdapterLogger
+from dbt_common.utils import executor, AttrDict
+
+from dbt.adapters.fabricspark.python_submissions import BaseFabricSparkHelper
+from dbt.adapters.contracts.connection import AdapterResponse
 
 logger = AdapterLogger("fabricspark")
 
@@ -439,7 +442,7 @@ class SparkAdapter(SQLAdapter):
     def run_sql_for_tests(self, sql, fetch, conn):
         cursor = conn.handle.cursor()
         try:
-            cursor.execute(sql)
+            cursor.execute(sql, "sql")    # Add language parameter.
             if fetch == "one":
                 if hasattr(cursor, "fetchone"):
                     return cursor.fetchone()
@@ -455,6 +458,28 @@ class SparkAdapter(SQLAdapter):
             raise
         finally:
             conn.transaction_open = False
+
+    # Add Python Model Support
+    @property
+    def default_python_submission_method(self) -> str:
+        return "livy_session_statement"
+
+    # Add Python Model Support
+    @property
+    def python_submission_helpers(self) -> Dict[str, Type[PythonJobHelper]]:
+        # TODO: Figure out submission_method enumerates to enable Livy Batch Jobs.
+        # The current submission method returns 'workflow_job', but in reality, what we need is a Livy session statement job.
+        # The keyword 'workflow_job' cannot be found in dbt-spark, dbt-fabricsspark, or dbt-core.
+        # I assume the two types of jobs are defined as 'livy_session_batch' and 'livy_session_statement'.
+        return {
+            "workflow_job": BaseFabricSparkHelper,
+            "livy_session_statement": BaseFabricSparkHelper,
+            "livy_session_batch": BaseFabricSparkHelper,
+        }
+
+    # Add Python Model Support
+    def generate_python_submission_response(self, submission_result: Any) -> AdapterResponse:
+        return self.connections.get_response(None)
 
     def standardize_grants_dict(self, grants_table: agate.Table) -> dict:
         grants_dict: Dict[str, List[str]] = {}
@@ -475,7 +500,7 @@ class SparkAdapter(SQLAdapter):
 
     def debug_query(self) -> None:
         """Override for DebugTask method"""
-        self.execute("select 1 as id")
+        self.execute("select 1 as id", "sql")    # Add language parameter.
 
 
 # spark does something interesting with joins when both tables have the same

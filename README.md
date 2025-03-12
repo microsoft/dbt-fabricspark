@@ -7,7 +7,8 @@ dbt-FabricSpark is an adapter that connects dbt to Microsoft Fabric Lakehouse, f
 - **Enhanced Functionality**: Bug fixes and optimizations for better compatibility with Microsoft Fabric Lakehouse.
 - **Seamless Integration**: Fully compatible with dbt’s existing workflow. (i.e. use the same dbt-core package to manage your warehouse and lakehouse.)
 
-[![Introduction Video](https://www.bilibili.com/video/BV1jcQnYsEh3)](https://www.bilibili.com/video/BV1jcQnYsEh3)
+[![Introduction Video](https://i0.hdslb.com/bfs/new_dyn/7ae198f27aa4052a52caded247d5d2b130324339.jpg@1192w.avif)](https://www.bilibili.com/video/BV1jcQnYsEh3)
+*Click to play the video*
 
 ## Quick Start
 

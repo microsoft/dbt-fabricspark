@@ -1,87 +1,21 @@
+import time
 import requests
 import json
-from dataclasses import dataclass
-from typing import Optional
-from enum import Enum
-from dbt.events import AdapterLogger
+from dbt.adapters.events.logging import AdapterLogger
+from dbt.adapters.fabricspark.shortcut import Shortcut, TargetName
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
-
-class TargetName(Enum):
-    onelake = "onelake"
-
-@dataclass
-class Shortcut:
-    """
-    A shortcut that can be created in different target systems.
-
-    Attributes:
-        path (str): The path where the shortcut will be created.
-        name (str): The name of the shortcut.
-        target (TargetName): The target system where the shortcut will be created -- only 'onelake' is supported for now.
-        source_path (Optional[str]): The source path for the shortcut ('onelake' target).
-        source_workspace_id (Optional[str]): The source workspace ID for the shortcut ('onelake' target).
-        source_item_id (Optional[str]): The source item ID for the shortcut ('onelake' target).
-        location (Optional[str]): The location for the shortcut ('amazonS3' and 'adlsGen2' targets).
-        subpath (Optional[str]): The subpath for the shortcut ('amazonS3' and 'adlsGen2' targets).
-        connection_id (Optional[str]): The connection ID for the shortcut ('amazonS3', 'adlsGen2', and 'dataverse' targets).
-        delta_lake_folder (Optional[str]): The delta lake folder for the shortcut ('dataverse' target).
-        environment_domain (Optional[str]): The environment domain for the shortcut ('dataverse' target).
-        table_name (Optional[str]): The table name for the shortcut ('dataverse' target).
-    """
-    # the path where the shortcut will be created
-    path: str = None
-    shortcut_name: str = None
-    target: TargetName = None
-    # onelake specific
-    source_path: Optional[str] = None
-    source_workspace_id: Optional[str] = None
-    source_item_id: Optional[str] = None
-
-    def __post_init__(self):
-        if self.path is None:
-            raise ValueError("destination_path is required")
-        if self.shortcut_name is None:
-            raise ValueError("name is required")
-        if self.target not in TargetName:
-            raise ValueError("target must be one of 'onelake', 'amazonS3', 'adlsGen2', or 'dataverse'")
-        
-        if self.target == TargetName.onelake:
-            if self.source_path is None:
-                raise ValueError(f"source_path is required for {self.target}")
-            if self.source_workspace_id is None:
-                raise ValueError(f"source_workspace_id is required for {self.target}")
-            if self.source_item_id is None:
-                raise ValueError(f"source_item_id is required for {self.target}")
-    
-    def __str__(self):
-        """
-        Returns a string representation of the Shortcut object.
-        """
-        return f"Shortcut: {self.shortcut_name} from {self.source_path} to {self.path}"
-    
-    def connect_url(self, endpoint: str = "https://api.fabric.microsoft.com/v1"):
-        """
-        Returns the connect URL for the shortcut.
-        """
-        return f"{endpoint}/workspaces/{self.source_workspace_id}/items/{self.source_item_id}/shortcuts/{self.source_path}/{self.shortcut_name}"
-    
-    def get_target_body(self):
-        """
-        Returns the target body for the shortcut based on the target attribute.
-        """
-        if self.target == TargetName.onelake:
-            return {
-                self.target.value: {
-                    "workspaceId": self.source_workspace_id,
-                    "itemId": self.source_item_id,
-                    "path": self.source_path
-                }
-            }
+DEFAULT_POLL_WAIT = 30
 
 
 class ShortcutClient:
-    def __init__(self, token: str, workspace_id: str, item_id: str, endpoint: str = "https://api.fabric.microsoft.com/v1"):
+    def __init__(
+        self,
+        token: str,
+        workspace_id: str,
+        item_id: str,
+        endpoint: str = "https://api.fabric.microsoft.com/v1",
+    ):
         """
         Initializes a ShortcutClient object.
 
@@ -95,7 +29,7 @@ class ShortcutClient:
         self.item_id = item_id
         self.endpoint = endpoint
 
-    def parse_json(self, json_str: str):
+    def parse_json(self, json_str: str) -> list:
         """
         Parses a JSON string into a list of Shortcut objects.
 
@@ -105,7 +39,7 @@ class ShortcutClient:
         shortcuts = []
         try:
             parsed_json = json.loads(json_str)
-            for shortcut in parsed_json:
+            for shortcut in parsed_json["shortcuts"]:
                 # convert string target to TargetName enum
                 shortcut["target"] = TargetName(shortcut["target"])
                 try:
@@ -116,60 +50,69 @@ class ShortcutClient:
             return shortcuts
         except Exception as e:
             raise ValueError(f"Could not parse JSON: {json_str} with error: {e}")
-    
-    def create_shortcuts(self, json_path: str, max_retries: int = 3):
+
+    def create_shortcuts(self, shortcuts_json_str: str, max_retries: int = 3) -> None:
         """
-        Creates shortcuts from a JSON file.
+        Creates shortcuts from a profile.yaml configuration.
 
         Args:
             json_path (str): The path to the JSON file containing the shortcuts.
             retry (bool): Whether to retry creating shortcuts if there is an error (default: True).
         """
+
         json_str = None
-        with open(json_path, "r") as f:
-            json_str = f.read()
-        if json_str is None:
-            raise ValueError(f"Could not read JSON file at {json_path}")
-        for shortcut in self.parse_json(json_str):
-            logger.debug(f"Creating shortcut: {shortcut}")
+        if shortcuts_json_str is not None or shortcuts_json_str == "":
+            json_str = shortcuts_json_str
+        else:
+            with open("shortcuts.json", "r") as f:
+                json_str = f.read()
+            logger.debug("Read from shortcuts.json file")
+        shortcuts = self.parse_json(json_str)
+
+        for shortcut in shortcuts:
+            logger.debug(f"Creating a shortcut: {shortcut}")
             while max_retries > 0:
                 try:
                     self.create_shortcut(shortcut)
                     break
                 except Exception as e:
-                    logger.debug(f"Failed to create shortcut: {shortcut} with error: {e}. Retrying...")
+                    logger.debug(
+                        f"Failed to create shortcut: {shortcut} with error: {e}. Retrying..."
+                    )
                     max_retries -= 1
             if max_retries == 0:
-                raise f"Failed to create shortcut: {shortcut} after {max_retries} retries, failing..."
-            
-    def check_exists(self, shortcut: Shortcut):
+                raise ValueError(
+                    f"Failed to create shortcut: {shortcut} after {max_retries} retries, failing..."
+                )
+
+    def check_if_exists_and_delete_shortcut(self, shortcut: Shortcut) -> bool:
         """
         Checks if a shortcut exists.
 
         Args:
             shortcut (Shortcut): The shortcut to check.
         """
-        headers = {
-            "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json"
-        }
-        response = requests.get(shortcut.connect_url(self.endpoint), headers=headers)
+        headers = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
+        shortcut_url = f"{self.endpoint}/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts/{shortcut.path}/{shortcut.shortcut_name}"
+        response = requests.get(shortcut_url, headers=headers)
         # check if the error is ItemNotFound
         if response.status_code == 404:
             return False
-        response.raise_for_status() # raise an exception if there are any other errors
+        response.raise_for_status()  # raise an exception if there are any other errors
         # else, check that the target body of the existing shortcut matches the target body of the shortcut they want to create
         response_json = response.json()
         response_target = response_json["target"]
         target_body = shortcut.get_target_body()
         if response_target != target_body:
             # if the response target does not match the target body, delete the existing shortcut, then return False so we can create the new shortcut
-            logger.debug(f"Shortcut {shortcut} already exists with different source path, workspace ID, and/or item ID. Deleting exisiting shortcut and recreating based on JSON.")
+            logger.debug(
+                f"Shortcut {shortcut} already exists with different source path, workspace ID, and/or item ID. Deleting exisiting shortcut and recreating based on JSON."
+            )
             self.delete_shortcut(response_json["path"], response_json["name"])
             return False
         return True
-    
-    def delete_shortcut(self, shortcut_path: str, shortcut_name: str):
+
+    def delete_shortcut(self, shortcut_path: str, shortcut_name: str) -> None:
         """
         Deletes a shortcut.
 
@@ -178,34 +121,29 @@ class ShortcutClient:
             shortcut_name (str): The name of the shortcut.
         """
         connect_url = f"{self.endpoint}/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts/{shortcut_path}/{shortcut_name}"
-        headers = {
-            "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json"
-        }
-        logger.debug(f"Deleting shortcut {shortcut_name} at {shortcut_path} from workspace {self.workspace_id} and item {self.item_id}")
+        headers = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
+        logger.debug(
+            f"Deleting shortcut {shortcut_name} at {shortcut_path} from workspace {self.workspace_id} and item {self.item_id}"
+        )
         response = requests.delete(connect_url, headers=headers)
+        time.sleep(DEFAULT_POLL_WAIT)
         response.raise_for_status()
-            
-    def create_shortcut(self, shortcut: Shortcut):
+
+    def create_shortcut(self, shortcut: Shortcut) -> None:
         """
         Creates a shortcut.
 
         Args:
             shortcut (Shortcut): The shortcut to create.
         """
-        if self.check_exists(shortcut):
+        if self.check_if_exists_and_delete_shortcut(shortcut):
             logger.debug(f"Shortcut {shortcut} already exists, skipping...")
             return
-        connect_url = f"{self.endpoint}/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts"
-        headers = {
-            "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json"
-        }
+        connect_url = (
+            f"{self.endpoint}/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts"
+        )
+        headers = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
         target_body = shortcut.get_target_body()
-        body = {
-            "path": shortcut.path,
-            "name": shortcut.shortcut_name,
-            "target": target_body
-        }
+        body = {"path": shortcut.path, "name": shortcut.shortcut_name, "target": target_body}
         response = requests.post(connect_url, headers=headers, data=json.dumps(body))
         response.raise_for_status()

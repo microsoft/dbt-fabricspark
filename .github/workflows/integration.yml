@@ -9,49 +9,153 @@
 # branch, and when manually triggered.
 
 name: Adapter Integration Tests
-on:  # yamllint disable-line rule:truthy
+on:
   workflow_dispatch:
   pull_request:
     branches:
-      - 'stale*' # Currently setting this inactive as Fabric Spark adapter does not SPN auth.
+      - "main"
+      - "*.latest"
+      - "v*"
 
-# explicitly turn off permissions for `GITHUB_TOKEN`
-permissions: read-all
-
-# will cancel previous workflows triggered by the same event and for the same ref for PRs or same SHA otherwise
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ contains(github.event_name, 'pull_request_target') && github.event.pull_request.head.ref || github.sha }}
-  cancel-in-progress: true
-
-defaults:
-  run:
-    shell: bash
 jobs:
-  test:
-    name: ${{ matrix.test }}
+  integration-tests-fabric-dw:
+    name: Regular
     runs-on: ubuntu-latest
+    permissions:
+      contents: read   # Required to access repository files
+      packages: read   # Grant explicit read access to packages
+      id-token: write  # Needed if using OIDC authentication
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
-        test:
-          - "az_spn"
+        test_file:
+          - tests/functional/adapter/basic/test_base.py
+          - tests/functional/adapter/basic/test_empty.py
+
     steps:
-      - name: AZ CLI login
-        run: az login --service-principal --username="${AZURE_CLIENT_ID}" --password="${AZURE_CLIENT_SECRET}" --tenant="${AZURE_TENANT_ID}"
-        env:
-            AZURE_CLIENT_ID: ${{ secrets.DBT_FABRIC_SPARK_CLIENT_ID }}
-            AZURE_CLIENT_SECRET: ${{ secrets.DBT_FABRIC_SPARK_CLIENT_SECRET }}
-            AZURE_TENANT_ID: ${{ secrets.DBT_FABRIC_SPARK_TENANT_ID }}
+      - name: Azure login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.DBT_AZURE_SP_NAME }}
+          tenant-id: ${{ secrets.DBT_AZURE_TENANT }}
+          allow-no-subscriptions: true
+          federated-token: true
+
+      - name: Generate Unique Names
+        id: name_generation
+        run: |
+          TIMESTAMP=$(date +"%Y%m%d%H%M%S")
+          TEST_FILE="${{ matrix.test_file }}"
+          BASENAME=$(echo "$TEST_FILE" | awk -F/ '{print $NF}')
+          CLEAN_TEST_FILE="${BASENAME%.*}"   # Remove file extension
+
+          LAKEHOUSE_NAME="dbt_test_${TIMESTAMP}_${CLEAN_TEST_FILE}"
+          TOKEN_FILE="token_${CLEAN_TEST_FILE}.txt"
+
+          echo "Lakehouse Name: $LAKEHOUSE_NAME"
+          echo "Token File: $TOKEN_FILE"
+
+          echo "::set-output name=lakehouse_name::$LAKEHOUSE_NAME"
+          echo "::set-output name=token_file::$TOKEN_FILE"
+
+      - name: Fetch Access Token
+        id: fetch_token
+        run: |
+          pip install azure-identity pyodbc azure-core
+
+          python - <<EOF
+          from azure.core.credentials import AccessToken
+          from azure.identity import DefaultAzureCredential
+          import os
+          try:
+              credential = DefaultAzureCredential()
+              token = credential.get_token("https://analysis.windows.net/powerbi/api")
+              token_file = "${{ steps.name_generation.outputs.token_file }}"
+              with open(token_file, "w") as file:
+                file.write(token.token)
+              print(f"::set-output name=access_token::{token.token}")
+          except Exception as e:
+              raise RuntimeError(f"Failed to fetch token: {e}")
+          EOF
+
+      - name: Upload Token File
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.name_generation.outputs.LAKEHOUSE_NAME }}
+          path: ${{ steps.name_generation.outputs.token_file }}
+
+      - name: Create Fabric Lakehouse
+        id: create_lakehouse
+        run: |
+          pip install requests
+
+          python - <<EOF
+          import requests
+
+          access_token = "${{ steps.fetch_token.outputs.access_token }}"
+          workspace_id = "${{ secrets.WORKSPACE_ID }}"
+          lakehouse_name = "${{ steps.name_generation.outputs.lakehouse_name }}"
+
+          url = f"https://msitapi.fabric.microsoft.com/v1/workspaces/{workspace_id}/lakehouses"
+          headers = {
+              "Authorization": f"Bearer {access_token}",
+              "Content-Type": "application/json"
+          }
+          payload = {
+              "displayName": lakehouse_name,
+              "description": f"Lakehouse created for test: {lakehouse_name}"
+          }
+
+          response = requests.post(url, json=payload, headers=headers)
+
+          if response.status_code == 201:
+              lakehouse_id = response.json().get("id")
+              print(f"Lakehouse '{lakehouse_name}' created successfully.")
+              print(f"::set-output name=lakehouse_id::{lakehouse_id}")
+          else:
+              print("Failed to create Lakehouse:", response.text)
+              exit(1)
+          EOF
 
       - uses: actions/checkout@v4
+
       - name: Install dependencies
         run: pip install -r dev_requirements.txt
 
-      - name: Run functional tests
+      - name: Run Functional Test ${{ matrix.test_file }}
         env:
-            DBT_FABRIC_SPARK_WORKSPACE_ID: ${{ secrets.DBT_FABRIC_SPARK_WORKSPACE_ID }}
-            DBT_FABRIC_SPARK_LAKEHOUSE_ID: ${{ secrets.DBT_FABRIC_SPARK_LAKEHOUSE_ID }}
-            DBT_FABRIC_SPARK_CLIENT_ID: ${{ secrets.DBT_FABRIC_SPARK_CLIENT_ID }}
-            DBT_FABRIC_SPARK_CLIENT_SECRET: ${{ secrets.DBT_FABRIC_SPARK_CLIENT_SECRET }}
-            DBT_FABRIC_SPARK_TENANT_ID: ${{ secrets.DBT_FABRIC_SPARK_TENANT_ID }}
-        run: pytest -ra -v tests/functional --profile "${{ matrix.test }}"
+          WORKSPACE_ID: ${{ secrets.WORKSPACE_ID }}
+          LAKEHOUSE_ID: ${{ steps.create_lakehouse.outputs.lakehouse_id }}
+          LAKEHOUSE_NAME: ${{ steps.name_generation.outputs.lakehouse_name }}
+          SCHEMA_NAME: ${{ steps.name_generation.outputs.lakehouse_name }}
+          CLIENT_ID: ${{ secrets.DBT_AZURE_SP_NAME }}
+          TENANT_ID: ${{ secrets.DBT_AZURE_TENANT }}
+          FABRIC_INTEGRATION_TESTS_TOKEN: ${{ steps.fetch_token.outputs.access_token }}
+        run: pytest -ra -v ${{ matrix.test_file }} --profile "int_tests"
+
+      - name: Delete Fabric Lakehouse
+        if: always() && steps.create_lakehouse.outputs.lakehouse_id
+        run: |
+          pip install requests
+
+          python - <<EOF
+          import requests
+
+          access_token = "${{ steps.fetch_token.outputs.access_token }}"
+          workspace_id = "${{ secrets.WORKSPACE_ID }}"
+          lakehouse_id = "${{ steps.create_lakehouse.outputs.lakehouse_id }}"
+
+          url = f"https://api.fabric.microsoft.com/v1/workspaces/{workspace_id}/lakehouses/{lakehouse_id}"
+          headers = {
+              "Authorization": f"Bearer {access_token}",
+              "Content-Type": "application/json"
+          }
+
+          response = requests.delete(url, headers=headers)
+
+          if response.status_code == 200:
+              print(f"Lakehouse '{lakehouse_id}' deleted successfully.")
+          else:
+              print("Failed to delete Lakehouse:", response.text)
+          EOF

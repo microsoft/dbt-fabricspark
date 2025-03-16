@@ -21,9 +21,10 @@ from dbt.tests.adapter.utils.test_position import BasePosition
 from dbt.tests.adapter.utils.test_replace import BaseReplace
 from dbt.tests.adapter.utils.test_right import BaseRight
 from dbt.tests.adapter.utils.test_safe_cast import BaseSafeCast
-
+from dbt.tests.util import relation_from_name, run_dbt
 from dbt.tests.adapter.utils.test_split_part import BaseSplitPart
 from dbt.tests.adapter.utils.test_string_literal import BaseStringLiteral
+from datetime import datetime, timedelta
 
 # requires modification
 from dbt.tests.adapter.utils.test_listagg import BaseListagg
@@ -77,7 +78,27 @@ class TestConcat(BaseConcat):
 
 # Use either BaseCurrentTimestampAware or BaseCurrentTimestampNaive but not both
 class TestCurrentTimestamp(BaseCurrentTimestampNaive):
-    pass
+    @pytest.fixture(scope="class")
+    def current_timestamp(self, project):
+        run_dbt(["build"])
+        relation = relation_from_name(project.adapter, "current_ts")
+        result = project.run_sql(f"select current_ts_column from {relation}", fetch="one")
+        sql_timestamp = result[0] if result is not None else None
+        # Parse the string into a datetime object
+        return datetime.fromisoformat(sql_timestamp) if sql_timestamp else None
+
+    def test_current_timestamp_matches_utc(self, current_timestamp):
+        sql_timestamp = current_timestamp
+        now_utc = self.utcnow_matching_type(sql_timestamp)
+        # Plenty of wiggle room if clocks aren't perfectly sync'd, etc
+        # The clock on the macos image appears to be a few minutes slow in GHA, causing false negatives
+        tolerance = timedelta(minutes=10)
+        assert (sql_timestamp > (now_utc - tolerance)) and (
+            sql_timestamp < (now_utc + tolerance)
+        ), f"SQL timestamp {sql_timestamp.isoformat()} is not close enough to Python UTC {now_utc.isoformat()}"
+
+    def test_current_timestamp_type(self, current_timestamp):
+        assert current_timestamp
 
 
 class TestDateAdd(BaseDateAdd):

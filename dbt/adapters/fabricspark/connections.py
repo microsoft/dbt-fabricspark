@@ -1,17 +1,20 @@
 from contextlib import contextmanager
 import os
-import dbt.exceptions
-
+from dbt_common.exceptions import DbtConfigError, DbtRuntimeError
+from dbt.adapters.contracts.connection import (
+    AdapterResponse,
+    ConnectionState,
+    Connection,
+)
 from dbt.adapters.sql import SQLConnectionManager
-from dbt.contracts.connection import ConnectionState, AdapterResponse
-from dbt.events import AdapterLogger
-from dbt.events.functions import fire_event
-from dbt.events.types import ConnectionUsed, SQLQuery, SQLQueryStatus
-from dbt.utils import DECIMALS
+from dbt.adapters.events.logging import AdapterLogger
+from dbt.adapters.exceptions import FailedToConnectError
+from dbt.adapters.events.types import ConnectionUsed, SQLQuery, SQLQueryStatus
+from dbt_common.events.functions import fire_event
+from dbt_common.utils.encoding import DECIMALS
 from dbt.adapters.fabricspark.livysession import LivySessionConnectionWrapper, LivySessionManager
 
-from dbt.contracts.connection import Connection
-from dbt.dataclass_schema import StrEnum
+from dbt_common.dataclass_schema import StrEnum
 from typing import Any, Optional, Union, Tuple, List, Generator, Iterable, Sequence
 from abc import ABC, abstractmethod
 import time
@@ -88,9 +91,9 @@ class SparkConnectionManager(SQLConnectionManager):
             thrift_resp = exc.args[0]
             if hasattr(thrift_resp, "status"):
                 msg = thrift_resp.status.errorMessage
-                raise dbt.exceptions.DbtRuntimeError(msg)
+                raise DbtRuntimeError(msg)
             else:
-                raise dbt.exceptions.DbtRuntimeError(str(exc))
+                raise DbtRuntimeError(str(exc))
 
     def cancel(self, connection: Connection) -> None:
         connection.handle.cancel()
@@ -120,7 +123,7 @@ class SparkConnectionManager(SQLConnectionManager):
 
         for key in required:
             if not hasattr(creds, key):
-                raise dbt.exceptions.DbtProfileError(
+                raise DbtConfigError(
                     "The config '{}' is required when using the {} method"
                     " to connect to Spark".format(key, method)
                 )
@@ -138,22 +141,16 @@ class SparkConnectionManager(SQLConnectionManager):
         for i in range(1 + creds.connect_retries):
             try:
                 if creds.method == SparkConnectionMethod.LIVY:
-                    try:
-                        thread_id = cls.get_thread_identifier()
-                        if thread_id not in cls.connection_managers:
-                            cls.connection_managers[thread_id] = LivySessionManager()
-                        handle = LivySessionConnectionWrapper(
-                            cls.connection_managers[thread_id].connect(creds)
-                        )
-                        connection.state = ConnectionState.OPEN
-                        # SparkConnectionManager.fetch_spark_version(handle)
-                    except Exception as ex:
-                        logger.debug("Connection error: {}".format(ex))
-                        connection.state = ConnectionState.FAIL
-                else:
-                    raise dbt.exceptions.DbtProfileError(
-                        f"invalid credential method: {creds.method}"
+                    thread_id = cls.get_thread_identifier()
+                    if thread_id not in cls.connection_managers:
+                        cls.connection_managers[thread_id] = LivySessionManager()
+                    handle = LivySessionConnectionWrapper(
+                        cls.connection_managers[thread_id].connect(creds)
                     )
+                    connection.state = ConnectionState.OPEN
+
+                else:
+                    raise DbtConfigError(f"invalid credential method: {creds.method}")
                 break
             except Exception as e:
                 exc = e
@@ -163,7 +160,7 @@ class SparkConnectionManager(SQLConnectionManager):
                     msg = "Failed to connect"
                     if creds.token is not None:
                         msg += ", is your token valid?"
-                    raise dbt.exceptions.FailedToConnectError(msg) from e
+                    raise FailedToConnectError(msg) from e
                 retryable_message = _is_retryable_error(e)
                 if retryable_message and creds.connect_retries > 0:
                     msg = (
@@ -184,12 +181,12 @@ class SparkConnectionManager(SQLConnectionManager):
                     logger.warning(msg)
                     time.sleep(creds.connect_timeout)
                 else:
-                    raise dbt.exceptions.FailedToConnectError("failed to connect") from e
+                    raise FailedToConnectError(
+                        f"failed to connect: {str(e)}. If the error did not help, common reasons for errors: \n1. Invalid/expired credentials (if using CLI authentication, re-run `az login` in your terminal) \n2. Invalid endpoint \n3. Invalid workspaceid or lakehouseid (do you have the correct permissions?) \n4. Invalid or non-existent shortcuts json path, or improperly formatted shortcuts"
+                    ) from e
         else:
             raise exc  # type: ignore
 
-        if handle is None:
-            raise dbt.exceptions.FailedToConnectError("Failed to connect to Livy session. Common reasons for errors: \n1. Invalid/expired credentials (if using CLI authentication, re-run `az login` in your terminal) \n2. Invalid endpoint \n3. Invalid workspaceid or lakehouseid (do you have the correct permissions?) \n4. Invalid or non-existent shortcuts json path, or improperly formatted shortcuts")
         connection.handle = handle
         connection.state = ConnectionState.OPEN
         return connection

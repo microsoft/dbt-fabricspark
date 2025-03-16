@@ -15,7 +15,6 @@ def check_relation_rows(project, snapshot_name, count):
 
 
 class BaseSnapshotTimestamp:
-
     @pytest.fixture(scope="class")
     def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
         profile = {
@@ -33,7 +32,7 @@ class BaseSnapshotTimestamp:
         if profiles_config_update:
             profile.update(profiles_config_update)
         return profile
-    
+
     @pytest.fixture(scope="class")
     def seeds(self):
         return {
@@ -45,7 +44,7 @@ class BaseSnapshotTimestamp:
     @pytest.fixture(scope="class")
     def snapshots(self):
         return {
-            "ts_snapshot.sql": ts_snapshot_sql.replace("target_database=database","target_database=\"dbttest\"").replace("target_schema=schema","target_schema=\"dbttest\""),
+            "ts_snapshot.sql": ts_snapshot_sql,  # .replace("target_database=database","target_database=\"dbttest\"").replace("target_schema=schema","target_schema=\"dbttest\""),
         }
 
     @pytest.fixture(scope="class")
@@ -62,7 +61,7 @@ class BaseSnapshotTimestamp:
                 "+file_format": "delta",
             },
         }
-    
+
     def test_snapshot_timestamp(self, project):
         # seed command
         results = run_dbt(["seed"])

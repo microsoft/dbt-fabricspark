@@ -15,8 +15,8 @@ from dbt.tests.adapter.basic.files import (
     schema_base_yml,
 )
 
-class BaseEphemeral:
 
+class BaseEphemeral:
     @pytest.fixture(scope="class")
     def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
         profile = {
@@ -34,7 +34,7 @@ class BaseEphemeral:
         if profiles_config_update:
             profile.update(profiles_config_update)
         return profile
-    
+
     @pytest.fixture(scope="class")
     def project_config_update(self):
         return {"name": "ephemeral"}
@@ -82,6 +82,7 @@ class BaseEphemeral:
         manifest = get_manifest(project.project_root)
         assert len(manifest.nodes) == 4
         assert len(manifest.sources) == 1
+
 
 class TestEphemeral(BaseEphemeral):
     pass

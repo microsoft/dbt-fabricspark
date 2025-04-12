@@ -1,8 +1,6 @@
 # install latest changes in dbt-core
 # TODO: how to automate switching from develop to version branches?
-#git+https://github.com/dbt-labs/dbt-core.git#egg=dbt-core&subdirectory=core
-git+https://github.com/dbt-labs/dbt-adapters.git#egg=dbt-adapters&subdirectory=dbt-adapters
-git+https://github.com/dbt-labs/dbt-adapters.git#subdirectory=dbt-tests-adapter
+git+https://github.com/dbt-labs/dbt-adapters.git@v1.10.0#egg=dbt-tests-adapter&subdirectory=dbt-tests-adapter
 # if version 1.x or greater -> pin to major version
 # if version 0.x -> pin to minor
 black>=24.3
@@ -32,3 +30,4 @@ wheel~=0.42
 mock~=5.1
 azure-core~=1.26.4
 azure-identity~=1.13.0
+azure-cli==2.60.0

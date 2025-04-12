@@ -219,21 +219,21 @@ class TestSparkConstraintQuotedColumn(FabricSparkLivySetup, BaseConstraintQuoted
     @pytest.fixture(scope="class")
     def expected_sql(self):
         return """
-create or replace table <model_identifier>
-    using delta
-    as
-select
-  id,
-  `from`,
-  date_day
-from
+        create or replace table <model_identifier>
+            using delta
+            as
+        select
+        id,
+        `from`,
+        date_day
+        from
 
-(
-    select
-    'blue' as `from`,
-    1 as id,
-    '2019-01-01' as date_day ) as model_subq
-"""
+        (
+            select
+            'blue' as `from`,
+            1 as id,
+            '2019-01-01' as date_day ) as model_subq
+        """
 
 
 class BaseSparkConstraintsRollbackSetup:

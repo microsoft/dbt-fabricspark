@@ -13,25 +13,28 @@
 
 
 {% macro fabricspark__snapshot_merge_sql(target, source, insert_cols) -%}
+  {%- set columns = config.get("snapshot_table_column_names") or get_snapshot_table_column_names() -%}
 
-    merge into {{ target }} as DBT_INTERNAL_DEST
-    {% if target.is_iceberg %}
-      {# create view only supports a name (no catalog, or schema) #}
-      using {{ source.identifier }} as DBT_INTERNAL_SOURCE
+  merge into {{ target }} as DBT_INTERNAL_DEST
+  {% if target.is_iceberg %}
+    {# create view only supports a name (no catalog, or schema) #}
+    using {{ source.identifier }} as DBT_INTERNAL_SOURCE
+  {% else %}
+    using {{ source }} as DBT_INTERNAL_SOURCE
+  {% endif %}
+  on DBT_INTERNAL_SOURCE.{{ columns.dbt_scd_id }} = DBT_INTERNAL_DEST.{{ columns.dbt_scd_id }}
+  when matched
+    {% if config.get("dbt_valid_to_current") %}
+      and ( DBT_INTERNAL_DEST.{{ columns.dbt_valid_to }} = {{ config.get('dbt_valid_to_current') }} or
+            DBT_INTERNAL_DEST.{{ columns.dbt_valid_to }} is null )
     {% else %}
-      using {{ source }} as DBT_INTERNAL_SOURCE
+      and DBT_INTERNAL_DEST.{{ columns.dbt_valid_to }} is null
     {% endif %}
-    on DBT_INTERNAL_SOURCE.dbt_scd_id = DBT_INTERNAL_DEST.dbt_scd_id
-    when matched
-     and DBT_INTERNAL_DEST.dbt_valid_to is null
-     and DBT_INTERNAL_SOURCE.dbt_change_type in ('update', 'delete')
-        then update
-        set dbt_valid_to = DBT_INTERNAL_SOURCE.dbt_valid_to
-
-    when not matched
-     and DBT_INTERNAL_SOURCE.dbt_change_type = 'insert'
-        then insert *
-    ;
+    and DBT_INTERNAL_SOURCE.dbt_change_type in ('update', 'delete')
+      then update
+      set {{ columns.dbt_valid_to }} = DBT_INTERNAL_SOURCE.{{ columns.dbt_valid_to }}
+  when not matched
+    and DBT_INTERNAL_SOURCE.dbt_change_type = 'insert'
 {% endmacro %}
 
 
@@ -87,7 +90,7 @@
 
   {%- set strategy_name = config.get('strategy') -%}
   {%- set unique_key = config.get('unique_key') %}
-  {%- set file_format = config.get('file_format', 'parquet') -%}
+  {%- set file_format = config.get('file_format') or 'parquet' -%}
   {%- set grant_config = config.get('grants') -%}
 
   {% set target_relation_exists, target_relation = get_or_create_relation(
@@ -126,50 +129,49 @@
   {{ run_hooks(pre_hooks, inside_transaction=True) }}
 
   {% set strategy_macro = strategy_dispatch(strategy_name) %}
-  {% set strategy = strategy_macro(model, "snapshotted_data", "source_data", config, target_relation_exists) %}
+  {% set strategy = strategy_macro(model, "snapshotted_data", "source_data", model['config'], target_relation_exists) %}
 
   {% if not target_relation_exists %}
 
-      {% set build_sql = build_snapshot_table(strategy, model['compiled_code']) %}
-      {% set final_sql = create_table_as(False, target_relation, build_sql) %}
+    {% set build_sql = build_snapshot_table(strategy, model['compiled_code']) %}
+    {% set final_sql = create_table_as(False, target_relation, build_sql) %}
 
   {% else %}
+    {% set columns = config.get("snapshot_table_column_names") or get_snapshot_table_column_names() %}
+    {{ adapter.valid_snapshot_target(target_relation, columns) }}
+    {% set staging_table = spark_build_snapshot_staging_table(strategy, sql, target_relation) %}
 
-      {{ adapter.valid_snapshot_target(target_relation) }}
+    -- this may no-op if the database does not require column expansion
+    {% do adapter.expand_target_column_types(from_relation=staging_table,
+                                              to_relation=target_relation) %}
 
-      {% set staging_table = spark_build_snapshot_staging_table(strategy, sql, target_relation) %}
+    {% set missing_columns = adapter.get_missing_columns(staging_table, target_relation)
+                                  | rejectattr('name', 'equalto', 'dbt_change_type')
+                                  | rejectattr('name', 'equalto', 'DBT_CHANGE_TYPE')
+                                  | rejectattr('name', 'equalto', 'dbt_unique_key')
+                                  | rejectattr('name', 'equalto', 'DBT_UNIQUE_KEY')
+                                  | list %}
 
-      -- this may no-op if the database does not require column expansion
-      {% do adapter.expand_target_column_types(from_relation=staging_table,
-                                               to_relation=target_relation) %}
+    {% do create_columns(target_relation, missing_columns) %}
 
-      {% set missing_columns = adapter.get_missing_columns(staging_table, target_relation)
-                                   | rejectattr('name', 'equalto', 'dbt_change_type')
-                                   | rejectattr('name', 'equalto', 'DBT_CHANGE_TYPE')
-                                   | rejectattr('name', 'equalto', 'dbt_unique_key')
-                                   | rejectattr('name', 'equalto', 'DBT_UNIQUE_KEY')
-                                   | list %}
+    {% set source_columns = adapter.get_columns_in_relation(staging_table)
+                                  | rejectattr('name', 'equalto', 'dbt_change_type')
+                                  | rejectattr('name', 'equalto', 'DBT_CHANGE_TYPE')
+                                  | rejectattr('name', 'equalto', 'dbt_unique_key')
+                                  | rejectattr('name', 'equalto', 'DBT_UNIQUE_KEY')
+                                  | list %}
 
-      {% do create_columns(target_relation, missing_columns) %}
+    {% set quoted_source_columns = [] %}
+    {% for column in source_columns %}
+      {% do quoted_source_columns.append(adapter.quote(column.name)) %}
+    {% endfor %}
 
-      {% set source_columns = adapter.get_columns_in_relation(staging_table)
-                                   | rejectattr('name', 'equalto', 'dbt_change_type')
-                                   | rejectattr('name', 'equalto', 'DBT_CHANGE_TYPE')
-                                   | rejectattr('name', 'equalto', 'dbt_unique_key')
-                                   | rejectattr('name', 'equalto', 'DBT_UNIQUE_KEY')
-                                   | list %}
-
-      {% set quoted_source_columns = [] %}
-      {% for column in source_columns %}
-        {% do quoted_source_columns.append(adapter.quote(column.name)) %}
-      {% endfor %}
-
-      {% set final_sql = snapshot_merge_sql(
-            target = target_relation,
-            source = staging_table,
-            insert_cols = quoted_source_columns
-         )
-      %}
+    {% set final_sql = snapshot_merge_sql(
+          target = target_relation,
+          source = staging_table,
+          insert_cols = quoted_source_columns
+        )
+    %}
 
   {% endif %}
 

@@ -51,16 +51,16 @@ class BaseSnapshotTimestamp:
     def project_config_update(self):
         return {"name": "snapshot_strategy_timestamp"}
 
-    @pytest.fixture(scope="class")
-    def project_config_update(self):
-        return {
-            "seeds": {
-                "+file_format": "delta",
-            },
-            "snapshots": {
-                "+file_format": "delta",
-            },
-        }
+    # @pytest.fixture(scope="class")
+    # def project_config_update(self):
+    #     return {
+    #         "seeds": {
+    #             "+file_format": "delta",
+    #         },
+    #         "snapshots": {
+    #             "+file_format": "delta",
+    #         },
+    #     }
 
     def test_snapshot_timestamp(self, project):
         # seed command

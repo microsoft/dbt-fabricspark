@@ -3,11 +3,11 @@ from typing import Any, Dict, Optional, TypeVar, Union
 from dbt.adapters.base.column import Column
 from dbt_common.dataclass_schema import dbtClassMixin
 
-Self = TypeVar("Self", bound="SparkColumn")
+Self = TypeVar("Self", bound="FabricSparkColumn")
 
 
 @dataclass
-class SparkColumn(dbtClassMixin, Column):
+class FabricSparkColumn(dbtClassMixin, Column):
     table_database: Optional[str] = None
     table_schema: Optional[str] = None
     table_name: Optional[str] = None
@@ -44,7 +44,7 @@ class SparkColumn(dbtClassMixin, Column):
             return "{}({},{})".format("decimal", precision, scale)
 
     def __repr__(self) -> str:
-        return "<SparkColumn {} ({})>".format(self.name, self.data_type)
+        return "<FabricSpark {} ({})>".format(self.name, self.data_type)
 
     @staticmethod
     def convert_table_stats(raw_stats: Optional[str]) -> Dict[str, Any]:

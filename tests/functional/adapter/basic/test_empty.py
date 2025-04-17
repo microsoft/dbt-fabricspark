@@ -1,6 +1,4 @@
 import pytest
-from dbt.tests.util import run_dbt
-import os
 from dbt.tests.adapter.basic.test_empty import BaseEmpty
     
 class TestEmpty(BaseEmpty):

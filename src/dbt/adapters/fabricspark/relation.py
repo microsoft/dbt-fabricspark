@@ -12,23 +12,23 @@ Self = TypeVar("Self", bound="BaseRelation")
 
 
 @dataclass
-class SparkQuotePolicy(Policy):
+class FabricSparkQuotePolicy(Policy):
     database: bool = False
     schema: bool = False
     identifier: bool = False
 
 
 @dataclass
-class SparkIncludePolicy(Policy):
+class FabricSparkIncludePolicy(Policy):
     database: bool = False
     schema: bool = True
     identifier: bool = True
 
 
 @dataclass(frozen=True, eq=False, repr=False)
-class SparkRelation(BaseRelation):
-    quote_policy: Policy = field(default_factory=lambda: SparkQuotePolicy())
-    include_policy: Policy = field(default_factory=lambda: SparkIncludePolicy())
+class FabricSparkRelation(BaseRelation):
+    quote_policy: Policy = field(default_factory=lambda: FabricSparkQuotePolicy())
+    include_policy: Policy = field(default_factory=lambda: FabricSparkIncludePolicy())
     quote_character: str = "`"
     is_delta: Optional[bool] = None
     is_hudi: Optional[bool] = None

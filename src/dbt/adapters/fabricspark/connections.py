@@ -9,13 +9,23 @@ from dbt.adapters.contracts.connection import (
 from dbt.adapters.sql import SQLConnectionManager
 from dbt.adapters.events.logging import AdapterLogger
 from dbt.adapters.exceptions import FailedToConnectError
-from dbt.adapters.events.types import ConnectionUsed, SQLQuery, SQLQueryStatus
+from dbt.adapters.events.types import ConnectionUsed, SQLQuery, SQLQueryStatus,AdapterEventDebug
 from dbt_common.events.functions import fire_event
 from dbt_common.utils.encoding import DECIMALS
 from dbt.adapters.fabricspark.livysession import LivySessionConnectionWrapper, LivySessionManager
 
 from dbt_common.dataclass_schema import StrEnum
-from typing import Any, Optional, Union, Tuple, List, Generator, Iterable, Sequence
+from typing import (
+    Any,
+    Iterable,
+    List,
+    Optional,
+    Tuple,
+    Type,
+    Sequence,
+    Generator,
+    Union,
+)
 from abc import ABC, abstractmethod
 import time
 
@@ -32,13 +42,13 @@ for logger_name in [
 NUMBERS = DECIMALS + (int, float)
 
 
-class SparkConnectionMethod(StrEnum):
+class FabricSparkConnectionMethod(StrEnum):
     LIVY = "livy"
 
 
-class SparkConnectionWrapper(ABC):
+class FabricSparkConnectionWrapper(ABC):
     @abstractmethod
-    def cursor(self) -> "SparkConnectionWrapper":
+    def cursor(self) -> "FabricSparkConnectionWrapper":
         pass
 
     @abstractmethod
@@ -71,7 +81,7 @@ class SparkConnectionWrapper(ABC):
         pass
 
 
-class SparkConnectionManager(SQLConnectionManager):
+class FabricSparkConnectionManager(SQLConnectionManager):
     TYPE = "fabricspark"
 
     connection_managers = {}
@@ -136,11 +146,11 @@ class SparkConnectionManager(SQLConnectionManager):
 
         creds = connection.credentials
         exc = None
-        handle: SparkConnectionWrapper = None
+        handle: FabricSparkConnectionWrapper = None
 
         for i in range(1 + creds.connect_retries):
             try:
-                if creds.method == SparkConnectionMethod.LIVY:
+                if creds.method == FabricSparkConnectionMethod.LIVY:
                     thread_id = cls.get_thread_identifier()
                     if thread_id not in cls.connection_managers:
                         cls.connection_managers[thread_id] = LivySessionManager()
@@ -231,22 +241,22 @@ class SparkConnectionManager(SQLConnectionManager):
 
     @classmethod
     def fetch_spark_version(cls, connection) -> None:
-        if SparkConnectionManager.spark_version:
-            return SparkConnectionManager.spark_version
+        if FabricSparkConnectionManager.spark_version:
+            return FabricSparkConnectionManager.spark_version
 
         try:
             sql = "split(version(), ' ')[0] as version"
             cursor = connection.handle.cursor()
             cursor.execute(sql)
             res = cursor.fetchall()
-            SparkConnectionManager.spark_version = res[0][0]
+            FabricSparkConnectionManager.spark_version = res[0][0]
 
         except Exception as ex:
             # we couldn't get the spark warehouse version, default to version 2
             logger.debug(f"Cannot get spark version, defaulting to version 2. Error: {ex}")
-            SparkConnectionManager.spark_version = "2"
+            FabricSparkConnectionManager.spark_version = "2"
 
-        os.environ["DBT_SPARK_VERSION"] = SparkConnectionManager.spark_version
+        os.environ["DBT_SPARK_VERSION"] = FabricSparkConnectionManager.spark_version
         logger.debug(f"SPARK VERSION {os.getenv('DBT_SPARK_VERSION')}")
 
     def add_query(
@@ -255,7 +265,49 @@ class SparkConnectionManager(SQLConnectionManager):
         auto_begin: bool = True,
         bindings: Optional[Any] = None,
         abridge_sql_log: bool = False,
+        retryable_exceptions: Tuple[Type[Exception], ...] = tuple(),
+        retry_limit: int = 2,
     ) -> Tuple[Connection, Any]:
+        """
+        Retry function encapsulated here to avoid commitment to some
+        user-facing interface.
+        """
+
+        def _execute_query_with_retry(
+            cursor: Any,
+            sql: str,
+            bindings: Optional[Any],
+            retryable_exceptions: Tuple[Type[Exception], ...],
+            retry_limit: int,
+            attempt: int,
+        ):
+            """
+            A success sees the try exit cleanly and avoid any recursive
+            retries. Failure begins a sleep and retry routine.
+            """
+            try:
+                cursor.execute(sql, bindings)
+            except retryable_exceptions as e:
+                # Cease retries and fail when limit is hit.
+                if attempt >= retry_limit:
+                    raise e
+
+                fire_event(
+                    AdapterEventDebug(
+                        message=f"Got a retryable error {type(e)}. {retry_limit-attempt} retries left. Retrying in 5 seconds.\nError:\n{e}"
+                    )
+                )
+                time.sleep(5)
+
+                return _execute_query_with_retry(
+                    cursor=cursor,
+                    sql=sql,
+                    bindings=bindings,
+                    retryable_exceptions=retryable_exceptions,
+                    retry_limit=retry_limit,
+                    attempt=attempt + 1,
+                )
+
         connection = self.get_thread_connection()
         if auto_begin and connection.transaction_open is False:
             self.begin()
@@ -274,6 +326,14 @@ class SparkConnectionManager(SQLConnectionManager):
 
             try:
                 cursor.execute(sql, bindings)
+                _execute_query_with_retry(
+                cursor=cursor,
+                sql=sql,
+                bindings=bindings,
+                retryable_exceptions=retryable_exceptions,
+                retry_limit=retry_limit,
+                attempt=1,
+            )
             except Exception as ex:
                 query_exception = ex
 
@@ -292,7 +352,7 @@ class SparkConnectionManager(SQLConnectionManager):
 
             return connection, cursor
 
-
+    
 def _is_retryable_error(exc: Exception) -> str:
     message = str(exc).lower()
     if "pending" in message or "temporarily_unavailable" in message:

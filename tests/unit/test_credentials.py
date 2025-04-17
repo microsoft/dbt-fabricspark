@@ -1,8 +1,8 @@
-from dbt.adapters.fabricspark import SparkCredentials
+from dbt.adapters.fabricspark import FabricSparkCredentials
 
 
 def test_credentials_server_side_parameters_keys_and_values_are_strings() -> None:
-    credentials = SparkCredentials(
+    credentials = FabricSparkCredentials(
         method="livy",
         authentication="CLI",
         lakehouse="tests",

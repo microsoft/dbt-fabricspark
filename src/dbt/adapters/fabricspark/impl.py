@@ -31,9 +31,9 @@ from dbt.adapters.base.relation import InformationSchema
 
 from dbt.adapters.sql import SQLAdapter
 
-from dbt.adapters.fabricspark import SparkConnectionManager
-from dbt.adapters.fabricspark import SparkRelation
-from dbt.adapters.fabricspark import SparkColumn
+from dbt.adapters.fabricspark import FabricSparkConnectionManager
+from dbt.adapters.fabricspark import FabricSparkColumn
+from dbt.adapters.fabricspark.relation import FabricSparkRelation
 
 from dbt_common.exceptions import DbtRuntimeError, CompilationError
 from dbt_common.utils import AttrDict, executor
@@ -59,7 +59,7 @@ TABLE_OR_VIEW_NOT_FOUND_MESSAGES = (
 
 
 @dataclass
-class SparkConfig(AdapterConfig):
+class FabricSparkConfig(AdapterConfig):
     file_format: str = "parquet"
     location_root: Optional[str] = None
     partition_by: Optional[Union[List[str], str]] = None
@@ -69,7 +69,7 @@ class SparkConfig(AdapterConfig):
     merge_update_columns: Optional[str] = None
 
 
-class SparkAdapter(SQLAdapter):
+class FabricSparkAdapter(SQLAdapter):
     COLUMN_NAMES = (
         "table_database",
         "table_schema",
@@ -110,11 +110,11 @@ class SparkAdapter(SQLAdapter):
         ConstraintType.foreign_key: ConstraintSupport.NOT_ENFORCED,
     }
 
-    Relation: TypeAlias = SparkRelation
+    Relation: TypeAlias = FabricSparkRelation
     RelationInfo = Tuple[str, str, str]
-    Column: TypeAlias = SparkColumn
-    ConnectionManager: TypeAlias = SparkConnectionManager
-    AdapterSpecificConfigs: TypeAlias = SparkConfig
+    Column: TypeAlias = FabricSparkColumn
+    ConnectionManager: TypeAlias = FabricSparkConnectionManager
+    AdapterSpecificConfigs: TypeAlias = FabricSparkConfig
 
     @classmethod
     def date_function(cls) -> str:
@@ -265,7 +265,7 @@ class SparkAdapter(SQLAdapter):
 
     def parse_describe_extended(
         self, relation: BaseRelation, raw_rows: AttrDict
-    ) -> List[SparkColumn]:
+    ) -> List[FabricSparkColumn]:
         # Convert the Row to a dict
         dict_rows = [dict(zip(row._keys, row._values)) for row in raw_rows]
         # Find the separator between the rows and the metadata provided
@@ -277,9 +277,9 @@ class SparkAdapter(SQLAdapter):
         metadata = {col["col_name"]: col["data_type"] for col in raw_rows[pos + 1 :]}
 
         raw_table_stats = metadata.get(KEY_TABLE_STATISTICS)
-        table_stats = SparkColumn.convert_table_stats(raw_table_stats)
+        table_stats = FabricSparkColumn.convert_table_stats(raw_table_stats)
         return [
-            SparkColumn(
+            FabricSparkColumn(
                 table_database=None,
                 table_schema=relation.schema,
                 table_name=relation.name,
@@ -302,7 +302,7 @@ class SparkAdapter(SQLAdapter):
             pos += 1
         return pos
 
-    def get_columns_in_relation(self, relation: BaseRelation) -> List[SparkColumn]:
+    def get_columns_in_relation(self, relation: BaseRelation) -> List[FabricSparkColumn]:
         columns = []
         try:
             rows: AttrDict = self.execute_macro(
@@ -323,7 +323,7 @@ class SparkAdapter(SQLAdapter):
         columns = [x for x in columns if x.name not in self.HUDI_METADATA_COLUMNS]
         return columns
 
-    def parse_columns_from_information(self, relation: BaseRelation) -> List[SparkColumn]:
+    def parse_columns_from_information(self, relation: BaseRelation) -> List[FabricSparkColumn]:
         if hasattr(relation, "information"):
             information = relation.information or ""
         else:
@@ -334,10 +334,10 @@ class SparkAdapter(SQLAdapter):
         columns = []
         stats_match = re.findall(self.INFORMATION_STATISTICS_REGEX, information)
         raw_table_stats = stats_match[0] if stats_match else None
-        table_stats = SparkColumn.convert_table_stats(raw_table_stats)
+        table_stats = FabricSparkColumn.convert_table_stats(raw_table_stats)
         for match_num, match in enumerate(matches):
             column_name, column_type, nullable = match.groups()
-            column = SparkColumn(
+            column = FabricSparkColumn(
                 table_database=None,
                 table_schema=relation.schema,
                 table_name=relation.table,

@@ -1,6 +1,5 @@
 import pytest
 
-from dbt.tests.adapter.store_test_failures_tests import basic
 from dbt.tests.adapter.store_test_failures_tests.fixtures import (
     seeds__people,
     seeds__expected_accepted_values,
@@ -90,8 +89,8 @@ class StoreTestFailuresBase:
             "seeds": {
                 "quote_columns": True,
             },
-            "tests": {"+store_failures": True},
-            "tests": {"schema": "dbtsparktest"},
+            "tests": {"+store_failures": True, "schema": "dbtsparktest"},
+            # "tests": {"schema": "dbtsparktest"},
         }
 
     def column_type_overrides(self):

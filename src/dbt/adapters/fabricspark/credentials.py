@@ -8,7 +8,7 @@ logger = AdapterLogger("fabricspark")
 
 
 @dataclass
-class SparkCredentials(Credentials):
+class FabricSparkCredentials(Credentials):
     schema: Optional[str] = None  # type: ignore
     method: str = "livy"
     workspaceid: Optional[str] = None
@@ -95,4 +95,4 @@ class SparkCredentials(Credentials):
         return self.lakehouseid
 
     def _connection_keys(self) -> Tuple[str, ...]:
-        return "workspaceid", "lakehouseid", "lakehouse", "endpoint", "schema"
+        return "workspaceid", "lakehouseid", "lakehouse", "endpoint", "schema", "file_format"

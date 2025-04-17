@@ -14,13 +14,13 @@ from dbt.adapters.events.logging import AdapterLogger
 from dbt_common.utils.encoding import DECIMALS
 from azure.core.credentials import AccessToken
 from azure.identity import AzureCliCredential, ClientSecretCredential
-from dbt.adapters.fabricspark.fabric_spark_credentials import SparkCredentials
+from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
 from dbt.adapters.fabricspark.shortcuts import ShortcutClient
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
 NUMBERS = DECIMALS + (int, float)
 
-livysession_credentials: SparkCredentials
+livysession_credentials: FabricSparkCredentials
 
 DEFAULT_POLL_WAIT = 10
 DEFAULT_POLL_STATEMENT_WAIT = 5
@@ -43,7 +43,7 @@ def is_token_refresh_necessary(unixTimestamp: int) -> bool:
         return False
 
 
-def get_cli_access_token(credentials: SparkCredentials) -> AccessToken:
+def get_cli_access_token(credentials: FabricSparkCredentials) -> AccessToken:
     """
     Get an Azure access token using the CLI credentials
 
@@ -68,7 +68,7 @@ def get_cli_access_token(credentials: SparkCredentials) -> AccessToken:
     return accessToken
 
 
-def get_sp_access_token(credentials: SparkCredentials) -> AccessToken:
+def get_sp_access_token(credentials: FabricSparkCredentials) -> AccessToken:
     """
     Get an Azure access token using the SP credentials.
 
@@ -88,7 +88,7 @@ def get_sp_access_token(credentials: SparkCredentials) -> AccessToken:
     return accessToken
 
 
-def get_default_access_token(credentials: SparkCredentials) -> AccessToken:
+def get_default_access_token(credentials: FabricSparkCredentials) -> AccessToken:
     """
     Get an Azure access token using the SP Default Credentials.
 
@@ -109,7 +109,7 @@ def get_default_access_token(credentials: SparkCredentials) -> AccessToken:
     return accessToken
 
 
-def get_headers(credentials: SparkCredentials, tokenPrint: bool = False) -> dict[str, str]:
+def get_headers(credentials: FabricSparkCredentials, tokenPrint: bool = False) -> dict[str, str]:
     global accessToken
     if accessToken is None or is_token_refresh_necessary(accessToken.expires_on):
         if credentials.authentication and credentials.authentication.lower() == "cli":
@@ -130,7 +130,7 @@ def get_headers(credentials: SparkCredentials, tokenPrint: bool = False) -> dict
 
 
 class LivySession:
-    def __init__(self, credentials: SparkCredentials):
+    def __init__(self, credentials: FabricSparkCredentials):
         self.credential = credentials
         self.connect_url = credentials.lakehouse_endpoint
         self.session_id = None
@@ -448,7 +448,7 @@ class LivyConnection:
     """
 
     def __init__(self, credentials, livy_session) -> None:
-        self.credential: SparkCredentials = credentials
+        self.credential: FabricSparkCredentials = credentials
         self.connect_url = credentials.lakehouse_endpoint
         self.session_id = livy_session.session_id
 
@@ -500,7 +500,7 @@ class LivySessionManager:
     livy_global_session = None
 
     @staticmethod
-    def connect(credentials: SparkCredentials) -> LivyConnection:
+    def connect(credentials: FabricSparkCredentials) -> LivyConnection:
         # the following opens an spark / sql session
         data = credentials.spark_config
         if LivySessionManager.livy_global_session is None:

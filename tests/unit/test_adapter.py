@@ -4,7 +4,7 @@ from unittest import mock
 import dbt.flags as flags
 from dbt.exceptions import DbtRuntimeError
 from agate import Row
-from dbt.adapters.fabricspark import SparkAdapter, SparkRelation
+from dbt.adapters.fabricspark import FabricSparkAdapter, FabricSparkRelation
 from .utils import config_from_parts_or_dicts
 
 
@@ -49,7 +49,7 @@ class TestSparkAdapter(unittest.TestCase):
 
     def test_livy_connection(self):
         config = self._get_target_livy(self.project_cfg)
-        adapter = SparkAdapter(config)
+        adapter = FabricSparkAdapter(config)
 
         def fabric_spark_livy_connect(configuration):
             self.assertEqual(configuration.method, "livy")
@@ -73,9 +73,9 @@ class TestSparkAdapter(unittest.TestCase):
 
     def test_parse_relation(self):
         self.maxDiff = None
-        rel_type = SparkRelation.get_relation_type.Table
+        rel_type = FabricSparkRelation.get_relation_type.Table
 
-        relation = SparkRelation.create(
+        relation = FabricSparkRelation.create(
             schema="default_schema", identifier="mytable", type=rel_type
         )
         assert relation.database is None
@@ -110,7 +110,7 @@ class TestSparkAdapter(unittest.TestCase):
         input_cols = [Row(keys=["col_name", "data_type"], values=r) for r in plain_rows]
 
         config = self._get_target_livy(self.project_cfg)
-        rows = SparkAdapter(config).parse_describe_extended(relation, input_cols)
+        rows = FabricSparkAdapter(config).parse_describe_extended(relation, input_cols)
         self.assertEqual(len(rows), 4)
         self.assertEqual(
             rows[0].to_column_dict(omit_none=False),
@@ -182,9 +182,9 @@ class TestSparkAdapter(unittest.TestCase):
 
     def test_parse_relation_with_integer_owner(self):
         self.maxDiff = None
-        rel_type = SparkRelation.get_relation_type.Table
+        rel_type = FabricSparkRelation.get_relation_type.Table
 
-        relation = SparkRelation.create(
+        relation = FabricSparkRelation.create(
             schema="default_schema", identifier="mytable", type=rel_type
         )
         assert relation.database is None
@@ -199,15 +199,15 @@ class TestSparkAdapter(unittest.TestCase):
         input_cols = [Row(keys=["col_name", "data_type"], values=r) for r in plain_rows]
 
         config = self._get_target_livy(self.project_cfg)
-        rows = SparkAdapter(config).parse_describe_extended(relation, input_cols)
+        rows = FabricSparkAdapter(config).parse_describe_extended(relation, input_cols)
 
         self.assertEqual(rows[0].to_column_dict().get("table_owner"), "1234")
 
     def test_parse_relation_with_statistics(self):
         self.maxDiff = None
-        rel_type = SparkRelation.get_relation_type.Table
+        rel_type = FabricSparkRelation.get_relation_type.Table
 
-        relation = SparkRelation.create(
+        relation = FabricSparkRelation.create(
             schema="default_schema", identifier="mytable", type=rel_type
         )
         assert relation.database is None
@@ -235,7 +235,7 @@ class TestSparkAdapter(unittest.TestCase):
         input_cols = [Row(keys=["col_name", "data_type"], values=r) for r in plain_rows]
 
         config = self._get_target_livy(self.project_cfg)
-        rows = SparkAdapter(config).parse_describe_extended(relation, input_cols)
+        rows = FabricSparkAdapter(config).parse_describe_extended(relation, input_cols)
         self.assertEqual(len(rows), 1)
         self.assertEqual(
             rows[0].to_column_dict(omit_none=False),
@@ -264,7 +264,7 @@ class TestSparkAdapter(unittest.TestCase):
 
     def test_relation_with_database(self):
         config = self._get_target_livy(self.project_cfg)
-        adapter = SparkAdapter(config)
+        adapter = FabricSparkAdapter(config)
         # fine
         adapter.Relation.create(schema="different", identifier="table")
         with self.assertRaises(DbtRuntimeError):
@@ -297,7 +297,7 @@ class TestSparkAdapter(unittest.TestCase):
 
     def test_parse_columns_from_information_with_table_type_and_delta_provider(self):
         self.maxDiff = None
-        rel_type = SparkRelation.get_relation_type.Table
+        rel_type = FabricSparkRelation.get_relation_type.Table
 
         # Mimics the output of Spark in the information column
         information = (
@@ -323,12 +323,12 @@ class TestSparkAdapter(unittest.TestCase):
             " |-- struct_col: struct (nullable = true)\n"
             " |    |-- struct_inner_col: string (nullable = true)\n"
         )
-        relation = SparkRelation.create(
+        relation = FabricSparkRelation.create(
             schema="default_schema", identifier="mytable", type=rel_type, information=information
         )
 
         config = self._get_target_livy(self.project_cfg)
-        columns = SparkAdapter(config).parse_columns_from_information(relation)
+        columns = FabricSparkAdapter(config).parse_columns_from_information(relation)
         self.assertEqual(len(columns), 4)
         self.assertEqual(
             columns[0].to_column_dict(omit_none=False),
@@ -374,7 +374,7 @@ class TestSparkAdapter(unittest.TestCase):
 
     def test_parse_columns_from_information_with_view_type(self):
         self.maxDiff = None
-        rel_type = SparkRelation.get_relation_type.View
+        rel_type = FabricSparkRelation.get_relation_type.View
         information = (
             "Database: default_schema\n"
             "Table: myview\n"
@@ -408,12 +408,12 @@ class TestSparkAdapter(unittest.TestCase):
             " |-- struct_col: struct (nullable = true)\n"
             " |    |-- struct_inner_col: string (nullable = true)\n"
         )
-        relation = SparkRelation.create(
+        relation = FabricSparkRelation.create(
             schema="default_schema", identifier="myview", type=rel_type, information=information
         )
 
         config = self._get_target_livy(self.project_cfg)
-        columns = SparkAdapter(config).parse_columns_from_information(relation)
+        columns = FabricSparkAdapter(config).parse_columns_from_information(relation)
         self.assertEqual(len(columns), 4)
         self.assertEqual(
             columns[1].to_column_dict(omit_none=False),
@@ -451,7 +451,7 @@ class TestSparkAdapter(unittest.TestCase):
 
     def test_parse_columns_from_information_with_table_type_and_parquet_provider(self):
         self.maxDiff = None
-        rel_type = SparkRelation.get_relation_type.Table
+        rel_type = FabricSparkRelation.get_relation_type.Table
 
         information = (
             "Database: default_schema\n"
@@ -474,12 +474,12 @@ class TestSparkAdapter(unittest.TestCase):
             " |-- struct_col: struct (nullable = true)\n"
             " |    |-- struct_inner_col: string (nullable = true)\n"
         )
-        relation = SparkRelation.create(
+        relation = FabricSparkRelation.create(
             schema="default_schema", identifier="mytable", type=rel_type, information=information
         )
 
         config = self._get_target_livy(self.project_cfg)
-        columns = SparkAdapter(config).parse_columns_from_information(relation)
+        columns = FabricSparkAdapter(config).parse_columns_from_information(relation)
         self.assertEqual(len(columns), 4)
 
         self.assertEqual(

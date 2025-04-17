@@ -1,4 +1,4 @@
-# Contributing to `dbt-spark`
+# Contributing to `dbt-fabricspark`
 
 1. [About this document](#about-this-document)
 3. [Getting the code](#getting-the-code)
@@ -35,10 +35,17 @@ If you are a member of the `Microsoft` GitHub organization, you will have push a
 
 ### Installation
 
-First make sure that you set up your `virtualenv` as described in [Setting up an environment](https://github.com/dbt-labs/dbt-core/blob/HEAD/CONTRIBUTING.md#setting-up-an-environment).  Ensure you have the latest version of pip installed with `pip install --upgrade pip`. Next, install `dbt-fabricspark` latest dependencies:
+First make sure that you set up your `virtualenv` as described in [Setting up an environment](https://github.com/dbt-labs/dbt-core/blob/HEAD/CONTRIBUTING.md#setting-up-an-environment).  Ensure you have the uv installed with `pip install uv` or via curl. 
+
+Next, if this is first time installation of `dbt-fabricspark` with latest dependencies:
 
 ```sh
-pip install -e . -r dev-requirements.txt
+uv pip install -e . --group dev
+```
+
+If have installed packages locally using uv pip install, make sure to run uv sync to update the uv.lock file from your environment.
+```sh 
+uv pip install <package>
 ```
 
 When `dbt-fabricspark` is installed this way, any changes you make to the `dbt-fabricspark` source code will be reflected immediately in your next `dbt-fabricspark` run.
@@ -68,13 +75,13 @@ Finally, you can also run a specific test or group of tests using `pytest` direc
 
 ```sh
 # run all functional tests
-python -m pytest --profile az_cli tests/functional/
+uv run pytest --profile az_cli tests/functional/
 # run specific functional tests
-python -m pytest --profile az_cli tests/functional/adapter/basic/*
+uv run pytest --profile az_cli tests/functional/adapter/basic/*
 # run all unit tests in a file
-python -m pytest tests/unit/test_adapter.py
+uv run pytest tests/unit/test_adapter.py
 # run a specific unit test
-python -m pytest test/unit/test_adapter.py::TestSparkAdapter::test_profile_with_database
+uv run pytest test/unit/test_adapter.py::TestSparkAdapter::test_profile_with_database
 ```
 ## Updating Docs
 

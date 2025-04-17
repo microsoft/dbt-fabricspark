@@ -38,16 +38,16 @@ class BaseSnapshotCheckCols:
             "cc_name_snapshot.sql": cc_name_snapshot_sql,
         }
 
-    @pytest.fixture(scope="class")
-    def project_config_update(self):
-        return {
-            "seeds": {
-                "+file_format": "delta",
-            },
-            "snapshots": {
-                "+file_format": "delta",
-            },
-        }
+    # @pytest.fixture(scope="class")
+    # def project_config_update(self):
+    #     return {
+    #         "seeds": {
+    #             "+file_format": "delta",
+    #         },
+    #         "snapshots": {
+    #             "+file_format": "delta",
+    #         },
+    #     }
 
     @pytest.fixture(scope="class")
     def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):

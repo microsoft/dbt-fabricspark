@@ -1,10 +1,9 @@
 import pytest
 
-from dbt.tests.util import run_dbt
-
 from dbt.tests.adapter.incremental.test_incremental_on_schema_change import (
     BaseIncrementalOnSchemaChangeSetup,
 )
+from dbt.tests.util import run_dbt
 
 
 class IncrementalOnSchemaChangeIgnoreFail(BaseIncrementalOnSchemaChangeSetup):
@@ -126,7 +125,6 @@ class TestDeltaOnSchemaChange(BaseIncrementalOnSchemaChangeSetup):
         # only adding new columns in supported
         self.run_incremental_append_new_columns(project)
         # handling columns that have been removed doesn"t work on Delta Lake today
-        # self.run_incremental_append_new_columns_remove_one(project)
 
     def test_run_incremental_sync_all_columns(self, project):
         self.run_incremental_sync_all_columns(project)

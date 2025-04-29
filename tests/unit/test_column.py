@@ -1,14 +1,15 @@
 import unittest
-from dbt.adapters.fabricspark import SparkColumn
+
+from dbt.adapters.fabricspark import FabricSparkColumn
 
 
 class TestSparkColumn(unittest.TestCase):
     def test_convert_table_stats_with_no_statistics(self):
-        self.assertDictEqual(SparkColumn.convert_table_stats(None), {})
+        self.assertDictEqual(FabricSparkColumn.convert_table_stats(None), {})
 
     def test_convert_table_stats_with_bytes(self):
         self.assertDictEqual(
-            SparkColumn.convert_table_stats("123456789 bytes"),
+            FabricSparkColumn.convert_table_stats("123456789 bytes"),
             {
                 "stats:bytes:description": "",
                 "stats:bytes:include": True,
@@ -19,7 +20,7 @@ class TestSparkColumn(unittest.TestCase):
 
     def test_convert_table_stats_with_bytes_and_rows(self):
         self.assertDictEqual(
-            SparkColumn.convert_table_stats("1234567890 bytes, 12345678 rows"),
+            FabricSparkColumn.convert_table_stats("1234567890 bytes, 12345678 rows"),
             {
                 "stats:bytes:description": "",
                 "stats:bytes:include": True,

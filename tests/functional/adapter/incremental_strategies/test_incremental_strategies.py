@@ -1,25 +1,25 @@
 import pytest
 
-from dbt.tests.util import run_dbt, check_relations_equal
 from dbt.tests.adapter.simple_seed.test_seed import SeedConfigBase
-from tests.functional.adapter.incremental_strategies.seeds import (
-    expected_append_csv,
-    expected_overwrite_csv,
-    expected_upsert_csv,
-    expected_partial_upsert_csv,
-)
+from dbt.tests.util import check_relations_equal, run_dbt
 from tests.functional.adapter.incremental_strategies.fixtures import (
+    append_delta_sql,
     bad_file_format_sql,
     bad_merge_not_delta_sql,
     bad_strategy_sql,
     default_append_sql,
-    insert_overwrite_no_partitions_sql,
-    insert_overwrite_partitions_sql,
-    append_delta_sql,
     delta_merge_no_key_sql,
     delta_merge_unique_key_sql,
     delta_merge_update_columns_sql,
     # Skip: CT-1873 insert_overwrite_partitions_delta_sql,
+    insert_overwrite_no_partitions_sql,
+    insert_overwrite_partitions_sql,
+)
+from tests.functional.adapter.incremental_strategies.seeds import (
+    expected_append_csv,
+    expected_overwrite_csv,
+    expected_partial_upsert_csv,
+    expected_upsert_csv,
 )
 
 

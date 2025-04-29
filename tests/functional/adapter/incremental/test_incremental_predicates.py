@@ -1,7 +1,8 @@
-import pytest
-from dbt.tests.util import run_dbt, check_relations_equal
 from collections import namedtuple
 
+import pytest
+
+from dbt.tests.util import check_relations_equal, run_dbt
 
 models__spark_incremental_predicates_sql = """
 {{ config(
@@ -104,7 +105,6 @@ class BaseIncrementalPredicates:
         row_count_query = "select * from {}.{}".format(
             project.adapter.config.credentials.schema, seed
         )
-        # project.run_sql_file(Path("seeds") / Path(update_sql_file + ".sql"))
         seed_rows = len(project.run_sql(row_count_query, fetch="all"))
 
         # propagate seed state to incremental model according to unique keys

@@ -1,17 +1,17 @@
 import pytest
-from dbt.tests.util import run_dbt
-
 from fixtures import (
-    _MODELS__MY_FUN_DOCS,
     _MODELS__INCREMENTAL_DELTA,
+    _MODELS__MY_FUN_DOCS,
     _MODELS__TABLE_DELTA_MODEL,
     _MODELS__TABLE_DELTA_MODEL_MISSING_COLUMN,
+    _MODELS__VIEW_DELTA_MODEL,
     _PROPERTIES__MODELS,
     _PROPERTIES__SEEDS,
     _SEEDS__BASIC,
-    _MODELS__VIEW_DELTA_MODEL,
     _VIEW_PROPERTIES_MODELS,
 )
+
+from dbt.tests.util import run_dbt
 
 
 class TestPersistDocsDeltaTable:

@@ -1,8 +1,11 @@
 import pytest
+
 from dbt.tests.adapter.basic.test_singular_tests import BaseSingularTests
 
+
 class TestSingularTests(BaseSingularTests):
-    @pytest.fixture(scope="class")    
+
+    @pytest.fixture(scope="class")
     def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
         profile = {
             "test": {

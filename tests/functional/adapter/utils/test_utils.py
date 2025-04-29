@@ -1,34 +1,37 @@
+from datetime import datetime, timedelta
+
 import pytest
 
+from dbt.tests.adapter.utils.fixture_listagg import models__test_listagg_yml
+from dbt.tests.adapter.utils.test_any_value import BaseAnyValue
 from dbt.tests.adapter.utils.test_array_append import BaseArrayAppend
 from dbt.tests.adapter.utils.test_array_concat import BaseArrayConcat
 from dbt.tests.adapter.utils.test_array_construct import BaseArrayConstruct
-from dbt.tests.adapter.utils.test_any_value import BaseAnyValue
 from dbt.tests.adapter.utils.test_bool_or import BaseBoolOr
+from dbt.tests.adapter.utils.test_cast import BaseCast
 from dbt.tests.adapter.utils.test_cast_bool_to_text import BaseCastBoolToText
 from dbt.tests.adapter.utils.test_concat import BaseConcat
 from dbt.tests.adapter.utils.test_current_timestamp import BaseCurrentTimestampNaive
+from dbt.tests.adapter.utils.test_date import BaseDate
+from dbt.tests.adapter.utils.test_date_trunc import BaseDateTrunc
 from dbt.tests.adapter.utils.test_dateadd import BaseDateAdd
 from dbt.tests.adapter.utils.test_datediff import BaseDateDiff
-from dbt.tests.adapter.utils.test_date_trunc import BaseDateTrunc
 from dbt.tests.adapter.utils.test_escape_single_quotes import BaseEscapeSingleQuotesBackslash
 from dbt.tests.adapter.utils.test_except import BaseExcept
 from dbt.tests.adapter.utils.test_hash import BaseHash
 from dbt.tests.adapter.utils.test_intersect import BaseIntersect
 from dbt.tests.adapter.utils.test_last_day import BaseLastDay
 from dbt.tests.adapter.utils.test_length import BaseLength
+
+# requires modification
+from dbt.tests.adapter.utils.test_listagg import BaseListagg
 from dbt.tests.adapter.utils.test_position import BasePosition
 from dbt.tests.adapter.utils.test_replace import BaseReplace
 from dbt.tests.adapter.utils.test_right import BaseRight
 from dbt.tests.adapter.utils.test_safe_cast import BaseSafeCast
-from dbt.tests.util import relation_from_name, run_dbt
 from dbt.tests.adapter.utils.test_split_part import BaseSplitPart
 from dbt.tests.adapter.utils.test_string_literal import BaseStringLiteral
-from datetime import datetime, timedelta
-
-# requires modification
-from dbt.tests.adapter.utils.test_listagg import BaseListagg
-from dbt.tests.adapter.utils.fixture_listagg import models__test_listagg_yml
+from dbt.tests.util import relation_from_name, run_dbt
 from tests.functional.adapter.utils.fixture_listagg import models__test_listagg_no_order_by_sql
 
 seeds__data_split_part_csv = """parts,split_on,result_1,result_2,result_3,result_4
@@ -67,6 +70,10 @@ class TestBoolOr(BaseBoolOr):
     pass
 
 
+class TestCast(BaseCast):
+    pass
+
+
 class TestCastBoolToText(BaseCastBoolToText):
     pass
 
@@ -99,6 +106,10 @@ class TestCurrentTimestamp(BaseCurrentTimestampNaive):
 
     def test_current_timestamp_type(self, current_timestamp):
         assert current_timestamp
+
+
+class TestDate(BaseDate):
+    pass
 
 
 class TestDateAdd(BaseDateAdd):

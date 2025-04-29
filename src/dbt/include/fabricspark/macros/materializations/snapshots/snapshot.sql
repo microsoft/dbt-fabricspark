@@ -16,12 +16,7 @@
   {%- set columns = config.get("snapshot_table_column_names") or get_snapshot_table_column_names() -%}
 
   merge into {{ target }} as DBT_INTERNAL_DEST
-  {% if target.is_iceberg %}
-    {# create view only supports a name (no catalog, or schema) #}
-    using {{ source.identifier }} as DBT_INTERNAL_SOURCE
-  {% else %}
-    using {{ source }} as DBT_INTERNAL_SOURCE
-  {% endif %}
+  using {{ source }} as DBT_INTERNAL_SOURCE
   on DBT_INTERNAL_SOURCE.{{ columns.dbt_scd_id }} = DBT_INTERNAL_DEST.{{ columns.dbt_scd_id }}
   when matched
     {% if config.get("dbt_valid_to_current") %}
@@ -35,24 +30,18 @@
       set {{ columns.dbt_valid_to }} = DBT_INTERNAL_SOURCE.{{ columns.dbt_valid_to }}
   when not matched
     and DBT_INTERNAL_SOURCE.dbt_change_type = 'insert'
+    then insert *
+    ;
 {% endmacro %}
 
 
 {% macro spark_build_snapshot_staging_table(strategy, sql, target_relation) %}
     {% set tmp_identifier = target_relation.identifier ~ '__dbt_tmp' %}
 
-    {% if target_relation.is_iceberg %}
-      {# iceberg catalog does not support create view, but regular spark does. We removed the catalog and schema #}
-      {%- set tmp_relation = api.Relation.create(identifier=tmp_identifier,
-                                                    schema=none,
-                                                    database=none,
-                                                    type='view') -%}
-    {% else %}
-      {%- set tmp_relation = api.Relation.create(identifier=tmp_identifier,
-                                                    schema=target_relation.schema,
-                                                    database=none,
-                                                    type='view') -%}
-    {% endif %}
+    {%- set tmp_relation = api.Relation.create(identifier=tmp_identifier,
+                                              schema=target_relation.schema,
+                                              database=none,
+                                              type='view') -%}
 
     {% set select = snapshot_staging_table(strategy, sql, target_relation) %}
 
@@ -90,7 +79,7 @@
 
   {%- set strategy_name = config.get('strategy') -%}
   {%- set unique_key = config.get('unique_key') %}
-  {%- set file_format = config.get('file_format') or 'parquet' -%}
+  {%- set file_format = config.get('file_format') or 'delta' -%}
   {%- set grant_config = config.get('grants') -%}
 
   {% set target_relation_exists, target_relation = get_or_create_relation(
@@ -99,18 +88,18 @@
           identifier=target_table,
           type='table') -%}
 
-  {%- if file_format not in ['delta', 'iceberg', 'hudi'] -%}
+  {%- if file_format not in ['delta'] -%}
     {% set invalid_format_msg -%}
       Invalid file format: {{ file_format }}
-      Snapshot functionality requires file_format be set to 'delta' or 'iceberg' or 'hudi'
+      Snapshot functionality requires file_format be set to 'delta'
     {%- endset %}
     {% do exceptions.raise_compiler_error(invalid_format_msg) %}
   {% endif %}
 
   {%- if target_relation_exists -%}
-    {%- if not target_relation.is_delta and not target_relation.is_iceberg and not target_relation.is_hudi -%}
+    {%- if not target_relation.is_delta -%}
       {% set invalid_format_msg -%}
-        The existing table {{ model.schema }}.{{ target_table }} is in another format than 'delta' or 'iceberg' or 'hudi'
+        The existing table {{ model.schema }}.{{ target_table }} is in another format than 'delta'
       {%- endset %}
       {% do exceptions.raise_compiler_error(invalid_format_msg) %}
     {% endif %}

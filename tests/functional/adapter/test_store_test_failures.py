@@ -1,25 +1,26 @@
 import pytest
 
 from dbt.tests.adapter.store_test_failures_tests.fixtures import (
-    seeds__people,
+    models__file_model_but_with_a_no_good_very_long_name,
+    models__fine_model,
+    models__problematic_model,
+    properties__schema_yml,
     seeds__expected_accepted_values,
     seeds__expected_failing_test,
     seeds__expected_not_null_problematic_model_id,
     seeds__expected_unique_problematic_model_id,
-    properties__schema_yml,
-    models__problematic_model,
-    models__fine_model,
-    models__file_model_but_with_a_no_good_very_long_name,
+    seeds__people,
     tests__failing_test,
     tests__passing_test,
 )
-
 from dbt.tests.util import (
     check_relations_equal,
     run_dbt,
 )
 
+
 class StoreTestFailuresBase:
+    schemaname: str = None
     audit_schema_suffix: str = ""
     @pytest.fixture(scope="class")
     def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
@@ -33,12 +34,13 @@ class StoreTestFailuresBase:
         }
         target = dbt_profile_target
         target["schema"] = target["lakehouse"]
+        StoreTestFailuresBase.schemaname = target["lakehouse"]
         profile["test"]["outputs"]["default"] = target
 
         if profiles_config_update:
             profile.update(profiles_config_update)
         return profile
-    
+
     @pytest.fixture(scope="function", autouse=True)
     def setUp(self, project):
         self.test_audit_schema = project.adapter.config.credentials.schema
@@ -74,23 +76,13 @@ class StoreTestFailuresBase:
             "problematic_model.sql": models__problematic_model,
         }
 
-    # @pytest.fixture(scope="class")
-    # def project_config_update(self):
-    #     return {
-    #         "seeds": {
-    #             "quote_columns": False,
-    #             "test": self.column_type_overrides(),
-    #         },
-    #         #"tests": {"+schema": TEST_AUDIT_SCHEMA_SUFFIX},
-    #     }
     @pytest.fixture(scope="class")
     def project_config_update(self):
         return {
             "seeds": {
                 "quote_columns": True,
             },
-            "tests": {"+store_failures": True, "schema": "dbtsparktest"},
-            # "tests": {"schema": "dbtsparktest"},
+            "tests": {"+store_failures": True, "schema": StoreTestFailuresBase.schemaname},
         }
 
     def column_type_overrides(self):

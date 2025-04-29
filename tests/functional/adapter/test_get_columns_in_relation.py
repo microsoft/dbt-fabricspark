@@ -1,6 +1,6 @@
 import pytest
-from dbt.tests.util import run_dbt, relation_from_name, check_relations_equal_with_relations
 
+from dbt.tests.util import check_relations_equal_with_relations, relation_from_name, run_dbt
 
 _MODEL_CHILD = "select 1"
 _MODEL_PARENT = """

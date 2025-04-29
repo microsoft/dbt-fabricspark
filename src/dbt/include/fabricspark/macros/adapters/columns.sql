@@ -26,13 +26,8 @@
 
   {% if remove_columns %}
     {% if relation.is_delta %}
-      {% set platform_name = 'Delta Lake' %}
-    {% elif relation.is_iceberg %}
-      {% set platform_name = 'Iceberg' %}
-    {% else %}
-      {% set platform_name = 'Apache Spark' %}
+      {{ exceptions.raise_compiler_error('Delta tables does not support dropping columns from tables') }}
     {% endif %}
-    {{ exceptions.raise_compiler_error(platform_name + ' does not support dropping columns from tables') }}
   {% endif %}
 
   {% if add_columns is none %}
@@ -55,24 +50,20 @@
 {% endmacro %}
 
 {% macro fabricspark__alter_column_comment(relation, column_dict) %}
-  {% if config.get('file_format', validator=validation.any[basestring]) in ['delta', 'hudi', 'iceberg'] %}
-    {% for column_name in column_dict %}
+  {% for column_name in column_dict %}
       {% set comment = column_dict[column_name]['description'] %}
       {% set escaped_comment = comment | replace('\'', '\\\'') %}
       {% set comment_query %}
-        {% if relation.is_iceberg %}
-          alter table {{ relation }} alter column
-              {{ adapter.quote(column_name) if column_dict[column_name]['quote'] else column_name }}
-              comment '{{ escaped_comment }}';
-        {% else %}
+        {% if relation.is_delta %}
           alter table {{ relation }} change column
               {{ adapter.quote(column_name) if column_dict[column_name]['quote'] else column_name }}
               comment '{{ escaped_comment }}';
+        {% else %}
+          {{ exceptions.raise_compiler_error('Fabric Spark does not support formats other than delta -'~ relation.is_delta) }}
         {% endif %}
       {% endset %}
       {% do run_query(comment_query) %}
     {% endfor %}
-  {% endif %}
 {% endmacro %}
 
 

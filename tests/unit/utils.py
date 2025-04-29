@@ -2,14 +2,14 @@
 Note that all imports should be inside the functions to avoid import/mocking
 issues.
 """
-import string
 import os
-from unittest import mock
-from unittest import TestCase
+import string
+from unittest import TestCase, mock
 
 import agate
 import pytest
 from dbt_common.dataclass_schema import ValidationError
+
 from dbt.config.project import PartialProject
 
 
@@ -49,8 +49,9 @@ def profile_from_dict(profile, profile_name, cli_vars="{}"):
 
     # in order to call dbt's internal profile rendering, we need to set the
     # flags global. This is a bit of a hack, but it's the best way to do it.
-    from dbt.flags import set_from_args
     from argparse import Namespace
+
+    from dbt.flags import set_from_args
 
     set_from_args(Namespace(), None)
     return Profile.from_raw_profile_info(
@@ -81,9 +82,10 @@ def project_from_dict(project, profile, packages=None, selectors=None, cli_vars=
 
 
 def config_from_parts_or_dicts(project, profile, packages=None, selectors=None, cli_vars="{}"):
-    from dbt.config import Project, Profile, RuntimeConfig
-    from dbt.config.utils import parse_cli_vars
     from copy import deepcopy
+
+    from dbt.config import Profile, Project, RuntimeConfig
+    from dbt.config.utils import parse_cli_vars
 
     if not isinstance(cli_vars, dict):
         cli_vars = parse_cli_vars(cli_vars)
@@ -123,7 +125,6 @@ def inject_plugin(plugin):
 
 
 def inject_plugin_for(config):
-    # from dbt.adapters.postgres import Plugin, PostgresAdapter
     from dbt.adapters.factory import FACTORY
 
     FACTORY.load_plugin(config.credentials.type)
@@ -310,8 +311,8 @@ def MockGenerateMacro(package, component="some_component", **kwargs):
 
 
 def MockSource(package, source_name, name, **kwargs):
-    from dbt.node_types import NodeType
     from dbt.contracts.graph.parsed import ParsedSourceDefinition
+    from dbt.node_types import NodeType
 
     src = mock.MagicMock(
         __class__=ParsedSourceDefinition,
@@ -327,8 +328,8 @@ def MockSource(package, source_name, name, **kwargs):
 
 
 def MockNode(package, name, resource_type=None, **kwargs):
-    from dbt.node_types import NodeType
     from dbt.contracts.graph.parsed import ParsedModelNode, ParsedSeedNode
+    from dbt.node_types import NodeType
 
     if resource_type is None:
         resource_type = NodeType.Model
@@ -351,8 +352,8 @@ def MockNode(package, name, resource_type=None, **kwargs):
 
 
 def MockDocumentation(package, name, **kwargs):
-    from dbt.node_types import NodeType
     from dbt.contracts.graph.parsed import ParsedDocumentation
+    from dbt.node_types import NodeType
 
     doc = mock.MagicMock(
         __class__=ParsedDocumentation,

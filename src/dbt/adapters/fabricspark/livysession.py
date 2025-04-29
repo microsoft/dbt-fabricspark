@@ -1,19 +1,22 @@
 from __future__ import annotations
-import json
-import time
-import requests
-from requests.models import Response
-from urllib import response
-import re
+
 import datetime as dt
+import json
+import re
+import time
 from types import TracebackType
 from typing import Any
-from dbt.adapters.exceptions import FailedToConnectError
-from dbt_common.exceptions import DbtDatabaseError
-from dbt.adapters.events.logging import AdapterLogger
-from dbt_common.utils.encoding import DECIMALS
+from urllib import response
+
+import requests
 from azure.core.credentials import AccessToken
 from azure.identity import AzureCliCredential, ClientSecretCredential
+from dbt_common.exceptions import DbtDatabaseError
+from dbt_common.utils.encoding import DECIMALS
+from requests.models import Response
+
+from dbt.adapters.events.logging import AdapterLogger
+from dbt.adapters.exceptions import FailedToConnectError
 from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
 from dbt.adapters.fabricspark.shortcuts import ShortcutClient
 
@@ -145,7 +148,6 @@ class LivySession:
         exc_val: Exception | None,
         exc_tb: TracebackType | None,
     ) -> bool:
-        # self.delete_session()
         return True
 
     def create_session(self, data) -> str:
@@ -153,7 +155,6 @@ class LivySession:
         response = None
         logger.debug("Creating Livy session (this may take a few minutes)")
         try:
-            # logger.debug(f"data is {data}")
             response = requests.post(
                 self.connect_url + "/sessions",
                 data=json.dumps(data),
@@ -196,7 +197,6 @@ class LivySession:
                 headers=get_headers(self.credential, False),
             ).json()
             if res["state"] == "starting" or res["state"] == "not_started":
-                # logger.debug("Polling Session creation status - ", self.connect_url + '/sessions/' + self.session_id )
                 time.sleep(DEFAULT_POLL_WAIT)
             elif res["livyInfo"]["currentState"] == "idle":
                 logger.debug(f"New livy session id is: {self.session_id}, {res}")
@@ -207,7 +207,6 @@ class LivySession:
                 raise FailedToConnectError("failed to connect")
 
     def delete_session(self) -> None:
-        logger.debug(f"Closing the livy session: {self.session_id}")
 
         try:
             # delete the session_id
@@ -332,9 +331,6 @@ class LivyCursor:
         # The following code is actually injecting SQL to pyspark object for executing it via the Livy session - over an HTTP post request.
         # Basically, it is like code inside a code. As a result the strings passed here in 'escapedSQL' variable are unescapted and interpreted on the server side.
         # This may have repurcursions of code injection not only as SQL, but also arbritary Python code. An alternate way safer way to acheive this is still unknown.
-        # escapedSQL = sql.replace("\n", "\\n").replace('"', '\\\"')
-        # code = "val sprk_sql = spark.sql(\"" + escapedSQL + "\")\nval sprk_res=sprk_sql.collect\n%json sprk_res"  # .format(escapedSQL)
-
         # TODO: since the above code is not changed to sending direct SQL to the livy backend, client side string escaping is probably not needed
 
         code = re.sub(r"\s*/\*(.|\n)*?\*/\s*", "\n", sql, re.DOTALL).strip()
@@ -352,7 +348,6 @@ class LivyCursor:
                 headers=get_headers(self.credential, False),
             ).json()
 
-            # print(res)
             if res["state"] == "available":
                 return res
             time.sleep(DEFAULT_POLL_STATEMENT_WAIT)
@@ -385,13 +380,10 @@ class LivyCursor:
         res = self._getLivyResult(self._submitLivyCode(self._getLivySQL(sql)))
         logger.debug(res)
         if res["output"]["status"] == "ok":
-            # values = res['output']['data']['application/json']
             values = res["output"]["data"]["application/json"]
             if len(values) >= 1:
                 self._rows = values["data"]  # values[0]['values']
                 self._schema = values["schema"]["fields"]  # values[0]['schema']
-                # print("rows", self._rows)
-                # print("schema", self._schema)
             else:
                 self._rows = []
                 self._schema = []

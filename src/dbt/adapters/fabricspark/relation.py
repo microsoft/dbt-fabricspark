@@ -1,10 +1,10 @@
-from typing import Optional, TypeVar
 from dataclasses import dataclass, field
+from typing import Optional, TypeVar
+
+from dbt_common.exceptions import DbtRuntimeError
 
 from dbt.adapters.base.relation import BaseRelation, Policy
 from dbt.adapters.events.logging import AdapterLogger
-from dbt_common.exceptions import DbtRuntimeError
-
 
 logger = AdapterLogger("fabricspark")
 
@@ -31,8 +31,6 @@ class FabricSparkRelation(BaseRelation):
     include_policy: Policy = field(default_factory=lambda: FabricSparkIncludePolicy())
     quote_character: str = "`"
     is_delta: Optional[bool] = None
-    is_hudi: Optional[bool] = None
-    is_iceberg: Optional[bool] = None
     # TODO: make this a dict everywhere
     information: Optional[str] = None
 

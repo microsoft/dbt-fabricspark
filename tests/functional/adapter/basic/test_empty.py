@@ -1,6 +1,8 @@
 import pytest
+
 from dbt.tests.adapter.basic.test_empty import BaseEmpty
-    
+
+
 class TestEmpty(BaseEmpty):
     @pytest.fixture(scope="class")
     def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):

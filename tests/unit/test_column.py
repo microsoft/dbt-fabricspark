@@ -1,4 +1,5 @@
 import unittest
+
 from dbt.adapters.fabricspark import FabricSparkColumn
 
 

@@ -25,17 +25,15 @@
   {%- endif -%}
 
   {%- set other_existing_relation = load_cached_relation(defer_relation) -%}
-  {%- set file_format = config.get('file_format', validator=validation.any[basestring]) -%}
 
   -- If this is a database that can do zero-copy cloning of tables, and the other relation is a table, then this will be a table
   -- Otherwise, this will be a view
 
   {% set can_clone_table = can_clone_table() %}
 
-  {%- if file_format != 'delta' -%}
+  {%- if not existing_relation.is_delta -%}
     {% set invalid_format_msg -%}
-      Invalid file format: {{ file_format }}
-      shallow clone requires file_format be set to 'delta'
+      shallow clone requires to be 'delta' (default file format). Other file formats are not supported.
     {%- endset %}
     {% do exceptions.raise_compiler_error(invalid_format_msg) %}
   {%- elif other_existing_relation and other_existing_relation.type == 'table' and can_clone_table -%}

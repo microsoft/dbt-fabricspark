@@ -1,11 +1,12 @@
 import pytest
-from dbt.tests.util import run_dbt, relation_from_name, update_rows
+
 from dbt.tests.adapter.basic.files import (
+    seeds_added_csv,
     seeds_base_csv,
     seeds_newcolumns_csv,
-    seeds_added_csv,
     ts_snapshot_sql,
 )
+from dbt.tests.util import relation_from_name, run_dbt, update_rows
 
 
 def check_relation_rows(project, snapshot_name, count):
@@ -50,17 +51,6 @@ class BaseSnapshotTimestamp:
     @pytest.fixture(scope="class")
     def project_config_update(self):
         return {"name": "snapshot_strategy_timestamp"}
-
-    # @pytest.fixture(scope="class")
-    # def project_config_update(self):
-    #     return {
-    #         "seeds": {
-    #             "+file_format": "delta",
-    #         },
-    #         "snapshots": {
-    #             "+file_format": "delta",
-    #         },
-    #     }
 
     def test_snapshot_timestamp(self, project):
         # seed command

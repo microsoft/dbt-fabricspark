@@ -1,13 +1,15 @@
 import pytest
-from dbt.tests.util import run_dbt, check_relations_equal, relation_from_name
+
 from dbt.contracts.results import RunStatus
 from dbt.tests.adapter.basic.files import (
-    seeds_base_csv,
-    seeds_added_csv,
-    schema_base_yml,
-    incremental_sql,
     incremental_not_schema_change_sql,
+    incremental_sql,
+    schema_base_yml,
+    seeds_added_csv,
+    seeds_base_csv,
 )
+from dbt.tests.util import check_relations_equal, relation_from_name, run_dbt
+
 
 class BaseIncremental:
     @pytest.fixture(scope="class")
@@ -27,7 +29,7 @@ class BaseIncremental:
         if profiles_config_update:
             profile.update(profiles_config_update)
         return profile
-    
+
     @pytest.fixture(scope="class")
     def project_config_update(self):
         return {"name": "incremental"}
@@ -96,7 +98,7 @@ class BaseIncrementalNotSchemaChange:
         if profiles_config_update:
             profile.update(profiles_config_update)
         return profile
-    
+
     @pytest.fixture(scope="class")
     def project_config_update(self):
         return {"name": "incremental"}

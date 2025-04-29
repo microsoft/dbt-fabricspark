@@ -1,6 +1,8 @@
-import time
-import requests
 import json
+import time
+
+import requests
+
 from dbt.adapters.events.logging import AdapterLogger
 from dbt.adapters.fabricspark.shortcut import Shortcut, TargetName
 

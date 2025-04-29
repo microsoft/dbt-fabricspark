@@ -2,18 +2,19 @@ import re
 from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import (
+    TYPE_CHECKING,
     Any,
+    Callable,
     Dict,
+    FrozenSet,
     Iterable,
     List,
     Optional,
-    Union,
-    Tuple,
-    Callable,
     Set,
-    FrozenSet,
-    TYPE_CHECKING,
+    Tuple,
+    Union,
 )
+
 from typing_extensions import TypeAlias
 
 if TYPE_CHECKING:
@@ -21,24 +22,19 @@ if TYPE_CHECKING:
     # Used by mypy for earlier type hints.
     import agate
 
-from dbt.adapters.events.logging import AdapterLogger
-from dbt.adapters.contracts.relation import RelationType, RelationConfig
-
-from dbt.adapters.base import AdapterConfig
-from dbt.adapters.base.impl import catch_as_completed, ConstraintSupport
-from dbt.adapters.base import BaseRelation
-from dbt.adapters.base.relation import InformationSchema
-
-from dbt.adapters.sql import SQLAdapter
-
-from dbt.adapters.fabricspark import FabricSparkConnectionManager
-from dbt.adapters.fabricspark import FabricSparkColumn
-from dbt.adapters.fabricspark.relation import FabricSparkRelation
-
-from dbt_common.exceptions import DbtRuntimeError, CompilationError
-from dbt_common.utils import AttrDict, executor
 from dbt_common.clients.agate_helper import DEFAULT_TYPE_TESTER
 from dbt_common.contracts.constraints import ConstraintType
+from dbt_common.exceptions import CompilationError, DbtRuntimeError
+from dbt_common.utils import AttrDict, executor
+
+from dbt.adapters.base import AdapterConfig, BaseRelation
+from dbt.adapters.base.impl import ConstraintSupport, catch_as_completed
+from dbt.adapters.base.relation import InformationSchema
+from dbt.adapters.contracts.relation import RelationConfig, RelationType
+from dbt.adapters.events.logging import AdapterLogger
+from dbt.adapters.fabricspark import FabricSparkColumn, FabricSparkConnectionManager
+from dbt.adapters.fabricspark.relation import FabricSparkRelation
+from dbt.adapters.sql import SQLAdapter
 
 logger = AdapterLogger("fabricspark")
 
@@ -93,14 +89,6 @@ class FabricSparkAdapter(SQLAdapter):
     INFORMATION_COLUMNS_REGEX = re.compile(r"^ \|-- (.*): (.*) \(nullable = (.*)\b", re.MULTILINE)
     INFORMATION_OWNER_REGEX = re.compile(r"^Owner: (.*)$", re.MULTILINE)
     INFORMATION_STATISTICS_REGEX = re.compile(r"^Statistics: (.*)$", re.MULTILINE)
-
-    HUDI_METADATA_COLUMNS = [
-        "_hoodie_commit_time",
-        "_hoodie_commit_seqno",
-        "_hoodie_record_key",
-        "_hoodie_partition_path",
-        "_hoodie_file_name",
-    ]
 
     CONSTRAINT_SUPPORT = {
         ConstraintType.check: ConstraintSupport.NOT_ENFORCED,
@@ -201,17 +189,12 @@ class FabricSparkAdapter(SQLAdapter):
                 RelationType.View if "Type: VIEW" in information else RelationType.Table
             )
             is_delta: bool = "Provider: delta" in information
-            is_hudi: bool = "Provider: hudi" in information
-            is_iceberg: bool = "Provider: iceberg" in information
-
             relation: BaseRelation = self.Relation.create(
                 schema=_schema,
                 identifier=name,
                 type=rel_type,
                 information=information,
                 is_delta=is_delta,
-                is_iceberg=is_iceberg,
-                is_hudi=is_hudi,
             )
             relations.append(relation)
 
@@ -318,9 +301,6 @@ class FabricSparkAdapter(SQLAdapter):
                 pass
             else:
                 raise e
-
-        # strip hudi metadata columns.
-        columns = [x for x in columns if x.name not in self.HUDI_METADATA_COLUMNS]
         return columns
 
     def parse_columns_from_information(self, relation: BaseRelation) -> List[FabricSparkColumn]:
@@ -363,7 +343,6 @@ class FabricSparkAdapter(SQLAdapter):
             raise e
 
         # Not using parsing to extract schema and other properties using describe table extended command
-        # columns = self.parse_columns_from_information(relation, table_results)
         columns = self.parse_describe_extended(relation, raw_rows)
 
         for column in columns:
@@ -506,7 +485,7 @@ class FabricSparkAdapter(SQLAdapter):
         table_format: Optional[str] = None
         # Full table_format support within this adapter is coming. Until then, for telemetry,
         # we're relying on table_formats_within_file_formats - a subset of file_format values
-        table_formats_within_file_formats = ["delta", "iceberg"]
+        table_formats_within_file_formats = ["delta"]
 
         if (
             config

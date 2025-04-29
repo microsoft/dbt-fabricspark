@@ -7,26 +7,18 @@
   {%- set target_relation = api.Relation.create(identifier=identifier,
                                                 schema=schema,
                                                 database=database,
-                                                type='table') -%}
+                                                type='table',
+                                                is_delta=(old_relation.is_delta is none or old_relation.is_delta)) -%}
 
   {{ run_hooks(pre_hooks) }}
 
   -- setup: if the target relation already exists, drop it
-  -- in case if the existing and future table is delta or iceberg, we want to do a
+  -- in case if the existing and future table is delta, we want to do a
   -- create or replace table instead of dropping, so we don't have the table unavailable
-  {% if old_relation is not none %}
-    {% set is_delta = (old_relation.is_delta and config.get('file_format', validator=validation.any[basestring]) == 'delta') %}
-    {% set is_iceberg = (old_relation.is_iceberg and config.get('file_format', validator=validation.any[basestring]) == 'iceberg') %}
-    {% set old_relation_type = old_relation.type %}
-  {% else %}
-    {% set is_delta = false %}
-    {% set is_iceberg = false %}
-    {% set old_relation_type = target_relation.type %}
-  {% endif %}
-  
-  {% if not is_delta and not is_iceberg %}
-    {% set existing_relation = target_relation %}
-    {{ adapter.drop_relation(existing_relation.incorporate(type=old_relation_type)) }}
+  {% set is_delta = old_relation.is_delta if old_relation is not none else config.get('file_format') == 'delta' %}
+
+  {% if not is_delta %}
+    {{ adapter.drop_relation(target_relation.incorporate(type=old_relation.type)) }}
   {% endif %}
 
   -- build model
@@ -70,27 +62,16 @@ try:
 except ImportError:
   pyspark_pandas_api_available = False
 
-# make sure databricks.koalas exists before using it
-try:
-  import databricks.koalas
-  koalas_available = True
-except ImportError:
-  koalas_available = False
-
-# preferentially convert pandas DataFrames to pandas-on-Spark or Koalas DataFrames first
+# preferentially convert pandas DataFrames to pandas-on-Spark first
 # since they know how to convert pandas DataFrames better than `spark.createDataFrame(df)`
 # and converting from pandas-on-Spark to Spark DataFrame has no overhead
 if pyspark_pandas_api_available and pandas_available and isinstance(df, pandas.core.frame.DataFrame):
   df = pyspark.pandas.frame.DataFrame(df)
-elif koalas_available and pandas_available and isinstance(df, pandas.core.frame.DataFrame):
-  df = databricks.koalas.frame.DataFrame(df)
 
 # convert to pyspark.sql.dataframe.DataFrame
 if isinstance(df, pyspark.sql.dataframe.DataFrame):
   pass  # since it is already a Spark DataFrame
 elif pyspark_pandas_api_available and isinstance(df, pyspark.pandas.frame.DataFrame):
-  df = df.to_spark()
-elif koalas_available and isinstance(df, databricks.koalas.frame.DataFrame):
   df = df.to_spark()
 elif pandas_available and isinstance(df, pandas.core.frame.DataFrame):
   df = spark.createDataFrame(df)
@@ -98,7 +79,7 @@ else:
   msg = f"{type(df)} is not a supported type for dbt Python materialization"
   raise Exception(msg)
 
-df.write.mode("overwrite").format("{{ config.get('file_format', 'delta') }}").option("overwriteSchema", "true").saveAsTable("{{ target_relation }}")
+df.write.mode("overwrite").format("delta").option("overwriteSchema", "true").saveAsTable("{{ target_relation }}")
 {%- endmacro -%}
 
 {%macro py_script_comment()%}

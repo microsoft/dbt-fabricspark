@@ -1,5 +1,6 @@
-import pytest
 import os
+
+import pytest
 
 pytest_plugins = ["dbt.tests.fixtures.project"]
 

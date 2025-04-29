@@ -33,14 +33,13 @@ classifiers = [
 requires-python = ">=3.9,<3.14"
 
 dependencies = [
-    # "dbt-common>=1.10,<2.0",
-    # "dbt-adapters==1.9.0",
-    # # add dbt-core to ensure backwards compatibility of installation, this is not a functional dependency
-    #  "dbt-core>=1.8.0,<=1.9.0"
     "dbt-common>=1.10,<2.0",
     "dbt-adapters>=1.7,<2.0",
     # add dbt-core to ensure backwards compatibility of installation, this is not a functional dependency
     "dbt-core>=1.8.0",  
+    "azure-identity>=1.13.0",
+    "azure-core>=1.26.4",
+    "azure-cli>=2.60.0",
 ]
 
 [dependency-groups]
@@ -58,9 +57,6 @@ dev = [
     "twine~=4.0",
     # Adapter specific dependencies
     "mock~=5.1",
-    "azure-identity>=1.13.0",
-    "azure-core>=1.26.4",
-    "azure-cli==2.71.0",
 ]
 
 [tool.uv]
@@ -97,15 +93,14 @@ testpaths = ["tests/unit", "tests/functional"]
 target-version = "py311"
 line-length = 99
 
-# [tool.ruff.lint]
-# select = ["E", "F", "W", "I", "ERA"]
-# ignore = ["E203", "E501", "E741", "W503", "W504"]
-# known-first-party = ["dbt", "tests"]
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "ERA"]
+ignore = ["E203", "E501", "E741"]
 
-# [tool.ruff.lint.per-file-ignores]
-# # Ignore specific rules for certain files
-# "*/__init__.py" = ["F401"]
-# "tests/**/*" = ["ARG", "PLR0913"]
+[tool.ruff.lint.per-file-ignores]
+# Ignore specific rules for certain files
+"*/__init__.py" = ["F401"]
+"tests/**/*" = ["ARG", "PLR0913"]
 
 [tool.ruff.format]
 # Formatting options

@@ -1,7 +1,9 @@
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, TypeVar, Union
-from dbt.adapters.base.column import Column
+
 from dbt_common.dataclass_schema import dbtClassMixin
+
+from dbt.adapters.base.column import Column
 
 Self = TypeVar("Self", bound="FabricSparkColumn")
 

@@ -1,33 +1,34 @@
-from contextlib import contextmanager
 import os
-from dbt_common.exceptions import DbtConfigError, DbtRuntimeError
-from dbt.adapters.contracts.connection import (
-    AdapterResponse,
-    ConnectionState,
-    Connection,
-)
-from dbt.adapters.sql import SQLConnectionManager
-from dbt.adapters.events.logging import AdapterLogger
-from dbt.adapters.exceptions import FailedToConnectError
-from dbt.adapters.events.types import ConnectionUsed, SQLQuery, SQLQueryStatus,AdapterEventDebug
-from dbt_common.events.functions import fire_event
-from dbt_common.utils.encoding import DECIMALS
-from dbt.adapters.fabricspark.livysession import LivySessionConnectionWrapper, LivySessionManager
-
-from dbt_common.dataclass_schema import StrEnum
+import time
+from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from typing import (
     Any,
+    Generator,
     Iterable,
     List,
     Optional,
+    Sequence,
     Tuple,
     Type,
-    Sequence,
-    Generator,
     Union,
 )
-from abc import ABC, abstractmethod
-import time
+
+from dbt_common.dataclass_schema import StrEnum
+from dbt_common.events.functions import fire_event
+from dbt_common.exceptions import DbtConfigError, DbtRuntimeError
+from dbt_common.utils.encoding import DECIMALS
+
+from dbt.adapters.contracts.connection import (
+    AdapterResponse,
+    Connection,
+    ConnectionState,
+)
+from dbt.adapters.events.logging import AdapterLogger
+from dbt.adapters.events.types import AdapterEventDebug, ConnectionUsed, SQLQuery, SQLQueryStatus
+from dbt.adapters.exceptions import FailedToConnectError
+from dbt.adapters.fabricspark.livysession import LivySessionConnectionWrapper, LivySessionManager
+from dbt.adapters.sql import SQLConnectionManager
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
 for logger_name in [
@@ -285,6 +286,7 @@ class FabricSparkConnectionManager(SQLConnectionManager):
             A success sees the try exit cleanly and avoid any recursive
             retries. Failure begins a sleep and retry routine.
             """
+            retry_limit = connection.credentials.connect_retries or 3
             try:
                 cursor.execute(sql, bindings)
             except retryable_exceptions as e:
@@ -325,7 +327,6 @@ class FabricSparkConnectionManager(SQLConnectionManager):
             cursor = connection.handle.cursor()
 
             try:
-                cursor.execute(sql, bindings)
                 _execute_query_with_retry(
                 cursor=cursor,
                 sql=sql,
@@ -352,10 +353,22 @@ class FabricSparkConnectionManager(SQLConnectionManager):
 
             return connection, cursor
 
-    
+
 def _is_retryable_error(exc: Exception) -> str:
     message = str(exc).lower()
-    if "pending" in message or "temporarily_unavailable" in message:
-        return str(exc)
-    else:
-        return ""
+    retryable_keywords = [
+        "pending",
+        "temporary",
+        "retry",
+        "timeout",
+        "unavailable",
+        "transient",
+        "throttling",
+        "rate limit",
+        "connection reset",
+        "service busy",
+    ]
+    for keyword in retryable_keywords:
+        if keyword in message:
+            return str(exc)
+    return ""

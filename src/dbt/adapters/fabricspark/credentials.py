@@ -1,8 +1,10 @@
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional, Tuple
+
+from dbt_common.exceptions import DbtRuntimeError
+
 from dbt.adapters.contracts.connection import Credentials
 from dbt.adapters.events.logging import AdapterLogger
-from typing import Any, Dict, Optional, Tuple
-from dataclasses import dataclass, field
-from dbt_common.exceptions import DbtRuntimeError
 
 logger = AdapterLogger("fabricspark")
 
@@ -27,22 +29,6 @@ class FabricSparkCredentials(Credentials):
     shortcuts_json_str: Optional[str] = None
     lakehouse_schemas_enabled: bool = False
     accessToken: Optional[str] = None
-
-    # spark_config:
-    #     name: "example-session"
-    #     archives:
-    #         - "example-archive.zip"
-    #     conf:
-    #         spark.executor.memory: "2g"
-    #         spark.executor.cores: "2"
-    #     tags:
-    #         project: "example-project"
-    #         user: "example-user"
-    #     driverMemory: "2g"
-    #     driverCores: 2
-    #     executorMemory: "4g"
-    #     executorCores: 4
-    #     numExecutors: 3
     spark_config: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod

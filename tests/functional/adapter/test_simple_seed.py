@@ -1,5 +1,7 @@
-from dbt.tests.adapter.simple_seed.test_seed import BaseTestEmptySeed
 import pytest
+
+from dbt.tests.adapter.simple_seed.test_seed import BaseTestEmptySeed
+
 
 class TestEmptySeed(BaseTestEmptySeed):
     @pytest.fixture(scope="class")

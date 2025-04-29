@@ -1,12 +1,13 @@
 import pytest
-from dbt.tests.util import run_dbt, update_rows, relation_from_name
+
 from dbt.tests.adapter.basic.files import (
-    seeds_base_csv,
-    seeds_added_csv,
     cc_all_snapshot_sql,
     cc_date_snapshot_sql,
     cc_name_snapshot_sql,
+    seeds_added_csv,
+    seeds_base_csv,
 )
+from dbt.tests.util import relation_from_name, run_dbt, update_rows
 
 
 def check_relation_rows(project, snapshot_name, count):
@@ -37,17 +38,6 @@ class BaseSnapshotCheckCols:
             "cc_date_snapshot.sql": cc_date_snapshot_sql,
             "cc_name_snapshot.sql": cc_name_snapshot_sql,
         }
-
-    # @pytest.fixture(scope="class")
-    # def project_config_update(self):
-    #     return {
-    #         "seeds": {
-    #             "+file_format": "delta",
-    #         },
-    #         "snapshots": {
-    #             "+file_format": "delta",
-    #         },
-    #     }
 
     @pytest.fixture(scope="class")
     def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):

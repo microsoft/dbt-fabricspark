@@ -1,6 +1,6 @@
 {% materialization incremental, adapter='fabricspark', supported_languages=['sql', 'python'] -%}
   {#-- Validate early so we don't run SQL if the file_format + strategy combo is invalid --#}
-  {%- set raw_file_format = config.get('file_format', default='parquet') -%}
+  {%- set raw_file_format = config.get('file_format', default='delta') -%}
   {%- set raw_strategy = config.get('incremental_strategy') or 'append' -%}
   {%- set grant_config = config.get('grants') -%}
 
@@ -42,7 +42,7 @@
     {% do persist_constraints(target_relation, model) %}
   {%- elif existing_relation.is_view or should_full_refresh() -%}
     {#-- Relation must be dropped & recreated --#}
-    {% set is_delta = (file_format == 'delta' and existing_relation.is_delta) %}
+    {% set is_delta = existing_relation.is_delta %}
     {% if not is_delta %} {#-- If Delta, we will `create or replace` below, so no need to drop --#}
       {% do adapter.drop_relation(existing_relation) %}
     {% endif %}

@@ -2,8 +2,8 @@
   {%- if language == 'sql' -%}
     {%- if temporary -%}
       {{ create_temporary_view(relation, compiled_code) }}
-    {%- else -%}
-      {% if config.get('file_format', validator=validation.any[basestring]) in ['delta', 'iceberg'] %}
+    {%- else -%}      
+      {% if config.get('file_format') == 'delta' or relation.is_delta %}
         create or replace table {{ relation }}
       {% else %}
         create table {{ relation }}
@@ -34,12 +34,12 @@
 {%- endmacro -%}
 
 {% macro fabricspark__file_format_clause() %}
-  {%- set file_format = config.get('file_format', validator=validation.any[basestring]) -%}
-  {%- if file_format is not none %}
+  {%- set file_format = config.get('file_format') -%}
+  {%- if file_format is not none and file_format != 'delta' %}
     using {{ file_format }}
   {%- endif %}
 {%- endmacro -%}
-
+W
 {% macro tblproperties_clause() %}
   {{ return(adapter.dispatch('tblproperties_clause', 'dbt')()) }}
 {%- endmacro -%}
@@ -74,17 +74,6 @@
 
 {% macro fabricspark__options_clause() -%}
   {%- set options = config.get('options') -%}
-  {%- if config.get('file_format') == 'hudi' -%}
-    {%- set unique_key = config.get('unique_key') -%}
-    {%- if unique_key is not none and options is none -%}
-      {%- set options = {'primaryKey': config.get('unique_key')} -%}
-    {%- elif unique_key is not none and options is not none and 'primaryKey' not in options -%}
-      {%- set _ = options.update({'primaryKey': config.get('unique_key')}) -%}
-    {%- elif options is not none and 'primaryKey' in options and options['primaryKey'] != unique_key -%}
-      {{ exceptions.raise_compiler_error("unique_key and options('primaryKey') should be the same column(s).") }}
-    {%- endif %}
-  {%- endif %}
-
   {%- if options is not none %}
     options (
       {%- for option in options -%}

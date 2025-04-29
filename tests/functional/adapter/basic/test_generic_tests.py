@@ -1,6 +1,8 @@
 
-from dbt.tests.adapter.basic.test_generic_tests import BaseGenericTests
 import pytest
+
+from dbt.tests.adapter.basic.test_generic_tests import BaseGenericTests
+
 
 class TestGenericTestsSpark(BaseGenericTests):
     @pytest.fixture(scope="class")
@@ -20,4 +22,3 @@ class TestGenericTestsSpark(BaseGenericTests):
         if profiles_config_update:
             profile.update(profiles_config_update)
         return profile
-    

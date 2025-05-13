@@ -18,7 +18,7 @@ The `dbt-fabricspark` package contains all of the code enabling dbt to work with
 - Read the [introduction](https://docs.getdbt.com/docs/introduction/) and [viewpoint](https://docs.getdbt.com/docs/about/viewpoint/)
 
 ## Running locally
-Use livy endpoint to connect to Synapse Spark in Microsoft Fabric. The binaries required to setup local environment is not possiblw with Synapse Spark in Microsoft Fabric. However, you can configure profile to connect via livy endpoints.
+Use livy endpoint to connect to Synapse Spark in Microsoft Fabric. The binaries required to setup local environment is not possible with Synapse Spark in Microsoft Fabric. However, you can configure profile to connect via livy endpoints.
 
 Create a profile like this one:
 

@@ -155,9 +155,8 @@ class LivySession:
         self.load_session_id()
         if not self.session_id:
             # Create sessions
-            print("File does not exist.")
             response = None
-            logger.debug("Creating Livy session (this may take a few minutes)")
+            logger.debug("File does not exist, Creating Livy session (this may take a few minutes)")
             try:
                 response = requests.post(
                     self.connect_url + "/sessions",
@@ -213,8 +212,7 @@ class LivySession:
 
     def delete_session(self) -> None:
 
-        if os.path.exists(SESSION_ID_FILEPATH):
-            os.remove(SESSION_ID_FILEPATH)
+        self.delete_session_file()
         try:
             # delete the session_id
             _ = requests.delete(
@@ -245,19 +243,29 @@ class LivySession:
         invalid_states = ["dead", "shutting_down", "killed"]
         return res["livyInfo"]["currentState"] not in invalid_states
 
-    def save_session_id(self):
+    def save_session_id(self) -> None:
+        """Save the session ID to a text file for future reuse."""
+        logger.debug(f"Saving Livy session {self.session_id} to {SESSION_ID_FILEPATH}, in order to reuse it in future execution")
         with open(SESSION_ID_FILEPATH, "w") as f:
             f.write(self.session_id)
-        logger.debug(f"Done Saving Livy Session ID")
-    
-    def load_session_id(self):
+
+    def load_session_id(self) -> None:
+        """Load the session ID from the saved file if it exists."""
         if os.path.exists(SESSION_ID_FILEPATH):
             with open(SESSION_ID_FILEPATH, "r") as f:
                 self.session_id = f.read().strip()
-                logger.debug(f"Session ID loaded: {self.session_id}")
+            logger.debug(f"Loaded Livy session ID: {self.session_id}")
         else:
-            logger.debug("File does not exist.")
+            logger.warning("session_id.txt does not exist. Cannot load session ID.")
             self.session_id = None
+
+    def delete_session_file(self) -> None:
+        """Delete the session file if it exists."""
+        try:
+            os.remove(SESSION_ID_FILEPATH)
+            logger.debug("Deleted session_id.txt")
+        except FileNotFoundError:
+            logger.debug(f"{SESSION_ID_FILEPATH} not found. Skipping deletion.")
 
 # cursor object - wrapped for livy API
 class LivyCursor:

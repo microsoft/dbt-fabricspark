@@ -156,7 +156,7 @@ class LivySession:
         if not self.session_id:
             # Create sessions
             response = None
-            logger.debug("File does not exist, Creating Livy session (this may take a few minutes)")
+            logger.debug("Creating Livy session (this may take a few minutes)")
             try:
                 response = requests.post(
                     self.connect_url + "/sessions",

@@ -188,7 +188,7 @@ class LivySession:
         self.wait_for_session_start()
 
         logger.debug("Livy session created successfully")
-        logger.debug(f"Saving Livy session ID '{self.session_id}' to 'session_id.txt' for reuse in future executions.")
+        logger.debug(f"Saving Livy session ID '{self.session_id}' to '{SESSION_ID_FILEPATH}' for reuse in future executions.")
         self.save_session_id()
 
         return self.session_id
@@ -256,14 +256,14 @@ class LivySession:
                 self.session_id = f.read().strip()
             logger.debug(f"Loaded Livy session ID: {self.session_id}")
         else:
-            logger.warning("session_id.txt does not exist. Cannot load session ID.")
+            logger.warning(f"{SESSION_ID_FILEPATH} does not exist. Cannot load session ID.")
             self.session_id = None
 
     def delete_session_file(self) -> None:
         """Delete the session file if it exists."""
         try:
             os.remove(SESSION_ID_FILEPATH)
-            logger.debug("Deleted session_id.txt")
+            logger.debug(f"Deleted {SESSION_ID_FILEPATH}")
         except FileNotFoundError:
             logger.debug(f"{SESSION_ID_FILEPATH} not found. Skipping deletion.")
 

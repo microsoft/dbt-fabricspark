@@ -560,8 +560,9 @@ class LivySessionManager:
             LivySessionManager.livy_global_session is not None
             and LivySessionManager.livy_global_session.is_valid_session()
         ):
-            LivySessionManager.livy_global_session.delete_session()
-            LivySessionManager.livy_global_session.is_new_session_required = True
+            logger.error(f"Skip delete session")
+            # LivySessionManager.livy_global_session.delete_session()
+            # LivySessionManager.livy_global_session.is_new_session_required = True
         else:
             logger.debug("No session to disconnect")
 

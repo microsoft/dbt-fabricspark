@@ -54,7 +54,7 @@ dev = [
     # Linting & formatting
     "ruff>=0.11.2",
     # Packaging
-    "twine~=4.0",
+    "twine>=4,<7",
     # Adapter specific dependencies
     "mock~=5.1",
 ]

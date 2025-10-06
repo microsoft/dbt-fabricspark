@@ -33,14 +33,17 @@ classifiers = [
 requires-python = ">=3.9,<3.14"
 
 dependencies = [
-    "dbt-common>=1.10,<2.0",
-    "dbt-adapters>=1.7,<2.0",
+    "dbt-adapters>=1.7.0, <2.0",
+    "dbt-common>=1.10.0, <2.0",
     # add dbt-core to ensure backwards compatibility of installation, this is not a functional dependency
-    "dbt-core>=1.8.0",  
+    "dbt-core>=1.8.7, <2.0", 
     "azure-identity>=1.13.0",
     "azure-core>=1.26.4",
     "azure-cli>=2.60.0",
 ]
+
+path = ".hatch"
+python = "3.9"
 
 [dependency-groups]
 dev = [

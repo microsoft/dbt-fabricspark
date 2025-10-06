@@ -30,10 +30,10 @@ from dbt_common.utils import AttrDict, executor
 from dbt.adapters.base import AdapterConfig, BaseRelation
 from dbt.adapters.base.impl import ConstraintSupport, catch_as_completed
 from dbt.adapters.base.relation import InformationSchema
-from dbt.adapters.contracts.relation import RelationConfig, RelationType
+from dbt.adapters.contracts.relation import RelationConfig
 from dbt.adapters.events.logging import AdapterLogger
 from dbt.adapters.fabricspark import FabricSparkColumn, FabricSparkConnectionManager
-from dbt.adapters.fabricspark.relation import FabricSparkRelation
+from dbt.adapters.fabricspark.relation import FabricSparkRelation, FabricSparkRelationType
 from dbt.adapters.sql import SQLAdapter
 
 logger = AdapterLogger("fabricspark")
@@ -185,10 +185,11 @@ class FabricSparkAdapter(SQLAdapter):
         for row in row_list:
             _schema, name, information = relation_info_func(row)
 
-            rel_type: RelationType = (
-                RelationType.View if "Type: VIEW" in information else RelationType.Table
+            rel_type: FabricSparkRelationType = (
+                FabricSparkRelationType.View if "Type: VIEW" in information else FabricSparkRelationType.Table
             )
             is_delta: bool = "Provider: delta" in information
+            print(f"Relation Type of {name}: {rel_type}")
             relation: BaseRelation = self.Relation.create(
                 schema=_schema,
                 identifier=name,

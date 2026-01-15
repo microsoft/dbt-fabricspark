@@ -8,13 +8,6 @@
    winget install -e --id Microsoft.VisualStudioCode
    ```
 
-1. Get a fresh new WSL machine up:
-
-   ```powershell
-   $GIT_ROOT = git rev-parse --show-toplevel
-   & "$GIT_ROOT\contrib\bootstrap-dev-env.ps1"
-   ```
-
 2. Get a fresh new WSL machine up:
 
    ```powershell

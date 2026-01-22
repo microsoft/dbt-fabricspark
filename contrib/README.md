@@ -8,17 +8,14 @@
    winget install -e --id Microsoft.VisualStudioCode
    ```
 
-2. Get a fresh new WSL machine up:
+1. Get a fresh new WSL machine up:
 
    ```powershell
-   # Delete old WSL
-   wsl --unregister Ubuntu-24.04
-
-   # Create new WSL
-   wsl --install -d Ubuntu-24.04
+   $GIT_ROOT = git rev-parse --show-toplevel
+   & "$GIT_ROOT\contrib\bootstrap-dev-env.ps1"
    ```
 
-3. Clone the repo, and open VSCode in it:
+2. Clone the repo, and open VSCode in it:
 
    ```bash
    cd ~/
@@ -31,15 +28,14 @@
    code .
    ```
 
-4. Run the bootstrapper script, that installs all tools idempotently:
+3. Run the bootstrapper script, that installs all tools idempotently:
 
    ```bash
    GIT_ROOT=$(git rev-parse --show-toplevel)
    chmod +x ${GIT_ROOT}/contrib/bootstrap-dev-env.sh && ${GIT_ROOT}/contrib/bootstrap-dev-env.sh
-
    ```
 
-5. Source the path to apply environment changes:
+4. Source the path to apply environment changes:
 
    ```bash
    source ~/.bashrc

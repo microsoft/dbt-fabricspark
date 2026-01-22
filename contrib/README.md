@@ -40,3 +40,17 @@
    ```bash
    source ~/.bashrc
    ```
+
+
+5. Dev loop:
+
+   ```bash
+   # Build wheel
+   uv build
+
+   # Install wheel on client machine
+   pip install dist/dbt_fabricspark-*.whl
+
+   # Run unit tests (broken)
+   uv run pytest tests/unit/
+   ```

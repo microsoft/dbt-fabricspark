@@ -29,4 +29,6 @@ cd "$REPO_ROOT"
 uv pip install -e . --group dev
 [ ! -f "$REPO_ROOT/test.env" ] && cp "$REPO_ROOT/test.env.example" "$REPO_ROOT/test.env"
 
+code --install-extension donjayamanne.python-extension-pack
+
 echo "Done. Python: $(python --version), uv: $(uv --version), az: $(az version -o tsv 2>/dev/null | head -1)"

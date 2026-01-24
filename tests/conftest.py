@@ -62,6 +62,13 @@ def _profile_azure_cli_target():
 
 
 def _profile_azure_spn_target():
+    spark_config = {
+        "name": os.getenv("SESSION_NAME", "example-session"),
+        "tags": {
+            "project": os.getenv("SESSION_NAME", "example-session"),
+            "user": "pvenkat@microsoft.com",
+        },
+    }
     return {
         **_all_profiles_base(),
         **{
@@ -70,16 +77,25 @@ def _profile_azure_spn_target():
             "client_secret": os.getenv("DBT_AZURE_SP_SECRET"),
             "tenant_id": os.getenv("DBT_AZURE_TENANT"),
         },
+        **{"spark_config": spark_config},
     }
 
 
 def _profile_int_tests_target():
+    spark_config = {
+        "name": os.getenv("SESSION_NAME", "example-session"),
+        "tags": {
+            "project": os.getenv("SESSION_NAME", "example-session"),
+            "user": "pvenkat@microsoft.com",
+        },
+    }
     return {
         **_all_profiles_base(),
         **{
             "authentication": "int_tests",
             "accessToken": os.getenv("FABRIC_INTEGRATION_TESTS_TOKEN"),
         },
+        **{"spark_config": spark_config},
     }
 
 

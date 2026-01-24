@@ -86,7 +86,7 @@ filterwarnings = [
     "ignore:.*datetime.datetime.utcnow.*:DeprecationWarning", # https://github.com/dbt-labs/dbt-core/issues/9791
 ]
 env_files = ["test.env"]
-testpaths = ["tests/unit", "tests/functional"]
+testpaths = ["tests/unit"]
 
 [tool.ruff]
 # Target Python versions

@@ -48,10 +48,10 @@
    # Build wheel
    uv build
 
-   # Upload to storage install wheel on client machine
+   # Run unit tests
+   uv run pytest -v
+   
+   # Upload to storage, and install wheel on client machine
    pip uninstall -y dbt-fabricspark 2>/dev/null
    pip install https://rakirahman.blob.core.windows.net/public/whls/dbt_fabricspark-1.9.1-py3-none-any.whl
-
-   # Run unit tests (broken)
-   uv run pytest tests/unit/
    ```

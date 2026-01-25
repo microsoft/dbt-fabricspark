@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, Literal, Optional, Tuple
 
@@ -10,6 +11,9 @@ logger = AdapterLogger("fabricspark")
 
 # Mode types for Livy connection
 LivyMode = Literal["fabric", "local"]
+
+# Default session ID file name
+DEFAULT_SESSION_ID_FILENAME = "livy-session-id.txt"
 
 
 @dataclass
@@ -35,6 +39,8 @@ class FabricSparkCredentials(Credentials):
     lakehouse_schemas_enabled: bool = False
     accessToken: Optional[str] = None
     spark_config: Dict[str, Any] = field(default_factory=dict)
+    # Optional path to session ID file for session reuse. If not provided, defaults to ./livy-session-id.txt
+    session_id_file: Optional[str] = None
 
     @classmethod
     def __pre_deserialize__(cls, data: Any) -> Any:
@@ -47,6 +53,17 @@ class FabricSparkCredentials(Credentials):
     def is_local_mode(self) -> bool:
         """Check if running in local Livy mode."""
         return self.livy_mode == "local"
+
+    @property
+    def resolved_session_id_file(self) -> str:
+        """Get the resolved path to the session ID file.
+        
+        If session_id_file is provided, use it. Otherwise, use the default
+        file name in the current working directory.
+        """
+        if self.session_id_file:
+            return self.session_id_file
+        return os.path.join(os.getcwd(), DEFAULT_SESSION_ID_FILENAME)
 
     @property
     def lakehouse_endpoint(self) -> str:

@@ -40,6 +40,34 @@ fabric-spark-test:
         retry_all: true
 ```
 
+### Session Reuse
+
+By default, the adapter reuses Livy sessions across dbt runs to avoid the overhead of creating new sessions each time. Session IDs are persisted to a file so they can be reused in subsequent runs.
+
+**Configuration options:**
+
+- `session_id_file` (optional): Path to the file storing the Livy session ID. Defaults to `./livy-session-id.txt` in the current working directory.
+
+Example with custom session file:
+
+```yaml
+fabric-spark-test:
+  target: fabricspark-dev
+  outputs:
+    fabricspark-dev:
+        # ... other settings ...
+        session_id_file: /path/to/my-session-id.txt
+```
+
+**Session reuse behavior:**
+
+1. On first run: Creates a new Livy session and saves the session ID to the file
+2. On subsequent runs: Reads the session ID from file and attempts to reuse it
+3. If the session is invalid (dead, stopped, or doesn't exist): Creates a new session and updates the file
+4. Sessions are intentionally kept alive after dbt exits for reuse
+
+To force a new session, simply delete the session ID file before running dbt.
+
 ### Reporting bugs and contributing code
 
 -   Want to report a bug or request a feature? Let us know on [Slack](http://slack.getdbt.com/), or open [an issue](https://github.com/microsoft/dbt-fabricspark/issues/new).

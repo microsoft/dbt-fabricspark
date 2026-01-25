@@ -1,4 +1,6 @@
 """Tests for livysession module, focusing on local vs Fabric mode routing."""
+import os
+import tempfile
 import pytest
 from unittest import mock
 from unittest.mock import MagicMock, patch
@@ -9,6 +11,8 @@ from dbt.adapters.fabricspark.livysession import (
     LivySession,
     LivyCursor,
     LivyConnection,
+    read_session_id_from_file,
+    write_session_id_to_file,
 )
 
 
@@ -174,3 +178,99 @@ class TestLivyConnection:
         cursor = connection.cursor()
         
         assert isinstance(cursor, LivyCursor)
+
+
+class TestSessionFileManagement:
+    """Tests for session ID file read/write functions."""
+
+    def test_read_session_id_from_nonexistent_file(self):
+        """Test reading from a file that doesn't exist returns None."""
+        result = read_session_id_from_file("/nonexistent/path/session.txt")
+        assert result is None
+
+    def test_read_session_id_from_empty_file(self):
+        """Test reading from an empty file returns None."""
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
+            f.write("")
+            temp_path = f.name
+        
+        try:
+            result = read_session_id_from_file(temp_path)
+            assert result is None
+        finally:
+            os.unlink(temp_path)
+
+    def test_read_session_id_from_valid_file(self):
+        """Test reading a valid session ID from file."""
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
+            f.write("123")
+            temp_path = f.name
+        
+        try:
+            result = read_session_id_from_file(temp_path)
+            assert result == "123"
+        finally:
+            os.unlink(temp_path)
+
+    def test_read_session_id_strips_whitespace(self):
+        """Test that whitespace is stripped from session ID."""
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
+            f.write("  456  \n")
+            temp_path = f.name
+        
+        try:
+            result = read_session_id_from_file(temp_path)
+            assert result == "456"
+        finally:
+            os.unlink(temp_path)
+
+    def test_write_session_id_to_file(self):
+        """Test writing session ID to a file."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = os.path.join(temp_dir, "session.txt")
+            
+            result = write_session_id_to_file(file_path, "789")
+            
+            assert result is True
+            with open(file_path, 'r') as f:
+                assert f.read() == "789"
+
+    def test_write_session_id_creates_directory(self):
+        """Test that write creates parent directories if needed."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = os.path.join(temp_dir, "subdir", "nested", "session.txt")
+            
+            result = write_session_id_to_file(file_path, "999")
+            
+            assert result is True
+            assert os.path.exists(file_path)
+            with open(file_path, 'r') as f:
+                assert f.read() == "999"
+
+
+class TestCredentialsSessionFile:
+    """Tests for session_id_file credential property."""
+
+    def test_default_session_file_path(self):
+        """Test default session file path when not specified."""
+        credentials = FabricSparkCredentials(
+            method="livy",
+            livy_mode="local",
+            schema="default",
+            spark_config={"name": "test-session"},
+        )
+        
+        expected_path = os.path.join(os.getcwd(), "livy-session-id.txt")
+        assert credentials.resolved_session_id_file == expected_path
+
+    def test_custom_session_file_path(self):
+        """Test custom session file path when specified."""
+        credentials = FabricSparkCredentials(
+            method="livy",
+            livy_mode="local",
+            schema="default",
+            spark_config={"name": "test-session"},
+            session_id_file="/custom/path/my-session.txt",
+        )
+        
+        assert credentials.resolved_session_id_file == "/custom/path/my-session.txt"

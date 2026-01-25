@@ -105,9 +105,8 @@
     {% endif %}
   {% endif %}
 
-  {% if not adapter.check_schema_exists(model.database, model.schema) %}
-    {% do create_schema(model.schema) %}
-  {% endif %}
+  {#-- Ensure the database/schema exists before creating the snapshot table --#}
+  {% do ensure_database_exists(model.schema) %}
 
   {%- if not target_relation.is_table -%}
     {% do exceptions.relation_wrong_type(target_relation, 'table') %}

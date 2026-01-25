@@ -113,6 +113,15 @@ def get_default_access_token(credentials: FabricSparkCredentials) -> AccessToken
 
 
 def get_headers(credentials: FabricSparkCredentials, tokenPrint: bool = False) -> dict[str, str]:
+    """Get HTTP headers for Livy requests.
+    
+    For local mode, no authentication is required.
+    For Fabric mode, Azure authentication is used.
+    """
+    if credentials.is_local_mode:
+        # Local Livy doesn't require authentication
+        return {"Content-Type": "application/json"}
+    
     global accessToken
     if accessToken is None or is_token_refresh_necessary(accessToken.expires_on):
         if credentials.authentication and credentials.authentication.lower() == "cli":
@@ -138,6 +147,7 @@ class LivySession:
         self.connect_url = credentials.lakehouse_endpoint
         self.session_id = None
         self.is_new_session_required = True
+        self.is_local_mode = credentials.is_local_mode
 
     def __enter__(self) -> LivySession:
         return self
@@ -154,23 +164,37 @@ class LivySession:
         # Create sessions
         response = None
         logger.debug("Creating Livy session (this may take a few minutes)")
+        
+        # For local Livy, we need to use "kind" parameter instead of "name"
+        if self.is_local_mode:
+            # Local Livy expects {"kind": "sql"} or {"kind": "spark"}
+            session_data = {"kind": "sql"}
+            if "kind" in data:
+                session_data["kind"] = data["kind"]
+        else:
+            session_data = data
+        
         try:
             response = requests.post(
                 self.connect_url + "/sessions",
-                data=json.dumps(data),
+                data=json.dumps(session_data),
                 headers=get_headers(self.credential, False),
             )
-            if response.status_code == 200:
+            if response.status_code == 200 or response.status_code == 201:
                 logger.debug("Initiated Livy Session...")
             response.raise_for_status()
         except requests.exceptions.ConnectionError as c_err:
-            raise Exception("Connection Error :", c_err.response.json())
+            err_detail = c_err.response.json() if c_err.response else str(c_err)
+            raise Exception("Connection Error :", err_detail)
         except requests.exceptions.HTTPError as h_err:
-            raise Exception("Http Error: ", h_err.response.json())
+            err_detail = h_err.response.json() if h_err.response else str(h_err)
+            raise Exception("Http Error: ", err_detail)
         except requests.exceptions.Timeout as t_err:
-            raise Exception("Timeout Error: ", t_err.response.json())
+            err_detail = t_err.response.json() if t_err.response else str(t_err)
+            raise Exception("Timeout Error: ", err_detail)
         except requests.exceptions.RequestException as a_err:
-            raise Exception("Authorization Error: ", a_err.response.json())
+            err_detail = a_err.response.json() if a_err.response else str(a_err)
+            raise Exception("Authorization Error: ", err_detail)
         except Exception as ex:
             raise Exception(ex) from ex
 
@@ -196,15 +220,29 @@ class LivySession:
                 self.connect_url + "/sessions/" + self.session_id,
                 headers=get_headers(self.credential, False),
             ).json()
-            if res["state"] == "starting" or res["state"] == "not_started":
-                time.sleep(DEFAULT_POLL_WAIT)
-            elif res["livyInfo"]["currentState"] == "idle":
-                logger.debug(f"New livy session id is: {self.session_id}, {res}")
-                self.is_new_session_required = False
-                break
-            elif res["livyInfo"]["currentState"] == "dead":
-                logger.error("ERROR, cannot create a livy session")
-                raise FailedToConnectError("failed to connect")
+            
+            # Local Livy uses "state" directly, Fabric uses "livyInfo.currentState"
+            if self.is_local_mode:
+                state = res.get("state", "")
+                if state in ("starting", "not_started"):
+                    time.sleep(DEFAULT_POLL_WAIT)
+                elif state == "idle":
+                    logger.debug(f"New livy session id is: {self.session_id}, {res}")
+                    self.is_new_session_required = False
+                    break
+                elif state in ("dead", "error"):
+                    logger.error("ERROR, cannot create a livy session")
+                    raise FailedToConnectError("failed to connect")
+            else:
+                if res["state"] == "starting" or res["state"] == "not_started":
+                    time.sleep(DEFAULT_POLL_WAIT)
+                elif res["livyInfo"]["currentState"] == "idle":
+                    logger.debug(f"New livy session id is: {self.session_id}, {res}")
+                    self.is_new_session_required = False
+                    break
+                elif res["livyInfo"]["currentState"] == "dead":
+                    logger.error("ERROR, cannot create a livy session")
+                    raise FailedToConnectError("failed to connect")
 
     def delete_session(self) -> None:
 
@@ -232,8 +270,15 @@ class LivySession:
         ).json()
 
         # we can reuse the session so long as it is not dead, killed, or being shut down
-        invalid_states = ["dead", "shutting_down", "killed"]
-        return res["livyInfo"]["currentState"] not in invalid_states
+        invalid_states = ["dead", "shutting_down", "killed", "error"]
+        
+        # Local Livy uses "state" directly, Fabric uses "livyInfo.currentState"
+        if self.is_local_mode:
+            current_state = res.get("state", "dead")
+        else:
+            current_state = res.get("livyInfo", {}).get("currentState", "dead")
+        
+        return current_state not in invalid_states
 
 
 # cursor object - wrapped for livy API
@@ -253,6 +298,7 @@ class LivyCursor:
         self.connect_url = credential.lakehouse_endpoint
         self.session_id = livy_session.session_id
         self.livy_session = livy_session
+        self.is_local_mode = credential.is_local_mode
 
     def __enter__(self) -> LivyCursor:
         return self
@@ -380,13 +426,38 @@ class LivyCursor:
         res = self._getLivyResult(self._submitLivyCode(self._getLivySQL(sql)))
         logger.debug(res)
         if res["output"]["status"] == "ok":
-            values = res["output"]["data"]["application/json"]
-            if len(values) >= 1:
-                self._rows = values["data"]  # values[0]['values']
-                self._schema = values["schema"]["fields"]  # values[0]['schema']
+            # Local and Fabric Livy have different output structures
+            if self.is_local_mode:
+                # Local Livy returns data in "text/plain" or "application/json" format
+                output_data = res["output"].get("data", {})
+                if "application/json" in output_data:
+                    values = output_data["application/json"]
+                    if isinstance(values, dict) and "data" in values:
+                        self._rows = values["data"]
+                        self._schema = values.get("schema", {}).get("fields", [])
+                    elif isinstance(values, list):
+                        # Direct list of results
+                        self._rows = values
+                        self._schema = []
+                    else:
+                        self._rows = []
+                        self._schema = []
+                elif "text/plain" in output_data:
+                    # Text output - parse if possible
+                    self._rows = []
+                    self._schema = []
+                else:
+                    self._rows = []
+                    self._schema = []
             else:
-                self._rows = []
-                self._schema = []
+                # Fabric Livy format
+                values = res["output"]["data"]["application/json"]
+                if len(values) >= 1:
+                    self._rows = values["data"]  # values[0]['values']
+                    self._schema = values["schema"]["fields"]  # values[0]['schema']
+                else:
+                    self._rows = []
+                    self._schema = []
         else:
             self._rows = None
             self._schema = None
@@ -499,8 +570,8 @@ class LivySessionManager:
             LivySessionManager.livy_global_session = LivySession(credentials)
             LivySessionManager.livy_global_session.create_session(data)
             LivySessionManager.livy_global_session.is_new_session_required = False
-            # create shortcuts, if there are any
-            if credentials.create_shortcuts:
+            # create shortcuts, if there are any (only for Fabric mode)
+            if credentials.create_shortcuts and not credentials.is_local_mode:
                 try:
                     shortcut_client = ShortcutClient(
                         accessToken.token,

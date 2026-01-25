@@ -52,6 +52,28 @@ class TestSparkAdapter(unittest.TestCase):
             },
         )
 
+    def _get_target_livy_local(self, project):
+        """Get config for local Livy mode."""
+        return config_from_parts_or_dicts(
+            project,
+            {
+                "outputs": {
+                    "test": {
+                        "type": "fabricspark",
+                        "method": "livy",
+                        "livy_mode": "local",
+                        "livy_url": "http://localhost:8998",
+                        "schema": "default",
+                        "connect_retries": 0,
+                        "connect_timeout": 10,
+                        "threads": 1,
+                        "spark_config": {"name": "test-session"},
+                    }
+                },
+                "target": "test",
+            },
+        )
+
     @unittest.skip("Requires Azure CLI authentication - integration test")
     def test_livy_connection(self):
         config = self._get_target_livy(self.project_cfg)
@@ -73,6 +95,30 @@ class TestSparkAdapter(unittest.TestCase):
             self.assertIsNotNone(connection.handle)
             self.assertEqual(connection.credentials.authentication, "CLI")
             self.assertIsNone(connection.credentials.database)
+
+    def test_local_livy_credentials(self):
+        """Test that local Livy mode credentials are properly set up."""
+        config = self._get_target_livy_local(self.project_cfg)
+        adapter = FabricSparkAdapter(config, self.mp_context)
+        
+        # Get credentials from config
+        creds = config.credentials
+        self.assertEqual(creds.livy_mode, "local")
+        self.assertTrue(creds.is_local_mode)
+        self.assertEqual(creds.lakehouse_endpoint, "http://localhost:8998")
+        self.assertIsNone(creds.workspaceid)
+        self.assertIsNone(creds.lakehouseid)
+
+    def test_fabric_livy_credentials(self):
+        """Test that Fabric Livy mode credentials are properly set up."""
+        config = self._get_target_livy(self.project_cfg)
+        
+        creds = config.credentials
+        self.assertEqual(creds.livy_mode, "fabric")
+        self.assertFalse(creds.is_local_mode)
+        self.assertIn("workspaces", creds.lakehouse_endpoint)
+        self.assertIsNotNone(creds.workspaceid)
+        self.assertIsNotNone(creds.lakehouseid)
 
     def test_parse_relation(self):
         self.maxDiff = None

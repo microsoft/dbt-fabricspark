@@ -4,6 +4,7 @@ import datetime as dt
 import json
 import os
 import re
+import threading
 import time
 from types import TracebackType
 from typing import Any, Optional
@@ -30,6 +31,9 @@ DEFAULT_POLL_WAIT = 10
 DEFAULT_POLL_STATEMENT_WAIT = 5
 AZURE_CREDENTIAL_SCOPE = "https://analysis.windows.net/powerbi/api/.default"
 accessToken: AccessToken = None
+
+# Global lock to ensure thread-safe session creation/reuse
+_session_lock = threading.Lock()
 
 
 def read_session_id_from_file(file_path: str) -> Optional[str]:
@@ -739,72 +743,80 @@ class LivySessionManager:
 
     @staticmethod
     def connect(credentials: FabricSparkCredentials) -> LivyConnection:
-        # the following opens an spark / sql session
-        data = credentials.spark_config
-        session_file_path = credentials.resolved_session_id_file
+        """Connect to a Livy session, reusing existing session if available.
         
-        if LivySessionManager.livy_global_session is None:
-            LivySessionManager.livy_global_session = LivySession(credentials)
+        This method is thread-safe and uses a lock to prevent race conditions
+        when multiple threads attempt to create sessions simultaneously.
+        """
+        # Use lock to ensure only one thread can create/check session at a time
+        with _session_lock:
+            # the following opens an spark / sql session
+            data = credentials.spark_config
+            session_file_path = credentials.resolved_session_id_file
             
-            # Try to reuse session from file
-            existing_session_id = read_session_id_from_file(session_file_path)
-            if existing_session_id:
-                if LivySessionManager.livy_global_session.try_reuse_session(existing_session_id):
-                    # Successfully reused session
-                    logger.debug(f"Reused session from file: {existing_session_id}")
+            if LivySessionManager.livy_global_session is None:
+                LivySessionManager.livy_global_session = LivySession(credentials)
+                
+                # Try to reuse session from file
+                existing_session_id = read_session_id_from_file(session_file_path)
+                if existing_session_id:
+                    if LivySessionManager.livy_global_session.try_reuse_session(existing_session_id):
+                        # Successfully reused session
+                        logger.debug(f"Reused session from file: {existing_session_id}")
+                    else:
+                        # Session from file is invalid, create new one
+                        logger.debug(f"Session from file invalid, creating new session")
+                        LivySessionManager.livy_global_session.create_session(data)
+                        LivySessionManager.livy_global_session.is_new_session_required = False
+                        # Write new session ID to file
+                        write_session_id_to_file(session_file_path, LivySessionManager.livy_global_session.session_id)
                 else:
-                    # Session from file is invalid, create new one
-                    logger.debug(f"Session from file invalid, creating new session")
+                    # No session file or empty, create new session
                     LivySessionManager.livy_global_session.create_session(data)
                     LivySessionManager.livy_global_session.is_new_session_required = False
                     # Write new session ID to file
                     write_session_id_to_file(session_file_path, LivySessionManager.livy_global_session.session_id)
-            else:
-                # No session file or empty, create new session
-                LivySessionManager.livy_global_session.create_session(data)
-                LivySessionManager.livy_global_session.is_new_session_required = False
-                # Write new session ID to file
-                write_session_id_to_file(session_file_path, LivySessionManager.livy_global_session.session_id)
-            
-            # create shortcuts, if there are any (only for Fabric mode)
-            if credentials.create_shortcuts and not credentials.is_local_mode:
-                try:
-                    shortcut_client = ShortcutClient(
-                        accessToken.token,
-                        credentials.workspaceid,
-                        credentials.lakehouseid,
-                        credentials.endpoint,
-                    )
-                    shortcut_client.create_shortcuts(credentials.shortcuts_json_str)
-                except Exception as ex:
-                    logger.error(f"Unable to create shortcuts: {ex}")
-        elif not LivySessionManager.livy_global_session.is_valid_session():
-            # Current session is invalid, try to reuse from file or create new
-            existing_session_id = read_session_id_from_file(session_file_path)
-            current_session_id = LivySessionManager.livy_global_session.session_id
-            
-            # Only try file if it's a different session ID
-            if existing_session_id and existing_session_id != current_session_id:
-                if LivySessionManager.livy_global_session.try_reuse_session(existing_session_id):
-                    logger.debug(f"Reused different session from file: {existing_session_id}")
+                
+                # create shortcuts, if there are any (only for Fabric mode)
+                if credentials.create_shortcuts and not credentials.is_local_mode:
+                    try:
+                        shortcut_client = ShortcutClient(
+                            accessToken.token,
+                            credentials.workspaceid,
+                            credentials.lakehouseid,
+                            credentials.endpoint,
+                        )
+                        shortcut_client.create_shortcuts(credentials.shortcuts_json_str)
+                    except Exception as ex:
+                        logger.error(f"Unable to create shortcuts: {ex}")
+            elif not LivySessionManager.livy_global_session.is_valid_session():
+                # Current session is invalid, try to reuse from file or create new
+                existing_session_id = read_session_id_from_file(session_file_path)
+                current_session_id = LivySessionManager.livy_global_session.session_id
+                
+                # Only try file if it's a different session ID
+                if existing_session_id and existing_session_id != current_session_id:
+                    if LivySessionManager.livy_global_session.try_reuse_session(existing_session_id):
+                        logger.debug(f"Reused different session from file: {existing_session_id}")
+                    else:
+                        # Create new session
+                        LivySessionManager.livy_global_session.create_session(data)
+                        LivySessionManager.livy_global_session.is_new_session_required = False
+                        write_session_id_to_file(session_file_path, LivySessionManager.livy_global_session.session_id)
                 else:
                     # Create new session
                     LivySessionManager.livy_global_session.create_session(data)
                     LivySessionManager.livy_global_session.is_new_session_required = False
                     write_session_id_to_file(session_file_path, LivySessionManager.livy_global_session.session_id)
-            else:
-                # Create new session
+            elif LivySessionManager.livy_global_session.is_new_session_required:
                 LivySessionManager.livy_global_session.create_session(data)
                 LivySessionManager.livy_global_session.is_new_session_required = False
                 write_session_id_to_file(session_file_path, LivySessionManager.livy_global_session.session_id)
-        elif LivySessionManager.livy_global_session.is_new_session_required:
-            LivySessionManager.livy_global_session.create_session(data)
-            LivySessionManager.livy_global_session.is_new_session_required = False
-            write_session_id_to_file(session_file_path, LivySessionManager.livy_global_session.session_id)
-        else:
-            logger.debug(f"Reusing session: {LivySessionManager.livy_global_session.session_id}")
-        livyConnection = LivyConnection(credentials, LivySessionManager.livy_global_session)
-        return livyConnection
+            else:
+                logger.debug(f"Reusing session: {LivySessionManager.livy_global_session.session_id}")
+            
+            livyConnection = LivyConnection(credentials, LivySessionManager.livy_global_session)
+            return livyConnection
 
     @staticmethod
     def disconnect() -> None:
@@ -812,15 +824,18 @@ class LivySessionManager:
         
         The session is intentionally kept alive for reuse by subsequent dbt runs.
         The session ID is stored in a file so it can be reused.
+        
+        This method is thread-safe.
         """
-        if LivySessionManager.livy_global_session is not None:
-            session_id = LivySessionManager.livy_global_session.session_id
-            logger.debug(f"Disconnecting from session manager (session {session_id} kept alive for reuse)")
-            # Don't delete the session - keep it alive for reuse
-            # Just reset the local reference
-            LivySessionManager.livy_global_session = None
-        else:
-            logger.debug("No session to disconnect")
+        with _session_lock:
+            if LivySessionManager.livy_global_session is not None:
+                session_id = LivySessionManager.livy_global_session.session_id
+                logger.debug(f"Disconnecting from session manager (session {session_id} kept alive for reuse)")
+                # Don't delete the session - keep it alive for reuse
+                # Just reset the local reference
+                LivySessionManager.livy_global_session = None
+            else:
+                logger.debug("No session to disconnect")
 
 
 class LivySessionConnectionWrapper(object):

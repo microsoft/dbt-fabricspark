@@ -30,6 +30,7 @@ livysession_credentials: FabricSparkCredentials
 DEFAULT_POLL_WAIT = 10
 DEFAULT_POLL_STATEMENT_WAIT = 5
 AZURE_CREDENTIAL_SCOPE = "https://analysis.windows.net/powerbi/api/.default"
+FABRIC_NOTEBOOK_CREDENTIAL_SCOPE = "pbi"
 accessToken: AccessToken = None
 
 # Global lock to ensure thread-safe session creation/reuse
@@ -178,6 +179,34 @@ def get_default_access_token(credentials: FabricSparkCredentials) -> AccessToken
     return accessToken
 
 
+def get_fabric_notebook_access_token(credentials: FabricSparkCredentials) -> AccessToken:
+    """
+    Get an Azure access token using notebookutils.
+    
+    Works in both Fabric PySpark and Python notebooks.
+    
+    Note: notebookutils is only available in Fabric notebook runtime environments.
+    It is not installable via pip and will not resolve in local development.
+
+    Parameters
+    ----------
+    credentials : FabricSparkCredentials
+        Credentials.
+
+    Returns
+    -------
+    out : AccessToken
+        The access token.
+    """
+    import notebookutils  # type: ignore  # noqa: F401 - only available in Fabric runtime
+
+    _ = credentials
+    aad_token = notebookutils.credentials.getToken(FABRIC_NOTEBOOK_CREDENTIAL_SCOPE)
+    expires_on = int(time.time() + 4500.0)
+    accessToken = AccessToken(token=aad_token, expires_on=expires_on)
+    return accessToken
+
+
 def get_headers(credentials: FabricSparkCredentials, tokenPrint: bool = False) -> dict[str, str]:
     """Get HTTP headers for Livy requests.
     
@@ -196,6 +225,9 @@ def get_headers(credentials: FabricSparkCredentials, tokenPrint: bool = False) -
         elif credentials.authentication and credentials.authentication.lower() == "int_tests":
             logger.info("Using int_tests auth")
             accessToken = get_default_access_token(credentials)
+        elif credentials.authentication and credentials.authentication.lower() == "fabric_notebook":
+            logger.info("Using Fabric Notebook auth")
+            accessToken = get_fabric_notebook_access_token(credentials)
         else:
             logger.info("Using SPN auth")
             accessToken = get_sp_access_token(credentials)

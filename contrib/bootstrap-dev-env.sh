@@ -26,6 +26,8 @@ command -v az &>/dev/null || curl -sL https://aka.ms/InstallAzureCLIDeb | sudo b
 [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
 
 cd "$REPO_ROOT"
+[ ! -d "$REPO_ROOT/.venv" ] && uv venv "$REPO_ROOT/.venv"
+source "$REPO_ROOT/.venv/bin/activate"
 uv pip install -e . --group dev
 [ ! -f "$REPO_ROOT/test.env" ] && cp "$REPO_ROOT/test.env.example" "$REPO_ROOT/test.env"
 

@@ -77,7 +77,7 @@ def test_credentials_fabric_mode_endpoint() -> None:
 
 def test_credentials_fabric_mode_requires_workspaceid() -> None:
     """Test that Fabric mode raises error without workspaceid."""
-    with pytest.raises(DbtRuntimeError, match="workspace guid"):
+    with pytest.raises(DbtRuntimeError, match="workspaceid"):
         FabricSparkCredentials(
             method="livy",
             livy_mode="fabric",
@@ -89,7 +89,7 @@ def test_credentials_fabric_mode_requires_workspaceid() -> None:
 
 def test_credentials_fabric_mode_requires_lakehouseid() -> None:
     """Test that Fabric mode raises error without lakehouseid."""
-    with pytest.raises(DbtRuntimeError, match="lakehouse guid"):
+    with pytest.raises(DbtRuntimeError, match="lakehouseid"):
         FabricSparkCredentials(
             method="livy",
             livy_mode="fabric",
@@ -110,6 +110,33 @@ def test_credentials_local_mode_no_workspace_required() -> None:
     )
     assert credentials.workspaceid is None
     assert credentials.lakehouseid is None
+
+
+def test_credentials_fabric_mode_requires_endpoint() -> None:
+    """Test that Fabric mode raises error without endpoint."""
+    with pytest.raises(DbtRuntimeError, match="endpoint"):
+        FabricSparkCredentials(
+            method="livy",
+            livy_mode="fabric",
+            workspaceid="workspace-guid",
+            lakehouseid="lakehouse-guid",
+            endpoint=None,  # Explicitly set to None
+            schema="tests",
+            spark_config={"name": "test-session"},
+        )
+
+
+def test_credentials_local_mode_no_endpoint_required() -> None:
+    """Test that local mode doesn't require endpoint."""
+    # Should not raise any error even with endpoint=None
+    credentials = FabricSparkCredentials(
+        method="livy",
+        livy_mode="local",
+        endpoint=None,
+        schema="default",
+        spark_config={"name": "test-session"},
+    )
+    assert credentials.endpoint is None
 
 
 def test_credentials_type() -> None:

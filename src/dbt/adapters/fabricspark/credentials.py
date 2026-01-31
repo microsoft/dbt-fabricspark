@@ -25,7 +25,7 @@ class FabricSparkCredentials(Credentials):
     database: Optional[str] = None  # type: ignore
     lakehouse: Optional[str] = None
     lakehouseid: Optional[str] = None
-    endpoint: str = "https://msitapi.fabric.microsoft.com/v1"
+    endpoint: Optional[str] = "https://api.fabric.microsoft.com/v1"  # Required for Fabric mode, optional for local mode
     livy_url: str = "http://localhost:8998"  # Local Livy URL
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
@@ -85,10 +85,12 @@ class FabricSparkCredentials(Credentials):
 
         # Fabric-specific validations (only when not in local mode)
         if not self.is_local_mode:
+            if self.endpoint is None:
+                raise DbtRuntimeError("Must specify `endpoint` in profile for Fabric mode")
             if self.workspaceid is None:
-                raise DbtRuntimeError("Must specify `workspace guid` in profile for Fabric mode")
+                raise DbtRuntimeError("Must specify `workspaceid` in profile for Fabric mode")
             if self.lakehouseid is None:
-                raise DbtRuntimeError("Must specify `lakehouse guid` in profile for Fabric mode")
+                raise DbtRuntimeError("Must specify `lakehouseid` in profile for Fabric mode")
 
         if self.lakehouse_schemas_enabled and self.schema is None:
             raise DbtRuntimeError(
@@ -112,6 +114,8 @@ class FabricSparkCredentials(Credentials):
 
     @property
     def unique_field(self) -> str:
+        if self.is_local_mode:
+            return self.livy_url
         return self.lakehouseid
 
     def _connection_keys(self) -> Tuple[str, ...]:

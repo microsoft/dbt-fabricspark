@@ -46,6 +46,7 @@
 
    ```bash
    # Build wheel
+   rm -rf /home/mdrrahman/dbt-fabricspark/dist
    uv build
 
    # Run unit tests

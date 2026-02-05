@@ -296,8 +296,17 @@ class LivySession:
             
             if self.is_local_mode:
                 current_state = res_json.get("state", "dead")
+                top_level_state = current_state
             else:
-                current_state = res_json.get("livyInfo", {}).get("currentState", "dead")
+                # Fabric mode: check both top-level state and livyInfo
+                # When session is starting, livyInfo may not exist yet
+                top_level_state = res_json.get("state", "")
+                livy_info = res_json.get("livyInfo", {})
+                current_state = livy_info.get("currentState", "")
+                
+                # If livyInfo doesn't exist yet but top-level state shows starting, it's still valid
+                if not current_state and top_level_state in ("starting", "not_started"):
+                    current_state = top_level_state
             
             if current_state in invalid_states:
                 logger.debug(f"Session {session_id} is in invalid state: {current_state}")
@@ -322,8 +331,8 @@ class LivySession:
                     logger.info(f"Successfully reusing existing Livy session: {session_id}")
                     self.is_new_session_required = False
                     return True
-                elif current_state in ("starting", "not_started", "busy"):
-                    logger.debug(f"Session {session_id} is {current_state}, waiting...")
+                elif current_state in ("starting", "not_started", "busy") or top_level_state in ("starting", "not_started"):
+                    logger.debug(f"Session {session_id} is {current_state} (top: {top_level_state}), waiting...")
                     self._wait_for_existing_session(session_id)
                     logger.info(f"Successfully reusing existing Livy session: {session_id}")
                     self.is_new_session_required = False
@@ -359,12 +368,21 @@ class LivySession:
                     return
                 elif state in ("dead", "error", "killed"):
                     raise FailedToConnectError(f"Session {session_id} died while waiting")
+                else:
+                    logger.debug(f"Session {session_id} is {state}, waiting... (attempt {attempt + 1}/{max_attempts})")
             else:
-                state = res.get("livyInfo", {}).get("currentState", "")
-                if state == "idle":
+                # Fabric mode: check both top-level state and livyInfo
+                top_level_state = res.get("state", "")
+                livy_info = res.get("livyInfo", {})
+                livy_state = livy_info.get("currentState", "")
+                
+                if livy_state == "idle":
                     return
-                elif state in ("dead", "error", "killed"):
+                elif livy_state in ("dead", "error", "killed") or top_level_state in ("dead", "error", "killed"):
                     raise FailedToConnectError(f"Session {session_id} died while waiting")
+                else:
+                    # Session still starting or in transition
+                    logger.debug(f"Session {session_id} state: top={top_level_state}, livy={livy_state}, waiting... (attempt {attempt + 1}/{max_attempts})")
             
             attempt += 1
             time.sleep(DEFAULT_POLL_WAIT)
@@ -445,15 +463,27 @@ class LivySession:
                     logger.error("ERROR, cannot create a livy session")
                     raise FailedToConnectError("failed to connect")
             else:
-                if res["state"] == "starting" or res["state"] == "not_started":
+                # Fabric Livy: check top-level state first
+                # When session is starting, "livyInfo" may not exist yet
+                top_level_state = res.get("state", "")
+                livy_info = res.get("livyInfo", {})
+                livy_state = livy_info.get("currentState", "")
+                
+                if top_level_state in ("starting", "not_started"):
+                    # Session still starting, continue polling
+                    logger.debug(f"Session {self.session_id} is {top_level_state}, waiting...")
                     time.sleep(DEFAULT_POLL_WAIT)
-                elif res["livyInfo"]["currentState"] == "idle":
+                elif livy_state == "idle":
                     logger.debug(f"New livy session id is: {self.session_id}, {res}")
                     self.is_new_session_required = False
                     break
-                elif res["livyInfo"]["currentState"] == "dead":
+                elif livy_state == "dead" or top_level_state == "dead":
                     logger.error("ERROR, cannot create a livy session")
                     raise FailedToConnectError("failed to connect")
+                else:
+                    # Unknown state, keep waiting (could be transitioning)
+                    logger.debug(f"Session {self.session_id} in state: top={top_level_state}, livy={livy_state}, waiting...")
+                    time.sleep(DEFAULT_POLL_WAIT)
 
     def delete_session(self) -> None:
 
@@ -487,7 +517,15 @@ class LivySession:
         if self.is_local_mode:
             current_state = res.get("state", "dead")
         else:
-            current_state = res.get("livyInfo", {}).get("currentState", "dead")
+            # Fabric mode: check both top-level state and livyInfo
+            # When session is starting, livyInfo may not exist yet
+            top_level_state = res.get("state", "")
+            livy_info = res.get("livyInfo", {})
+            current_state = livy_info.get("currentState", "")
+            
+            # If livyInfo doesn't exist yet but top-level state is valid, use that
+            if not current_state:
+                current_state = top_level_state if top_level_state else "dead"
         
         return current_state not in invalid_states
 

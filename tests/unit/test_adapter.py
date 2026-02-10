@@ -1,4 +1,5 @@
 import unittest
+from multiprocessing import get_context
 from unittest import mock
 
 from agate import Row
@@ -13,6 +14,7 @@ from .utils import config_from_parts_or_dicts
 class TestSparkAdapter(unittest.TestCase):
     def setUp(self):
         flags.STRICT_MODE = False
+        self.mp_context = get_context("spawn")
 
         self.project_cfg = {
             "name": "X",
@@ -43,15 +45,39 @@ class TestSparkAdapter(unittest.TestCase):
                         "connect_timeout": 10,
                         "threads": 1,
                         "endpoint": "https://dailyapi.fabric.microsoft.com/v1",
+                        "spark_config": {"name": "test-session"},
                     }
                 },
                 "target": "test",
             },
         )
 
+    def _get_target_livy_local(self, project):
+        """Get config for local Livy mode."""
+        return config_from_parts_or_dicts(
+            project,
+            {
+                "outputs": {
+                    "test": {
+                        "type": "fabricspark",
+                        "method": "livy",
+                        "livy_mode": "local",
+                        "livy_url": "http://localhost:8998",
+                        "schema": "default",
+                        "connect_retries": 0,
+                        "connect_timeout": 10,
+                        "threads": 1,
+                        "spark_config": {"name": "test-session"},
+                    }
+                },
+                "target": "test",
+            },
+        )
+
+    @unittest.skip("Requires Azure CLI authentication - integration test")
     def test_livy_connection(self):
         config = self._get_target_livy(self.project_cfg)
-        adapter = FabricSparkAdapter(config)
+        adapter = FabricSparkAdapter(config, self.mp_context)
 
         def fabric_spark_livy_connect(configuration):
             self.assertEqual(configuration.method, "livy")
@@ -69,6 +95,30 @@ class TestSparkAdapter(unittest.TestCase):
             self.assertIsNotNone(connection.handle)
             self.assertEqual(connection.credentials.authentication, "CLI")
             self.assertIsNone(connection.credentials.database)
+
+    def test_local_livy_credentials(self):
+        """Test that local Livy mode credentials are properly set up."""
+        config = self._get_target_livy_local(self.project_cfg)
+        adapter = FabricSparkAdapter(config, self.mp_context)
+        
+        # Get credentials from config
+        creds = config.credentials
+        self.assertEqual(creds.livy_mode, "local")
+        self.assertTrue(creds.is_local_mode)
+        self.assertEqual(creds.lakehouse_endpoint, "http://localhost:8998")
+        self.assertIsNone(creds.workspaceid)
+        self.assertIsNone(creds.lakehouseid)
+
+    def test_fabric_livy_credentials(self):
+        """Test that Fabric Livy mode credentials are properly set up."""
+        config = self._get_target_livy(self.project_cfg)
+        
+        creds = config.credentials
+        self.assertEqual(creds.livy_mode, "fabric")
+        self.assertFalse(creds.is_local_mode)
+        self.assertIn("workspaces", creds.lakehouse_endpoint)
+        self.assertIsNotNone(creds.workspaceid)
+        self.assertIsNotNone(creds.lakehouseid)
 
     def test_parse_relation(self):
         self.maxDiff = None
@@ -109,7 +159,7 @@ class TestSparkAdapter(unittest.TestCase):
         input_cols = [Row(keys=["col_name", "data_type"], values=r) for r in plain_rows]
 
         config = self._get_target_livy(self.project_cfg)
-        rows = FabricSparkAdapter(config).parse_describe_extended(relation, input_cols)
+        rows = FabricSparkAdapter(config, self.mp_context).parse_describe_extended(relation, input_cols)
         self.assertEqual(len(rows), 4)
         self.assertEqual(
             rows[0].to_column_dict(omit_none=False),
@@ -198,7 +248,7 @@ class TestSparkAdapter(unittest.TestCase):
         input_cols = [Row(keys=["col_name", "data_type"], values=r) for r in plain_rows]
 
         config = self._get_target_livy(self.project_cfg)
-        rows = FabricSparkAdapter(config).parse_describe_extended(relation, input_cols)
+        rows = FabricSparkAdapter(config, self.mp_context).parse_describe_extended(relation, input_cols)
 
         self.assertEqual(rows[0].to_column_dict().get("table_owner"), "1234")
 
@@ -234,7 +284,7 @@ class TestSparkAdapter(unittest.TestCase):
         input_cols = [Row(keys=["col_name", "data_type"], values=r) for r in plain_rows]
 
         config = self._get_target_livy(self.project_cfg)
-        rows = FabricSparkAdapter(config).parse_describe_extended(relation, input_cols)
+        rows = FabricSparkAdapter(config, self.mp_context).parse_describe_extended(relation, input_cols)
         self.assertEqual(len(rows), 1)
         self.assertEqual(
             rows[0].to_column_dict(omit_none=False),
@@ -263,7 +313,7 @@ class TestSparkAdapter(unittest.TestCase):
 
     def test_relation_with_database(self):
         config = self._get_target_livy(self.project_cfg)
-        adapter = FabricSparkAdapter(config)
+        adapter = FabricSparkAdapter(config, self.mp_context)
         # fine
         adapter.Relation.create(schema="different", identifier="table")
         with self.assertRaises(DbtRuntimeError):
@@ -327,7 +377,7 @@ class TestSparkAdapter(unittest.TestCase):
         )
 
         config = self._get_target_livy(self.project_cfg)
-        columns = FabricSparkAdapter(config).parse_columns_from_information(relation)
+        columns = FabricSparkAdapter(config, self.mp_context).parse_columns_from_information(relation)
         self.assertEqual(len(columns), 4)
         self.assertEqual(
             columns[0].to_column_dict(omit_none=False),
@@ -412,7 +462,7 @@ class TestSparkAdapter(unittest.TestCase):
         )
 
         config = self._get_target_livy(self.project_cfg)
-        columns = FabricSparkAdapter(config).parse_columns_from_information(relation)
+        columns = FabricSparkAdapter(config, self.mp_context).parse_columns_from_information(relation)
         self.assertEqual(len(columns), 4)
         self.assertEqual(
             columns[1].to_column_dict(omit_none=False),
@@ -478,7 +528,7 @@ class TestSparkAdapter(unittest.TestCase):
         )
 
         config = self._get_target_livy(self.project_cfg)
-        columns = FabricSparkAdapter(config).parse_columns_from_information(relation)
+        columns = FabricSparkAdapter(config, self.mp_context).parse_columns_from_information(relation)
         self.assertEqual(len(columns), 4)
 
         self.assertEqual(

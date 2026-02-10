@@ -23,6 +23,9 @@
     {%- set tmp_relation = tmp_relation.include(database=false, schema=false) -%}
   {%- endif -%}
 
+  {#-- Ensure the database/schema exists before creating the table --#}
+  {% do ensure_database_exists(target_relation.schema) %}
+
   {#-- Set Overwrite Mode --#}
   {%- if strategy in ['insert_overwrite', 'microbatch'] and partition_by -%}
     {%- call statement() -%}

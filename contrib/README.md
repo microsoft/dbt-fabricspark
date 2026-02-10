@@ -1,0 +1,58 @@
+# Contributing
+
+## How to use, on a Linux machine
+
+1. Windows pre-reqs
+
+   ```powershell
+   winget install -e --id Microsoft.VisualStudioCode
+   ```
+
+1. Get a fresh new WSL machine up:
+
+   ```powershell
+   $GIT_ROOT = git rev-parse --show-toplevel
+   & "$GIT_ROOT\contrib\bootstrap-dev-env.ps1"
+   ```
+
+2. Clone the repo, and open VSCode in it:
+
+   ```bash
+   cd ~/
+
+   git config --global user.name "Raki Rahman"
+   git config --global user.email "mdrakiburrahman@gmail.com"
+   git clone https://github.com/mdrakiburrahman/dbt-fabricspark.git
+
+   cd dbt-fabricspark/
+   code .
+   ```
+
+3. Run the bootstrapper script, that installs all tools idempotently:
+
+   ```bash
+   GIT_ROOT=$(git rev-parse --show-toplevel)
+   chmod +x ${GIT_ROOT}/contrib/bootstrap-dev-env.sh && ${GIT_ROOT}/contrib/bootstrap-dev-env.sh
+   ```
+
+4. Source the path to apply environment changes:
+
+   ```bash
+   source ~/.bashrc
+   ```
+
+
+5. Dev loop:
+
+   ```bash
+   # Build wheel
+   rm -rf /home/mdrrahman/dbt-fabricspark/dist
+   uv build
+
+   # Run unit tests
+   uv run pytest -v
+   
+   # Upload to storage, and install wheel on client machine
+   pip uninstall -y dbt-fabricspark 2>/dev/null
+   pip install https://rakirahman.blob.core.windows.net/public/whls/dbt_fabricspark-1.9.1-py3-none-any.whl
+   ```

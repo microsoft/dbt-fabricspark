@@ -208,11 +208,15 @@ class FabricSparkConnectionManager(SQLConnectionManager):
 
     @classmethod
     def cleanup_all(self) -> None:
+        """Clean up all connection managers without closing Livy sessions.
+        
+        Sessions are intentionally kept alive for reuse by subsequent dbt runs.
+        """
         for thread_id in self.connection_managers:
             livySession = self.connection_managers[thread_id]
-            livySession.disconnect()
+            livySession.disconnect()  # This no longer deletes the Livy session
 
-            # garbage collect these connections
+        # garbage collect these connection manager references
         self.connection_managers.clear()
 
     @classmethod

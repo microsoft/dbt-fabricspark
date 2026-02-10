@@ -10,6 +10,9 @@
                                                 type='table',
                                                 is_delta=(old_relation.is_delta is none or old_relation.is_delta)) -%}
 
+  {#-- Ensure the database/schema exists before creating the table --#}
+  {% do ensure_database_exists(schema) %}
+
   {{ run_hooks(pre_hooks) }}
 
   -- setup: if the target relation already exists, drop it

@@ -4,13 +4,12 @@ from unittest import mock
 
 from jinja2 import Environment, FileSystemLoader
 
-unittest.skip("Skipping temporarily")
 
-
+@unittest.skip("Skipping temporarily - macros require full dbt context")
 class TestSparkMacros(unittest.TestCase):
     def setUp(self):
         self.jinja_env = Environment(
-            loader=FileSystemLoader("dbt/include/fabricspark/macros"),
+            loader=FileSystemLoader("src/dbt/include/fabricspark/macros"),
             extensions=[
                 "jinja2.ext.do",
             ],
@@ -18,7 +17,7 @@ class TestSparkMacros(unittest.TestCase):
 
         self.jinja_env_create_table_as = Environment(
             loader=FileSystemLoader(
-                "dbt/include/fabricspark/macros/materializations/models/table/"
+                "src/dbt/include/fabricspark/macros/materializations/models/table/"
             ),
             extensions=[
                 "jinja2.ext.do",

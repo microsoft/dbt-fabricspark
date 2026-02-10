@@ -26,7 +26,9 @@ prompts:
         type: 'int'
       connect_timeout:
         default: 10
-        type: 'int'    
+        type: 'int'
+      session_id_file:
+        hint: Optional path to file storing Livy session ID for session reuse. Defaults to ./livy-session-id.txt if not specified.
   schema:
     hint: 'default schema that dbt will build objects in'
   threads:

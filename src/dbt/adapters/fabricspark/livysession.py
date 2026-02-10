@@ -208,7 +208,7 @@ def get_fabric_notebook_access_token(credentials: FabricSparkCredentials) -> Acc
     now = time.time()
     remaining_seconds = expires_on - now
     remaining_minutes = remaining_seconds / 60
-    logger.info(
+    logger.debug(
         f"Token expiry: {dt.datetime.fromtimestamp(expires_on).isoformat()}, "
         f"Current time: {dt.datetime.fromtimestamp(now).isoformat()}, "
         f"Remaining: {remaining_minutes:.1f} minutes"

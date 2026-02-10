@@ -198,11 +198,22 @@ def get_fabric_notebook_access_token(credentials: FabricSparkCredentials) -> Acc
     out : AccessToken
         The access token.
     """
+    import base64  # noqa: F401
     import notebookutils  # type: ignore  # noqa: F401 - only available in Fabric runtime
 
     _ = credentials
     aad_token = notebookutils.credentials.getToken(FABRIC_NOTEBOOK_CREDENTIAL_SCOPE)
-    expires_on = int(time.time() + 4500.0)
+    expires_on = json.loads(base64.b64decode(aad_token.split('.')[1] + '=='))['exp']
+
+    now = time.time()
+    remaining_seconds = expires_on - now
+    remaining_minutes = remaining_seconds / 60
+    logger.info(
+        f"Token expiry: {dt.datetime.fromtimestamp(expires_on).isoformat()}, "
+        f"Current time: {dt.datetime.fromtimestamp(now).isoformat()}, "
+        f"Remaining: {remaining_minutes:.1f} minutes"
+    )
+
     accessToken = AccessToken(token=aad_token, expires_on=expires_on)
     return accessToken
 

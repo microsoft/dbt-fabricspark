@@ -1,31 +1,19 @@
+import os
 import re
 import unittest
 from unittest import mock
 
 from jinja2 import Environment, FileSystemLoader
 
-unittest.skip("Skipping temporarily")
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_MACROS_DIR = os.path.join(_PROJECT_ROOT, "src", "dbt", "include", "fabricspark", "macros")
+_TABLE_MACROS_DIR = os.path.join(_MACROS_DIR, "materializations", "models", "table")
 
 
 class TestSparkMacros(unittest.TestCase):
     def setUp(self):
-        self.jinja_env = Environment(
-            loader=FileSystemLoader("dbt/include/fabricspark/macros"),
-            extensions=[
-                "jinja2.ext.do",
-            ],
-        )
-
-        self.jinja_env_create_table_as = Environment(
-            loader=FileSystemLoader(
-                "dbt/include/fabricspark/macros/materializations/models/table/"
-            ),
-            extensions=[
-                "jinja2.ext.do",
-            ],
-        )
-
         self.config = {}
+
         self.default_context = {
             "validation": mock.Mock(),
             "model": mock.Mock(),
@@ -33,9 +21,29 @@ class TestSparkMacros(unittest.TestCase):
             "config": mock.Mock(),
             "adapter": mock.Mock(),
             "return": lambda r: r,
+            # Globals required by macros in create_table_as.sql that aren't
+            # under test but must be parseable by Jinja
+            "statement": mock.Mock(return_value=mock.MagicMock(__enter__=mock.Mock(), __exit__=mock.Mock())),
+            "is_incremental": lambda: False,
+            "local_md5": lambda *args, **kwargs: "mock_hash",
+            "alter_column_set_constraints": mock.Mock(),
+            "alter_table_add_constraints": mock.Mock(),
+            "get_assert_columns_equivalent": mock.Mock(return_value=""),
+            "get_select_subquery": mock.Mock(return_value="select 1"),
+            "create_temporary_view": mock.Mock(return_value=""),
         }
         self.default_context["config"].get = lambda key, default=None, **kwargs: self.config.get(
             key, default
+        )
+
+        self.jinja_env = Environment(
+            loader=FileSystemLoader(_MACROS_DIR),
+            extensions=["jinja2.ext.do"],
+        )
+
+        self.jinja_env_create_table_as = Environment(
+            loader=FileSystemLoader(_TABLE_MACROS_DIR),
+            extensions=["jinja2.ext.do"],
         )
 
     def __get_template(self, template_filename):

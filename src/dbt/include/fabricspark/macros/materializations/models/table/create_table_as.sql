@@ -35,11 +35,10 @@
 
 {% macro fabricspark__file_format_clause() %}
   {%- set file_format = config.get('file_format') -%}
-  {%- if file_format is not none and file_format != 'delta' %}
+  {%- if file_format is not none %}
     using {{ file_format }}
   {%- endif %}
 {%- endmacro -%}
-W
 {% macro tblproperties_clause() %}
   {{ return(adapter.dispatch('tblproperties_clause', 'dbt')()) }}
 {%- endmacro -%}

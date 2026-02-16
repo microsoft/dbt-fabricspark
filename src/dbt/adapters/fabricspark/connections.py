@@ -2,8 +2,10 @@ import os
 import time
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from typing import (
     Any,
+    Dict,
     Generator,
     Iterable,
     List,
@@ -23,6 +25,7 @@ from dbt.adapters.contracts.connection import (
     AdapterResponse,
     Connection,
     ConnectionState,
+    Credentials,
 )
 from dbt.adapters.events.logging import AdapterLogger
 from dbt.adapters.events.types import AdapterEventDebug, ConnectionUsed, SQLQuery, SQLQueryStatus
@@ -208,11 +211,14 @@ class FabricSparkConnectionManager(SQLConnectionManager):
 
     @classmethod
     def cleanup_all(self) -> None:
-        for thread_id in self.connection_managers:
-            livySession = self.connection_managers[thread_id]
-            livySession.disconnect()
+        for thread_id in list(self.connection_managers.keys()):
+            try:
+                livySession = self.connection_managers[thread_id]
+                livySession.disconnect()
+            except Exception as ex:
+                logger.debug(f"Error cleaning up session for thread {thread_id}: {ex}")
 
-            # garbage collect these connections
+        # garbage collect these connections
         self.connection_managers.clear()
 
     @classmethod
@@ -266,7 +272,7 @@ class FabricSparkConnectionManager(SQLConnectionManager):
         auto_begin: bool = True,
         bindings: Optional[Any] = None,
         abridge_sql_log: bool = False,
-        retryable_exceptions: Tuple[Type[Exception], ...] = tuple(),
+        retryable_exceptions: Tuple[Type[Exception], ...] = (DbtRuntimeError,),
         retry_limit: int = 2,
     ) -> Tuple[Connection, Any]:
         """
@@ -282,24 +288,22 @@ class FabricSparkConnectionManager(SQLConnectionManager):
             retry_limit: int,
             attempt: int,
         ):
-            """
-            A success sees the try exit cleanly and avoid any recursive
-            retries. Failure begins a sleep and retry routine.
-            """
             retry_limit = connection.credentials.connect_retries or 3
             try:
                 cursor.execute(sql, bindings)
             except retryable_exceptions as e:
-                # Cease retries and fail when limit is hit.
                 if attempt >= retry_limit:
                     raise e
 
+                wait = min(5 * (2 ** (attempt - 1)), 60)  # exponential backoff: 5, 10, 20, 40, 60
                 fire_event(
                     AdapterEventDebug(
-                        message=f"Got a retryable error {type(e)}. {retry_limit-attempt} retries left. Retrying in 5 seconds.\nError:\n{e}"
+                        message=f"Got a retryable error {type(e)}. "
+                        f"{retry_limit - attempt} retries left. "
+                        f"Retrying in {wait} seconds.\nError:\n{e}"
                     )
                 )
-                time.sleep(5)
+                time.sleep(wait)
 
                 return _execute_query_with_retry(
                     cursor=cursor,
@@ -352,6 +356,88 @@ class FabricSparkConnectionManager(SQLConnectionManager):
             )
 
             return connection, cursor
+
+
+@dataclass
+class FabricSparkCredentials(Credentials):
+    schema: Optional[str] = None  # type: ignore
+    method: str = "livy"
+    workspaceid: Optional[str] = None
+    database: Optional[str] = None  # type: ignore
+    lakehouse: Optional[str] = None
+    lakehouseid: Optional[str] = None
+    endpoint: str = "https://msitapi.fabric.microsoft.com/v1"
+    client_id: Optional[str] = None
+    client_secret: Optional[str] = None
+    tenant_id: Optional[str] = None
+    authentication: str = "az_cli"
+    connect_retries: int = 1
+    connect_timeout: int = 10
+    create_shortcuts: Optional[bool] = False
+    retry_all: bool = False
+    shortcuts_json_str: Optional[str] = None
+    lakehouse_schemas_enabled: bool = False
+    accessToken: Optional[str] = None
+    spark_config: Dict[str, Any] = field(default_factory=dict)
+
+    # Livy session stability settings
+    http_timeout: int = 120  # seconds for each HTTP request to Fabric API
+    session_start_timeout: int = 600  # max seconds to wait for session start (10 min)
+    statement_timeout: int = 3600  # max seconds to wait for a statement result (1 hour)
+    poll_wait: int = 10  # seconds between polls for session start
+    poll_statement_wait: int = 5  # seconds between polls for statement result
+
+    @classmethod
+    def __pre_deserialize__(cls, data: Any) -> Any:
+        data = super().__pre_deserialize__(data)
+        if "lakehouse" not in data:
+            data["lakehouse"] = None
+        return data
+
+    @property
+    def lakehouse_endpoint(self) -> str:
+        # TODO: Construct Endpoint of the lakehouse from the
+        return f"{self.endpoint}/workspaces/{self.workspaceid}/lakehouses/{self.lakehouseid}/livyapi/versions/2023-12-01"
+
+    def __post_init__(self) -> None:
+        if self.method is None:
+            raise DbtRuntimeError("Must specify `method` in profile")
+        if self.workspaceid is None:
+            raise DbtRuntimeError("Must specify `workspace guid` in profile")
+        if self.lakehouseid is None:
+            raise DbtRuntimeError("Must specify `lakehouse guid` in profile")
+        if self.schema is None:
+            raise DbtRuntimeError("Must specify `schema` in profile")
+        if self.database is not None:
+            raise DbtRuntimeError(
+                "database property is not supported by adapter. Set database as none and use lakehouse instead."
+            )
+        if self.lakehouse_schemas_enabled and self.schema is None:
+            raise DbtRuntimeError(
+                "Please provide a schema name because you enabled lakehouse schemas"
+            )
+
+        if not self.lakehouse_schemas_enabled and self.lakehouse is not None:
+            self.schema = self.lakehouse
+
+        """ Validate spark_config fields manually. """
+        # other keys - "archives", "conf", "tags", "driverMemory", "driverCores", "executorMemory", "executorCores", "numExecutors"
+        required_keys = ["name"]
+
+        for key in required_keys:
+            if key not in self.spark_config:
+                raise ValueError(f"Missing required key: {key}")
+
+    @property
+    def type(self) -> str:
+        return "fabricspark"
+
+    @property
+    def unique_field(self) -> str:
+        return self.lakehouseid
+
+    def _connection_keys(self) -> Tuple[str, ...]:
+        return "workspaceid", "lakehouseid", "lakehouse", "endpoint", "schema", "file_format"
 
 
 def _is_retryable_error(exc: Exception) -> str:

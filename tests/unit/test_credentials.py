@@ -7,7 +7,8 @@ def test_credentials_server_side_parameters_keys_and_values_are_strings() -> Non
         authentication="CLI",
         lakehouse="tests",
         schema="tests",
-        workspaceid="",
-        lakehouseid="",
+        workspaceid="test-workspace-id",
+        lakehouseid="test-lakehouse-id",
+        spark_config={"name": "test-session"},
     )
     assert credentials.schema == "tests"

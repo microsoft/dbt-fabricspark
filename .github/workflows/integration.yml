@@ -5,13 +5,14 @@
 # Ensure code runs as expected.
 
 # **when?**
-# This will run for all PRs, when code is pushed to a main branch
-# branch, and when manually triggered.
+# This will run when code is pushed to a main/release branch,
+# and when manually triggered. Requires Azure secrets so it
+# cannot run on PRs from forks.
 
 name: Adapter Integration Tests
 on:
   workflow_dispatch:
-  pull_request:
+  push:
     branches:
       - "main"
       - "*.latest"
@@ -40,7 +41,6 @@ jobs:
           client-id: ${{ secrets.DBT_AZURE_SP_NAME }}
           tenant-id: ${{ secrets.DBT_AZURE_TENANT }}
           allow-no-subscriptions: true
-          federated-token: true
 
       - name: Generate Unique Names
         id: name_generation
@@ -56,8 +56,8 @@ jobs:
           echo "Lakehouse Name: $LAKEHOUSE_NAME"
           echo "Token File: $TOKEN_FILE"
 
-          echo "::set-output name=lakehouse_name::$LAKEHOUSE_NAME"
-          echo "::set-output name=token_file::$TOKEN_FILE"
+          echo "lakehouse_name=$LAKEHOUSE_NAME" >> $GITHUB_OUTPUT
+          echo "token_file=$TOKEN_FILE" >> $GITHUB_OUTPUT
 
       - name: Fetch Access Token
         id: fetch_token
@@ -74,7 +74,7 @@ jobs:
               token_file = "${{ steps.name_generation.outputs.token_file }}"
               with open(token_file, "w") as file:
                 file.write(token.token)
-              print(f"::set-output name=access_token::{token.token}")
+              print(f"access_token={token.token}", file=open(os.environ["GITHUB_OUTPUT"], "a"))
           except Exception as e:
               raise RuntimeError(f"Failed to fetch token: {e}")
           EOF
@@ -92,6 +92,7 @@ jobs:
 
           python - <<EOF
           import requests
+          import os
 
           access_token = "${{ steps.fetch_token.outputs.access_token }}"
           workspace_id = "${{ secrets.WORKSPACE_ID }}"
@@ -112,7 +113,7 @@ jobs:
           if response.status_code == 201:
               lakehouse_id = response.json().get("id")
               print(f"Lakehouse '{lakehouse_name}' created successfully.")
-              print(f"::set-output name=lakehouse_id::{lakehouse_id}")
+              print(f"lakehouse_id={lakehouse_id}", file=open(os.environ["GITHUB_OUTPUT"], "a"))
           else:
               print("Failed to create Lakehouse:", response.text)
               exit(1)
@@ -120,8 +121,11 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
       - name: Install dependencies
-        run: pip install -r dev_requirements.txt
+        run: uv sync
 
       - name: Run Functional Test ${{ matrix.test_file }}
         env:
@@ -132,7 +136,7 @@ jobs:
           CLIENT_ID: ${{ secrets.DBT_AZURE_SP_NAME }}
           TENANT_ID: ${{ secrets.DBT_AZURE_TENANT }}
           FABRIC_INTEGRATION_TESTS_TOKEN: ${{ steps.fetch_token.outputs.access_token }}
-        run: pytest -ra -v ${{ matrix.test_file }} --profile "int_tests"
+        run: uv run pytest -ra -v ${{ matrix.test_file }} --profile "int_tests"
 
       - name: Delete Fabric Lakehouse
         if: always() && steps.create_lakehouse.outputs.lakehouse_id

@@ -196,15 +196,31 @@ class LivySession:
                 self.connect_url + "/sessions/" + self.session_id,
                 headers=get_headers(self.credential, False),
             ).json()
-            if res["state"] == "starting" or res["state"] == "not_started":
+            # Fabric Livy: check top-level state first.
+            # When a session is starting, "livyInfo" may not exist yet.
+            top_level_state = res.get("state", "")
+            livy_info = res.get("livyInfo", {})
+            livy_state = livy_info.get("currentState", "")
+
+            if top_level_state in ("starting", "not_started"):
+                logger.debug(f"Session {self.session_id} is {top_level_state}, waiting...")
                 time.sleep(DEFAULT_POLL_WAIT)
-            elif res["livyInfo"]["currentState"] == "idle":
+            elif livy_state == "idle":
                 logger.debug(f"New livy session id is: {self.session_id}, {res}")
                 self.is_new_session_required = False
                 break
-            elif res["livyInfo"]["currentState"] == "dead":
+            elif livy_state in ("dead", "error", "killed", "shutting_down") or top_level_state in (
+                "dead", "error", "killed", "shutting_down",
+            ):
                 logger.error("ERROR, cannot create a livy session")
                 raise FailedToConnectError("failed to connect")
+            else:
+                # Unknown or transitioning state, keep waiting
+                logger.debug(
+                    f"Session {self.session_id} in state: top={top_level_state}, "
+                    f"livy={livy_state}, waiting..."
+                )
+                time.sleep(DEFAULT_POLL_WAIT)
 
     def delete_session(self) -> None:
 
@@ -232,8 +248,18 @@ class LivySession:
         ).json()
 
         # we can reuse the session so long as it is not dead, killed, or being shut down
-        invalid_states = ["dead", "shutting_down", "killed"]
-        return res["livyInfo"]["currentState"] not in invalid_states
+        invalid_states = ["dead", "shutting_down", "killed", "error"]
+
+        # Safely access livyInfo which may not exist during session startup
+        top_level_state = res.get("state", "")
+        livy_info = res.get("livyInfo", {})
+        current_state = livy_info.get("currentState", "")
+
+        # If livyInfo doesn't exist yet but top-level state is valid, use that
+        if not current_state:
+            current_state = top_level_state if top_level_state else "dead"
+
+        return current_state not in invalid_states
 
 
 # cursor object - wrapped for livy API

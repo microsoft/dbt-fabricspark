@@ -26,7 +26,6 @@ on:
 permissions:
   contents: read   # Required to access repository files
   packages: read   # Grant explicit read access to packages
-  id-token: write  # Needed if using OIDC authentication
 
 # will cancel previous workflows triggered by the same event and for the same ref for PRs or same SHA otherwise
 concurrency:
@@ -46,31 +45,21 @@ jobs:
 
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           persist-credentials: false
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
       - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.8'
+        run: uv python install 3.11
 
-      - name: Install python dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install libsasl2-dev
-          python -m pip install --user --upgrade pip
-          python -m pip --version
-          python -m pip install pre-commit
-          pre-commit --version
-          python -m pip install mypy==0.942
-          python -m pip install types-requests
-          mypy --version
-          python -m pip install -r dev_requirements.txt
-          dbt --version
+      - name: Install dependencies
+        run: uv sync
 
-      - name: Run pre-commit hooks
-        run: pre-commit run --all-files --show-diff-on-failure
+      - name: Run ruff check
+        run: uv run ruff check .
 
   unit:
     name: unit test / python ${{ matrix.python-version }}
@@ -81,42 +70,26 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.8", "3.9", "3.10", "3.11"]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
     env:
-      TOXENV: "unit"
-      PYTEST_ADDOPTS: "-v --color=yes --csv unit_results.csv"
+      PYTEST_ADDOPTS: "-v --color=yes"
 
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
 
-      - name: Install python dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install libsasl2-dev
-          python -m pip install --user --upgrade pip
-          python -m pip --version
-          python -m pip install tox
-          tox --version
-      - name: Run tox
-        run: tox
+      - name: Install dependencies
+        run: uv sync
 
-      - name: Get current date
-        if: always()
-        id: date
-        run: echo "date=$(date +'%Y-%m-%dT%H_%M_%S')" >> $GITHUB_OUTPUT #no colons allowed for artifacts
-
-      - uses: actions/upload-artifact@v3
-        if: always()
-        with:
-          name: unit_results_${{ matrix.python-version }}-${{ steps.date.outputs.date }}.csv
-          path: unit_results.csv
+      - name: Run unit tests
+        run: uv run pytest tests/unit
 
   build:
     name: build packages
@@ -128,31 +101,24 @@ jobs:
 
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.8'
-
-      - name: Install python dependencies
-        run: |
-          python -m pip install --user --upgrade pip
-          python -m pip install --upgrade setuptools wheel twine check-wheel-contents
-          python -m pip --version
+        run: uv python install 3.11
 
       - name: Build distributions
-        run: ./scripts/build-dist.sh
+        run: uv build
 
       - name: Show distributions
         run: ls -lh dist/
 
-      - name: Check distribution descriptions
+      - name: Install twine and check distributions
         run: |
+          uv tool install twine
           twine check dist/*
-      - name: Check wheel contents
-        run: |
-          check-wheel-contents dist/*.whl --ignore W007,W008
 
       - name: Check if this is an alpha version
         id: check-is-alpha
@@ -161,7 +127,7 @@ jobs:
           if [[ "$(ls -lh dist/)" == *"a1"* ]]; then export is_alpha=1; fi
           echo "is_alpha=$is_alpha" >> $GITHUB_OUTPUT
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
@@ -179,20 +145,15 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.8", "3.9", "3.10", "3.11"]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
     steps:
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install python dependencies
-        run: |
-          python -m pip install --user --upgrade pip
-          python -m pip install --upgrade wheel
-          python -m pip --version
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist/

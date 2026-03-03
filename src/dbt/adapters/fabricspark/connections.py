@@ -293,7 +293,12 @@ class FabricSparkConnectionManager(SQLConnectionManager):
             retry_limit = connection.credentials.connect_retries or 3
             try:
                 cursor.execute(sql, bindings)
-            except retryable_exceptions as e:
+            except Exception as e:
+                is_type_retryable = isinstance(e, retryable_exceptions) if retryable_exceptions else False
+                retryable_message = _is_retryable_error(e)
+                if not is_type_retryable and not retryable_message:
+                    raise e
+
                 # Cease retries and fail when limit is hit.
                 if attempt >= retry_limit:
                     raise e
@@ -371,6 +376,7 @@ def _is_retryable_error(exc: Exception) -> str:
         "rate limit",
         "connection reset",
         "service busy",
+        "unable to fetch mwc token",
     ]
     for keyword in retryable_keywords:
         if keyword in message:

@@ -8,7 +8,7 @@
                                                 schema=schema,
                                                 database=database,
                                                 type='table',
-                                                is_delta=(old_relation.is_delta is none or old_relation.is_delta)) -%}
+                                                is_delta=(old_relation is not none and (old_relation.is_delta is none or old_relation.is_delta))) -%}
 
   {{ run_hooks(pre_hooks) }}
 
@@ -17,7 +17,7 @@
   -- create or replace table instead of dropping, so we don't have the table unavailable
   {% set is_delta = old_relation.is_delta if old_relation is not none else config.get('file_format') == 'delta' %}
 
-  {% if not is_delta %}
+  {% if not is_delta and old_relation is not none %}
     {{ adapter.drop_relation(target_relation.incorporate(type=old_relation.type)) }}
   {% endif %}
 

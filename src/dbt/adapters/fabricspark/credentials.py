@@ -1,5 +1,6 @@
+import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Literal, Optional, Tuple
 
 from dbt_common.exceptions import DbtRuntimeError
 
@@ -8,16 +9,24 @@ from dbt.adapters.events.logging import AdapterLogger
 
 logger = AdapterLogger("fabricspark")
 
+# Mode types for Livy connection
+LivyMode = Literal["fabric", "local"]
+
+# Default session ID file name
+DEFAULT_SESSION_ID_FILENAME = "livy-session-id.txt"
+
 
 @dataclass
 class FabricSparkCredentials(Credentials):
     schema: Optional[str] = None  # type: ignore
     method: str = "livy"
+    livy_mode: LivyMode = "fabric"  # "fabric" or "local"
     workspaceid: Optional[str] = None
     database: Optional[str] = None  # type: ignore
     lakehouse: Optional[str] = None
     lakehouseid: Optional[str] = None
-    endpoint: str = "https://msitapi.fabric.microsoft.com/v1"
+    endpoint: Optional[str] = "https://api.fabric.microsoft.com/v1"  # Required for Fabric mode, optional for local mode
+    livy_url: str = "http://localhost:8998"  # Local Livy URL
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
     tenant_id: Optional[str] = None
@@ -30,6 +39,8 @@ class FabricSparkCredentials(Credentials):
     lakehouse_schemas_enabled: bool = False
     accessToken: Optional[str] = None
     spark_config: Dict[str, Any] = field(default_factory=dict)
+    # Optional path to session ID file for session reuse. If not provided, defaults to ./livy-session-id.txt
+    session_id_file: Optional[str] = None
 
     @classmethod
     def __pre_deserialize__(cls, data: Any) -> Any:
@@ -39,23 +50,48 @@ class FabricSparkCredentials(Credentials):
         return data
 
     @property
+    def is_local_mode(self) -> bool:
+        """Check if running in local Livy mode."""
+        return self.livy_mode == "local"
+
+    @property
+    def resolved_session_id_file(self) -> str:
+        """Get the resolved path to the session ID file.
+        
+        If session_id_file is provided, use it. Otherwise, use the default
+        file name in the current working directory.
+        """
+        if self.session_id_file:
+            return self.session_id_file
+        return os.path.join(os.getcwd(), DEFAULT_SESSION_ID_FILENAME)
+
+    @property
     def lakehouse_endpoint(self) -> str:
-        # TODO: Construct Endpoint of the lakehouse from the
+        """Get the Livy endpoint URL based on mode."""
+        if self.is_local_mode:
+            return self.livy_url
+        # Fabric mode: Construct Endpoint of the lakehouse
         return f"{self.endpoint}/workspaces/{self.workspaceid}/lakehouses/{self.lakehouseid}/livyapi/versions/2023-12-01"
 
     def __post_init__(self) -> None:
         if self.method is None:
             raise DbtRuntimeError("Must specify `method` in profile")
-        if self.workspaceid is None:
-            raise DbtRuntimeError("Must specify `workspace guid` in profile")
-        if self.lakehouseid is None:
-            raise DbtRuntimeError("Must specify `lakehouse guid` in profile")
         if self.schema is None:
             raise DbtRuntimeError("Must specify `schema` in profile")
         if self.database is not None:
             raise DbtRuntimeError(
                 "database property is not supported by adapter. Set database as none and use lakehouse instead."
             )
+
+        # Fabric-specific validations (only when not in local mode)
+        if not self.is_local_mode:
+            if self.endpoint is None:
+                raise DbtRuntimeError("Must specify `endpoint` in profile for Fabric mode")
+            if self.workspaceid is None:
+                raise DbtRuntimeError("Must specify `workspaceid` in profile for Fabric mode")
+            if self.lakehouseid is None:
+                raise DbtRuntimeError("Must specify `lakehouseid` in profile for Fabric mode")
+
         if self.lakehouse_schemas_enabled and self.schema is None:
             raise DbtRuntimeError(
                 "Please provide a schema name because you enabled lakehouse schemas"
@@ -78,6 +114,8 @@ class FabricSparkCredentials(Credentials):
 
     @property
     def unique_field(self) -> str:
+        if self.is_local_mode:
+            return self.livy_url
         return self.lakehouseid
 
     def _connection_keys(self) -> Tuple[str, ...]:

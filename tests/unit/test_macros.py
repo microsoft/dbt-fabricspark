@@ -4,8 +4,6 @@ from unittest import mock
 
 from jinja2 import Environment, FileSystemLoader
 
-unittest.skip("Skipping temporarily")
-
 
 @unittest.skip("Skipping temporarily - macros require full dbt context")
 class TestSparkMacros(unittest.TestCase):

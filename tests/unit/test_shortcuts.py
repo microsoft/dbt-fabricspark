@@ -38,7 +38,7 @@ class TestShorcutClient(unittest.TestCase):
                 client.create_shortcut(shortcut)
                 mock_post.assert_not_called()
 
-    def test_check_if_exists_and_delete_shortcut_not_found_returns_false(self):
+    def test_check_exists_not_found_returns_false(self):
         # if response 404, check_if_exists_and_delete_shortcut returns False
         shortcut = Shortcut(
             path="path",
@@ -53,7 +53,7 @@ class TestShorcutClient(unittest.TestCase):
             mock_get.return_value.status_code = 404
             self.assertFalse(client.check_if_exists_and_delete_shortcut(shortcut))
 
-    def test_check_if_exists_and_delete_shortcut_found_returns_true(self):
+    def test_check_exists_found_returns_true(self):
         # if response 200, check_if_exists_and_delete_shortcut returns True
         shortcut = Shortcut(
             path="path",
@@ -80,7 +80,7 @@ class TestShorcutClient(unittest.TestCase):
             }
             self.assertTrue(client.check_if_exists_and_delete_shortcut(shortcut))
 
-    def test_check_if_exists_and_delete_shortcut_source_path_mismatch_returns_false_deletes_and_creates_new_shortcut(self):
+    def test_check_exists_source_path_mismatch_returns_false_deletes_and_creates_new_shortcut(self):
         # if response 200 but target does not match, check_if_exists_and_delete_shortcut returns False
         shortcut = Shortcut(
             path="path",
@@ -117,7 +117,7 @@ class TestShorcutClient(unittest.TestCase):
                     self.assertEqual(mock_post.call_args[0][0], "https://api.fabric.microsoft.com/v1/workspaces/workspace_id/items/item_id/shortcuts")
                     self.assertEqual(mock_post.call_args[1]["data"], '{"path": "path", "name": "name", "target": {"type": "OneLake", "onelake": {"workspaceId": "source_workspace_id", "itemId": "source_item_id", "path": "source_path"}}}')
 
-    def test_check_if_exists_and_delete_shortcut_source_workspace_id_mismatch_returns_false_deletes_and_creates_new_shortcut(self):
+    def test_check_exists_source_workspace_id_mismatch_returns_false_deletes_and_creates_new_shortcut(self):
         # if response 200 but target does not match, check_if_exists_and_delete_shortcut returns False
         shortcut = Shortcut(
             path="path",
@@ -155,7 +155,7 @@ class TestShorcutClient(unittest.TestCase):
                     self.assertEqual(mock_post.call_args[1]["data"], '{"path": "path", "name": "name", "target": {"type": "OneLake", "onelake": {"workspaceId": "source_workspace_id", "itemId": "source_item_id", "path": "source_path"}}}')
 
 
-    def test_check_if_exists_and_delete_shortcut_source_item_id_mismatch_returns_false_deletes_and_creates_new_shortcut(self):
+    def test_check_exists_source_item_id_mismatch_returns_false_deletes_and_creates_new_shortcut(self):
         # if response 200 but target does not match, check_if_exists_and_delete_shortcut returns False
         shortcut = Shortcut(
             path="path",
@@ -193,7 +193,7 @@ class TestShorcutClient(unittest.TestCase):
                     self.assertEqual(mock_post.call_args[1]["data"], '{"path": "path", "name": "name", "target": {"type": "OneLake", "onelake": {"workspaceId": "source_workspace_id", "itemId": "source_item_id", "path": "source_path"}}}')
 
 
-    def test_check_if_exists_and_delete_shortcut_error_raises_exception(self):
+    def test_check_exists_error_raises_exception(self):
         # if response error, check_if_exists_and_delete_shortcut raises exception
         shortcut = Shortcut(
             path="path",

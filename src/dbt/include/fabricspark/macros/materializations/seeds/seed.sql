@@ -71,6 +71,9 @@
   {%- set column_override = model['config'].get('column_types', {}) -%}
   {%- set quote_seed_column = model['config'].get('quote_columns', None) -%}
 
+  {#-- Ensure the database/schema exists before creating the seed table --#}
+  {% do ensure_database_exists(model['schema']) %}
+
   {% set sql %}
     create or replace table {{ this.render() }} (
         {%- for col_name in agate_table.column_names -%}

@@ -216,3 +216,4 @@ class TestShorcutClient(unittest.TestCase):
             client.delete_shortcut("path", "name")
             mock_delete.assert_called_once()
             self.assertEqual(mock_delete.call_args[0][0], "https://api.fabric.microsoft.com/v1/workspaces/workspace_id/items/item_id/shortcuts/path/name")
+

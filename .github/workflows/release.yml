@@ -1,52 +1,49 @@
 # **what?**
 # Release workflow provides the following steps:
-# - checkout the given commit;
-# - validate version in sources and changelog file for given version;
-# - run unit tests against given commit;
-# - build and package that SHA;
-# - release it to GitHub and PyPI with that specific build;
+# - checkout the tagged commit;
+# - run unit tests;
+# - build the package;
+# - publish to PyPI;
 #
 # **why?**
 # Ensure an automated and tested release process
 #
 # **when?**
-# This will only run manually. Run this workflow only after the
-# version bump workflow is completed and related changes are reviewed and merged.
-#
+# When a GitHub Release is created with a v* tag.
 
 name: Release new version to PyPI
 
-on:  # yamllint disable-line rule:truthy
-  push:
-    tags:
-      - 'v*'
+on:
+  release:
+    types: [created]
 
 permissions:
-  contents: read   # Required to access repository files
-  packages: read   # Grant explicit read access to packages
-  id-token: write  # Needed if using OIDC authentication
+  contents: read
+  packages: read
+  id-token: write
 
 jobs:
   release-version:
     name: Release new version
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
-        run: pip install -r dev_requirements.txt
+      - name: Run unit tests
+        run: uv run pytest tests/unit -q
 
-      - name: Initialize .pypirc
-        run: |
-          echo -e "[pypi]" >> ~/.pypirc
-          echo -e "username = __token__" >> ~/.pypirc
-          echo -e "password = ${{ secrets.PYPI_DBT_FABRIC_SPARK }}" >> ~/.pypirc
+      - name: Build package
+        run: uv build
 
-      - name: Build and publish package
-        run: |
-          python setup.py sdist bdist_wheel
-          twine upload dist/*
+      - name: Publish to PyPI
+        run: uv publish
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}

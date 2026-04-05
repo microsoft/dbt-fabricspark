@@ -6,7 +6,6 @@ from agate import Row
 
 import dbt.flags as flags
 from dbt.adapters.fabricspark import FabricSparkAdapter, FabricSparkRelation
-from dbt.exceptions import DbtRuntimeError
 
 from .utils import config_from_parts_or_dicts
 
@@ -97,8 +96,8 @@ class TestSparkAdapter(unittest.TestCase):
     def test_local_livy_credentials(self):
         """Test that local Livy mode credentials are properly set up."""
         config = self._get_target_livy_local(self.project_cfg)
-        adapter = FabricSparkAdapter(config, self.mp_context)
-        
+        FabricSparkAdapter(config, self.mp_context)
+
         # Get credentials from config
         creds = config.credentials
         self.assertEqual(creds.livy_mode, "local")
@@ -110,7 +109,7 @@ class TestSparkAdapter(unittest.TestCase):
     def test_fabric_livy_credentials(self):
         """Test that Fabric Livy mode credentials are properly set up."""
         config = self._get_target_livy(self.project_cfg)
-        
+
         creds = config.credentials
         self.assertEqual(creds.livy_mode, "fabric")
         self.assertFalse(creds.is_local_mode)

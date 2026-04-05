@@ -15,13 +15,7 @@
 name: Tests and Code Checks
 
 on:
-  push:
-    branches:
-      - "main"
-      - "*.latest"
-      - "v*"
   pull_request:
-  workflow_dispatch:
 
 permissions:
   contents: read   # Required to access repository files

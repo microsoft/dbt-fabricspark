@@ -30,17 +30,17 @@ classifiers = [
     "Programming Language :: Python :: 3.13"
 ]
 
-requires-python = ">=3.9,<3.14"
+requires-python = ">=3.10,<3.14"
 
 dependencies = [
     "dbt-common>=1.10,<2.0",
     "dbt-adapters>=1.7,<2.0",
     # add dbt-core to ensure backwards compatibility of installation, this is not a functional dependency
     "dbt-core>=1.8.0",  
-    "azure-identity>=1.13.0",
-    "azure-core>=1.26.4",
-    "azure-cli>=2.60.0",
-    "requests>=2.28.0",
+    "azure-identity>=1.21.0",
+    "azure-core>=1.33.0",
+    "azure-cli>=2.84.0",
+    "requests>=2.32.0",
 ]
 
 [dependency-groups]

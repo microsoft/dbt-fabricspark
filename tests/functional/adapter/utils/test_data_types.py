@@ -31,7 +31,6 @@ seeds:
   - name: expected
     config:
       materialized: seed
-      pre-hook: "drop view if exists {{ target.schema }}.expected"
       column_types:
         float_col: float
 """
@@ -71,7 +70,7 @@ seeds:
     config:
       materialized: seed
       column_types:
-        string_col: {}
+        string_col: string
 """
 
 seeds__bool_expected_csv = """boolean_col

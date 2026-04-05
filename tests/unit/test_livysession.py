@@ -1,17 +1,15 @@
 """Tests for livysession module, focusing on local vs Fabric mode routing."""
 import os
 import tempfile
-import pytest
-from unittest import mock
 from unittest.mock import MagicMock, patch
 
 from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
 from dbt.adapters.fabricspark.livysession import (
-    get_headers,
-    LivySession,
-    LivyCursor,
     LivyConnection,
+    LivyCursor,
+    LivySession,
     LivySessionManager,
+    get_headers,
     read_session_id_from_file,
     write_session_id_to_file,
 )
@@ -28,7 +26,7 @@ class TestGetHeaders:
             spark_config={"name": "test-session"},
         )
         headers = get_headers(credentials)
-        
+
         assert "Content-Type" in headers
         assert headers["Content-Type"] == "application/json"
         assert "Authorization" not in headers
@@ -40,7 +38,7 @@ class TestGetHeaders:
         mock_token.token = "test-token"
         mock_token.expires_on = 9999999999  # Far future
         mock_get_token.return_value = mock_token
-        
+
         credentials = FabricSparkCredentials(
             method="livy",
             livy_mode="fabric",
@@ -50,13 +48,13 @@ class TestGetHeaders:
             lakehouse="tests",
             spark_config={"name": "test-session"},
         )
-        
+
         # Reset global accessToken
         import dbt.adapters.fabricspark.livysession as livysession_module
         livysession_module.accessToken = None
-        
+
         headers = get_headers(credentials)
-        
+
         assert "Content-Type" in headers
         assert "Authorization" in headers
         assert headers["Authorization"] == "Bearer test-token"
@@ -73,9 +71,9 @@ class TestLivySession:
             livy_url="http://localhost:8998",
             spark_config={"name": "test-session"},
         )
-        
+
         session = LivySession(credentials)
-        
+
         assert session.is_local_mode is True
         assert session.connect_url == "http://localhost:8998"
         assert session.session_id is None
@@ -93,9 +91,9 @@ class TestLivySession:
             endpoint="https://api.fabric.microsoft.com/v1",
             spark_config={"name": "test-session"},
         )
-        
+
         session = LivySession(credentials)
-        
+
         assert session.is_local_mode is False
         assert "workspaces/1de8390c-9aca-4790-bee8-72049109c0f4" in session.connect_url
         assert "lakehouses/8c5bc260-bc3a-4898-9ada-01e433d461ba" in session.connect_url
@@ -111,12 +109,12 @@ class TestLivyCursor:
             livy_mode="local",
             spark_config={"name": "test-session"},
         )
-        
+
         mock_livy_session = MagicMock()
         mock_livy_session.session_id = "test-session-id"
-        
+
         cursor = LivyCursor(credentials, mock_livy_session)
-        
+
         assert cursor.is_local_mode is True
         assert cursor.session_id == "test-session-id"
 
@@ -131,12 +129,12 @@ class TestLivyCursor:
             lakehouse="tests",
             spark_config={"name": "test-session"},
         )
-        
+
         mock_livy_session = MagicMock()
         mock_livy_session.session_id = "test-session-id"
-        
+
         cursor = LivyCursor(credentials, mock_livy_session)
-        
+
         assert cursor.is_local_mode is False
 
 
@@ -150,12 +148,12 @@ class TestLivyConnection:
             livy_mode="local",
             spark_config={"name": "test-session"},
         )
-        
+
         mock_livy_session = MagicMock()
         mock_livy_session.session_id = "test-session-id"
-        
+
         connection = LivyConnection(credentials, mock_livy_session)
-        
+
         assert connection.session_id == "test-session-id"
         assert connection.get_session_id() == "test-session-id"
 
@@ -166,13 +164,13 @@ class TestLivyConnection:
             livy_mode="local",
             spark_config={"name": "test-session"},
         )
-        
+
         mock_livy_session = MagicMock()
         mock_livy_session.session_id = "test-session-id"
-        
+
         connection = LivyConnection(credentials, mock_livy_session)
         cursor = connection.cursor()
-        
+
         assert isinstance(cursor, LivyCursor)
 
 
@@ -254,7 +252,7 @@ class TestCredentialsSessionFile:
             livy_mode="local",
             spark_config={"name": "test-session"},
         )
-        
+
         expected_path = os.path.join(os.getcwd(), "livy-session-id.txt")
         assert credentials.resolved_session_id_file == expected_path
 

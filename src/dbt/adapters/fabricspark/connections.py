@@ -27,7 +27,11 @@ from dbt.adapters.contracts.connection import (
 from dbt.adapters.events.logging import AdapterLogger
 from dbt.adapters.events.types import AdapterEventDebug, ConnectionUsed, SQLQuery, SQLQueryStatus
 from dbt.adapters.exceptions import FailedToConnectError
-from dbt.adapters.fabricspark.livysession import LivySessionConnectionWrapper, LivySessionManager, get_lakehouse_properties
+from dbt.adapters.fabricspark.livysession import (
+    LivySessionConnectionWrapper,
+    LivySessionManager,
+    get_lakehouse_properties,
+)
 from dbt.adapters.fabricspark.relation import FabricSparkRelation
 from dbt.adapters.sql import SQLConnectionManager
 

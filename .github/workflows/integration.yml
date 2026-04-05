@@ -7,26 +7,13 @@
 
 # **when?**
 # - On pull requests targeting main (internal PRs only — forks lack secrets)
-# - On pushes to main / release branches
-# - On manual trigger with optional workspace override
 
 name: Adapter Integration Tests
 
 on:
-  workflow_dispatch:
-    inputs:
-      workspace_id:
-        description: "Fabric Workspace ID (overrides secret)"
-        required: false
-        type: string
   pull_request:
     branches:
       - "main"
-  push:
-    branches:
-      - "main"
-      - "*.latest"
-      - "v*"
 
 # Cancel in-progress runs for the same PR / branch
 concurrency:
@@ -34,8 +21,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Resolve workspace: workflow_dispatch input > secret
-  WORKSPACE_ID: ${{ inputs.workspace_id || secrets.WORKSPACE_ID }}
+  WORKSPACE_ID: ${{ secrets.WORKSPACE_ID }}
   FABRIC_API: "https://msitapi.fabric.microsoft.com/v1"
 
 jobs:
@@ -160,16 +146,23 @@ jobs:
           api = "${{ env.FABRIC_API }}"
           headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-          # Configure Starter Pool: uses 4 v-cores on F8 capacity
-          # No custom driver/executor sizing — Starter Pool manages this.
-          # Dynamic allocation disabled to keep a single, minimal session.
-          print("Configuring Starter Pool (4 v-cores, fits 2 sessions on F8)...")
+          # Configure Starter Pool with 8 cores, 56GB memory, single executor, no dynamic allocation
+          print("Configuring Starter Pool (8 cores, 1 executor, no dynamic allocation)...")
           resp = requests.patch(
               f"{api}/workspaces/{workspace}/environments/{env_id}/staging/sparkcompute",
               json={
                   "instancePool": {
                       "name": "Starter Pool",
                       "type": "Workspace",
+                  },
+                  "driverCores": 8,
+                  "driverMemory": "56g",
+                  "executorCores": 8,
+                  "executorMemory": "56g",
+                  "dynamicExecutorAllocation": {
+                      "enabled": False,
+                      "minExecutors": 1,
+                      "maxExecutors": 1,
                   },
                   "runtimeVersion": "1.3",
               },
@@ -253,7 +246,7 @@ jobs:
       - name: "Cleanup: Delete Fabric Lakehouse"
         if: always() && steps.lakehouse.outputs.lakehouse_id
         run: |
-          python3 - <<'PYEOF'
+          uv run python3 - <<'PYEOF'
           import requests
 
           token = "${{ steps.token.outputs.access_token }}"
@@ -273,7 +266,7 @@ jobs:
       - name: "Cleanup: Delete Fabric Environment"
         if: always() && steps.environment.outputs.environment_id
         run: |
-          python3 - <<'PYEOF'
+          uv run python3 - <<'PYEOF'
           import requests
 
           token = "${{ steps.token.outputs.access_token }}"

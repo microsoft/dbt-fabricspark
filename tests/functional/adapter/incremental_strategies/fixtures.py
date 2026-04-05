@@ -51,6 +51,7 @@ bad_merge_not_delta_sql = """
 {{ config(
     materialized = 'incremental',
     incremental_strategy = 'merge',
+    file_format = 'parquet',
 ) }}
 
 {% if not is_incremental() %}

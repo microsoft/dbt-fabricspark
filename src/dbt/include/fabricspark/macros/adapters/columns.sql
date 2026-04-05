@@ -50,16 +50,18 @@
 {% endmacro %}
 
 {% macro fabricspark__alter_column_comment(relation, column_dict) %}
+  {%- set loaded_relation = load_relation(relation) -%}
+  {%- set check_delta = loaded_relation.is_delta if loaded_relation is not none else true -%}
   {% for column_name in column_dict %}
       {% set comment = column_dict[column_name]['description'] %}
       {% set escaped_comment = comment | replace('\'', '\\\'') %}
       {% set comment_query %}
-        {% if relation.is_delta %}
+        {% if check_delta or check_delta is none %}
           alter table {{ relation }} change column
               {{ adapter.quote(column_name) if column_dict[column_name]['quote'] else column_name }}
               comment '{{ escaped_comment }}';
         {% else %}
-          {{ exceptions.raise_compiler_error('Fabric Spark does not support formats other than delta -'~ relation.is_delta) }}
+          {{ exceptions.raise_compiler_error('Fabric Spark does not support formats other than delta -'~ check_delta) }}
         {% endif %}
       {% endset %}
       {% do run_query(comment_query) %}

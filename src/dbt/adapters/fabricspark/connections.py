@@ -27,7 +27,8 @@ from dbt.adapters.contracts.connection import (
 from dbt.adapters.events.logging import AdapterLogger
 from dbt.adapters.events.types import AdapterEventDebug, ConnectionUsed, SQLQuery, SQLQueryStatus
 from dbt.adapters.exceptions import FailedToConnectError
-from dbt.adapters.fabricspark.livysession import LivySessionConnectionWrapper, LivySessionManager
+from dbt.adapters.fabricspark.livysession import LivySessionConnectionWrapper, LivySessionManager, get_lakehouse_properties
+from dbt.adapters.fabricspark.relation import FabricSparkRelation
 from dbt.adapters.sql import SQLConnectionManager
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
@@ -149,6 +150,15 @@ class FabricSparkConnectionManager(SQLConnectionManager):
         exc = None
         handle: FabricSparkConnectionWrapper = None
 
+        # Fetch lakehouse properties and detect schema support (Fabric mode only).
+        if not creds.is_local_mode:
+            lakehouse_props = get_lakehouse_properties(creds)
+            creds.apply_lakehouse_properties(lakehouse_props)
+
+        # Set the adapter-wide naming mode: all relations render uniformly as
+        # either two-part (schema.table) or three-part (lakehouse.schema.table).
+        FabricSparkRelation._schemas_enabled = creds.lakehouse_schemas_enabled
+
         for i in range(1 + creds.connect_retries):
             try:
                 if creds.method == FabricSparkConnectionMethod.LIVY:
@@ -206,17 +216,16 @@ class FabricSparkConnectionManager(SQLConnectionManager):
     def release(self) -> None:
         pass
 
-    @classmethod
     def cleanup_all(self) -> None:
-        """Clean up all connection managers without closing Livy sessions.
-        
-        Sessions are intentionally kept alive for reuse by subsequent dbt runs.
-        """
-        for thread_id in self.connection_managers:
-            livySession = self.connection_managers[thread_id]
-            livySession.disconnect()  # This no longer deletes the Livy session
+        """Clean up connection manager references only.
 
-        # garbage collect these connection manager references
+        Does NOT call super().cleanup_all() because that clears
+        thread_connections, which breaks subsequent dbt invocations
+        within the same process (e.g. seed → run → show in tests).
+        Connections must persist because the Livy session is shared.
+        Sessions are deleted on process exit via an atexit handler
+        registered in LivySessionManager.
+        """
         self.connection_managers.clear()
 
     @classmethod
@@ -305,10 +314,10 @@ class FabricSparkConnectionManager(SQLConnectionManager):
 
                 fire_event(
                     AdapterEventDebug(
-                        message=f"Got a retryable error {type(e)}. {retry_limit-attempt} retries left. Retrying in 5 seconds.\nError:\n{e}"
+                        message=f"Got a retryable error {type(e)}. {retry_limit-attempt} retries left. Retrying in {min(5 * (2 ** (attempt - 1)), 60)} seconds.\nError:\n{e}"
                     )
                 )
-                time.sleep(5)
+                time.sleep(min(5 * (2 ** (attempt - 1)), 60))
 
                 return _execute_query_with_retry(
                     cursor=cursor,

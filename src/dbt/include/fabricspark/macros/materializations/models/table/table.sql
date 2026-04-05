@@ -4,11 +4,16 @@
   {%- set grant_config = config.get('grants') -%}
 
   {%- set old_relation = adapter.get_relation(database=database, schema=schema, identifier=identifier) -%}
+
+  {#-- Determine if this is a delta table: use existing relation metadata if available,
+       otherwise fall back to file_format config --#}
+  {% set is_delta = old_relation.is_delta if old_relation is not none else config.get('file_format') == 'delta' %}
+
   {%- set target_relation = api.Relation.create(identifier=identifier,
                                                 schema=schema,
                                                 database=database,
                                                 type='table',
-                                                is_delta=(old_relation.is_delta is none or old_relation.is_delta)) -%}
+                                                is_delta=is_delta) -%}
 
   {#-- Ensure the database/schema exists before creating the table --#}
   {% do ensure_database_exists(schema) %}
@@ -18,9 +23,7 @@
   -- setup: if the target relation already exists, drop it
   -- in case if the existing and future table is delta, we want to do a
   -- create or replace table instead of dropping, so we don't have the table unavailable
-  {% set is_delta = old_relation.is_delta if old_relation is not none else config.get('file_format') == 'delta' %}
-
-  {% if not is_delta %}
+  {% if old_relation is not none and not is_delta %}
     {{ adapter.drop_relation(target_relation.incorporate(type=old_relation.type)) }}
   {% endif %}
 

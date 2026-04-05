@@ -42,6 +42,7 @@
     {% set tmp_relation = base_relation.incorporate(path = {
         "identifier": tmp_identifier
     }) -%}
-    {%- set tmp_relation = tmp_relation.include(database=true, schema=false) -%}
+    {#-- Temp views are session-scoped and don't need schema/database qualification --#}
+    {%- set tmp_relation = tmp_relation.include(database=false, schema=false) -%}
     {% do return(tmp_relation) %}
 {% endmacro %}

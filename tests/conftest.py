@@ -38,7 +38,7 @@ def _all_profiles_base():
         "method": "livy",
         "connect_retries": 2,
         "connect_timeout": 10,
-        "endpoint": os.getenv("LIVY_ENDPOINT", "https://msitapi.fabric.microsoft.com/v1"),
+        "endpoint": os.getenv("LIVY_ENDPOINT", "https://api.fabric.microsoft.com/v1"),
         "workspaceid": os.getenv("WORKSPACE_ID"),
         "lakehouseid": os.getenv("LAKEHOUSE_ID"),
         "lakehouse": os.getenv("LAKEHOUSE_NAME"),
@@ -46,7 +46,8 @@ def _all_profiles_base():
         "retry_all": True,
         "create_shortcuts": False,
         "shortcuts_json_str": os.getenv("SHORTCUTS_JSON_STR"),
-        "lakehouse_schemas_enabled": False,
+        "environmentId": os.getenv("FABRIC_ENVIRONMENT_ID"),
+        "livy_mode": os.getenv("LIVY_MODE", "fabric"),
     }
 
 

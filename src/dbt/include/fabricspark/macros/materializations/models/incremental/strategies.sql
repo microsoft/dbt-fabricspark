@@ -3,7 +3,6 @@
     {%- set dest_columns = adapter.get_columns_in_relation(target_relation) -%}
     {%- set dest_cols_csv = dest_columns | map(attribute='quoted') | join(', ') -%}    
     insert overwrite table {{ target_relation }}
-    {{ partition_cols(label="partition") }}
     select {{dest_cols_csv}} from {{ source_relation }}
 
 {% endmacro %}

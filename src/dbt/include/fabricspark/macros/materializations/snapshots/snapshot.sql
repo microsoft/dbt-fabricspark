@@ -38,9 +38,11 @@
 {% macro spark_build_snapshot_staging_table(strategy, sql, target_relation) %}
     {% set tmp_identifier = target_relation.identifier ~ '__dbt_tmp' %}
 
+    {#-- Persisted view (non-temp) so that its columns can be ascertained via `describe`.
+         Inherits database/schema from target_relation for proper 2-part or 3-part naming. --#}
     {%- set tmp_relation = api.Relation.create(identifier=tmp_identifier,
                                               schema=target_relation.schema,
-                                              database=none,
+                                              database=target_relation.database,
                                               type='view') -%}
 
     {% set select = snapshot_staging_table(strategy, sql, target_relation) %}

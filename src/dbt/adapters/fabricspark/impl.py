@@ -27,7 +27,7 @@ from dbt_common.contracts.constraints import ConstraintType
 from dbt_common.exceptions import CompilationError, DbtRuntimeError
 from dbt_common.utils import AttrDict, executor
 
-from dbt.adapters.base import AdapterConfig, BaseRelation
+from dbt.adapters.base import AdapterConfig, BaseRelation, available
 from dbt.adapters.base.impl import ConstraintSupport, catch_as_completed
 from dbt.adapters.base.relation import InformationSchema
 from dbt.adapters.contracts.relation import RelationConfig, RelationType
@@ -103,6 +103,29 @@ class FabricSparkAdapter(SQLAdapter):
     Column: TypeAlias = FabricSparkColumn
     ConnectionManager: TypeAlias = FabricSparkConnectionManager
     AdapterSpecificConfigs: TypeAlias = FabricSparkConfig
+
+    @available
+    def is_lakehouse_schemas_enabled(self) -> bool:
+        """Expose lakehouse_schemas_enabled to macros via adapter.
+
+        Uses the class-level flag on FabricSparkRelation which is set during
+        connection open. This avoids requiring a thread connection, which
+        may not exist during manifest parsing when generate_schema_name
+        is called.
+        """
+        return FabricSparkRelation._schemas_enabled
+
+    @available
+    def is_local_mode(self) -> bool:
+        """Expose local mode flag to macros via adapter.
+
+        Falls back to False if no connection is available (e.g. during parsing).
+        """
+        try:
+            conn = self.connections.get_thread_connection()
+            return conn.credentials.is_local_mode
+        except Exception:
+            return False
 
     @classmethod
     def date_function(cls) -> str:
@@ -350,7 +373,9 @@ class FabricSparkAdapter(SQLAdapter):
             as_dict = column.to_column_dict()
             as_dict["column_name"] = as_dict.pop("column", None)
             as_dict["column_type"] = as_dict.pop("dtype")
-            as_dict["table_database"] = None
+            # Must match the database value from generate_database_name (target.lakehouse)
+            # so dbt-core can join catalog rows to manifest nodes via CatalogKey.
+            as_dict["table_database"] = relation.database or self.config.credentials.lakehouse
             yield as_dict
 
     def get_catalog(
@@ -393,7 +418,9 @@ class FabricSparkAdapter(SQLAdapter):
             )
 
         database = information_schema.database
-        logger.debug("database name is ", database)
+        if not self.Relation.get_default_include_policy().database:
+            database = None
+        logger.debug(f"database name is {database}")
         schema = list(schemas)[0]
 
         columns: List[Dict[str, Any]] = []

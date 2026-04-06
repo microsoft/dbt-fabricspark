@@ -8,6 +8,27 @@
 {% endmacro %}
 
 
+{% macro get_microbatch_delete_sql(source_relation, target_relation, partition_by) %}
+    {#-- Delete existing rows whose partition values appear in the incoming batch.
+         Uses MERGE ... WHEN MATCHED THEN DELETE because Delta Lake does not
+         support subqueries in DELETE conditions. --#}
+    {%- if partition_by is string -%}
+      {%- set partition_by = [partition_by] -%}
+    {%- endif -%}
+    merge into {{ target_relation }} as DBT_INTERNAL_DEST
+        using (select distinct
+          {%- for col in partition_by %}
+            {{ col }}{% if not loop.last %}, {% endif %}
+          {%- endfor %}
+          from {{ source_relation }}) as DBT_INTERNAL_SOURCE
+        on
+          {%- for col in partition_by %}
+            DBT_INTERNAL_DEST.{{ col }} = DBT_INTERNAL_SOURCE.{{ col }}{% if not loop.last %} and {% endif %}
+          {%- endfor %}
+        when matched then delete
+{% endmacro %}
+
+
 {% macro get_insert_into_sql(source_relation, target_relation) %}
 
     {%- set dest_columns = adapter.get_columns_in_relation(target_relation) -%}
@@ -69,7 +90,8 @@
     {#-- insert statements don't like CTEs, so support them via a temp view #}
     {{ get_insert_overwrite_sql(source, target, existing) }}
   {%- elif strategy == 'microbatch' -%}
-    {#-- microbatch wraps insert_overwrite, and requires a partition_by config #}
+    {#-- microbatch is handled directly in the materialization via separate
+         DELETE + INSERT statements (Fabric Spark cannot run them in one query). --#}
     {% set missing_partition_key_microbatch_msg -%}
       dbt-fabricspark 'microbatch' incremental strategy requires a `partition_by` config.
       Ensure you are using a `partition_by` column that is of grain {{ config.get('batch_size') }}.
@@ -78,7 +100,8 @@
     {%- if not config.get('partition_by') -%}
       {{ exceptions.raise_compiler_error(missing_partition_key_microbatch_msg) }}
     {%- endif -%}
-    {{ get_insert_overwrite_sql(source, target, existing) }}
+    {#-- This branch should not be reached; the materialization handles microbatch directly. --#}
+    {{ get_insert_into_sql(source, target) }}
   {%- elif strategy == 'merge' -%}
   {#-- merge all columns for datasources which implement MERGE INTO (e.g. databricks, iceberg) - schema changes are handled for us #}
     {{ get_merge_sql(target, source, unique_key, dest_columns=none, incremental_predicates=incremental_predicates) }}

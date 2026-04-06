@@ -59,9 +59,20 @@
       {{ create_table_as(True, tmp_relation, compiled_code, language) }}
     {%- endcall -%}
     {%- do process_schema_changes(on_schema_change, tmp_relation, existing_relation) -%}
-    {%- call statement('main') -%}
-      {{ dbt_spark_get_incremental_sql(strategy, tmp_relation, target_relation, existing_relation, unique_key, incremental_predicates) }}
-    {%- endcall -%}
+    {%- if strategy == 'microbatch' -%}
+      {#-- Fabric Spark cannot run multiple statements in one query, so we
+           issue DELETE and INSERT as separate calls. --#}
+      {%- call statement('microbatch_delete') -%}
+        {{ get_microbatch_delete_sql(tmp_relation, target_relation, partition_by) }}
+      {%- endcall -%}
+      {%- call statement('main') -%}
+        {{ get_insert_into_sql(tmp_relation, target_relation) }}
+      {%- endcall -%}
+    {%- else -%}
+      {%- call statement('main') -%}
+        {{ dbt_spark_get_incremental_sql(strategy, tmp_relation, target_relation, existing_relation, unique_key, incremental_predicates) }}
+      {%- endcall -%}
+    {%- endif -%}
     {%- if language == 'python' -%}
       {#--
       This is yucky.

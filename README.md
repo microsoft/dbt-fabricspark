@@ -38,6 +38,7 @@ fabric-spark-test:
         threads: 1
         type: fabricspark
         retry_all: true
+        spark_config: { name: "session-name" }
 ```
 
 ### Session Reuse

@@ -18,13 +18,16 @@
   {%- set existing_relation = load_relation(this) -%}
   {%- set tmp_relation = this.incorporate(path = {"identifier": this.identifier ~ '__dbt_tmp'}) -%}
 
-  {#-- for SQL model we will create temp view that doesn't have database and schema --#}
-  {%- if language == 'sql'-%}
+  {#-- For schema-enabled lakehouses we must use a real staging table instead
+       of a temp view.  Temp views that reference three-part table names trigger
+       REQUIRES_SINGLE_PART_NAMESPACE when used inside INSERT INTO … SELECT.
+       For non-schema lakehouses / local mode we keep the original temp view. --#}
+  {%- if language == 'sql' and not adapter.is_lakehouse_schemas_enabled() -%}
     {%- set tmp_relation = tmp_relation.include(database=false, schema=false) -%}
   {%- endif -%}
 
   {#-- Ensure the database/schema exists before creating the table --#}
-  {% do ensure_database_exists(target_relation.schema) %}
+  {% do ensure_database_exists(target_relation.schema, database=target_relation.database) %}
 
   {#-- Set Overwrite Mode --#}
   {%- if strategy in ['insert_overwrite', 'microbatch'] and partition_by -%}
@@ -55,9 +58,18 @@
     {% do persist_constraints(target_relation, model) %}
   {%- else -%}
     {#-- Relation must be merged --#}
-    {%- call statement('create_tmp_relation', language=language) -%}
-      {{ create_table_as(True, tmp_relation, compiled_code, language) }}
-    {%- endcall -%}
+    {#-- For schema-enabled lakehouses, use a persisted view (not temp view)
+         to avoid REQUIRES_SINGLE_PART_NAMESPACE when Spark re-resolves temp
+         view references through V2SessionCatalog during DML. --#}
+    {%- if adapter.is_lakehouse_schemas_enabled() -%}
+      {%- call statement('create_tmp_relation') -%}
+        {{ create_view_as(tmp_relation, compiled_code) }}
+      {%- endcall -%}
+    {%- else -%}
+      {%- call statement('create_tmp_relation', language=language) -%}
+        {{ create_table_as(True, tmp_relation, compiled_code, language) }}
+      {%- endcall -%}
+    {%- endif -%}
     {%- do process_schema_changes(on_schema_change, tmp_relation, existing_relation) -%}
     {%- if strategy == 'microbatch' -%}
       {#-- Fabric Spark cannot run multiple statements in one query, so we
@@ -74,15 +86,14 @@
       {%- endcall -%}
     {%- endif -%}
     {%- if language == 'python' -%}
-      {#--
-      This is yucky.
-      See note in dbt-spark/dbt/include/spark/macros/adapters.sql
-      re: python models and temporary views.
-
-      Also, why do neither drop_relation or adapter.drop_relation work here?!
-      --#}
+      {#-- Drop the staging table after the DML completes. --#}
       {% call statement('drop_relation') -%}
         drop table if exists {{ tmp_relation }}
+      {%- endcall %}
+    {%- elif adapter.is_lakehouse_schemas_enabled() -%}
+      {#-- Drop the persisted staging view after the DML completes. --#}
+      {% call statement('drop_relation') -%}
+        drop view if exists {{ tmp_relation }}
       {%- endcall %}
     {%- endif -%}
   {%- endif -%}

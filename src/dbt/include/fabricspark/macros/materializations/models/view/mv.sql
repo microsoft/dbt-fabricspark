@@ -1,6 +1,6 @@
 {% materialization view, adapter='fabricspark' -%}
     {#-- Ensure the database/schema exists before creating the view --#}
-    {% do ensure_database_exists(model.schema) %}
+    {% do ensure_database_exists(model.schema, database=model.database) %}
     {{ return(create_or_replace_view()) }}
 {%- endmaterialization %}
 

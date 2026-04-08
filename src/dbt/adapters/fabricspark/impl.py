@@ -202,6 +202,7 @@ class FabricSparkAdapter(SQLAdapter):
         self,
         row_list: "agate.Table",
         relation_info_func: Callable[["agate.Row"], RelationInfo],
+        schema_relation: Optional[BaseRelation] = None,
     ) -> List[BaseRelation]:
         """Aggregate relations with format metadata included."""
         relations = []
@@ -212,8 +213,12 @@ class FabricSparkAdapter(SQLAdapter):
                 RelationType.View if "Type: VIEW" in information else RelationType.Table
             )
             is_delta: bool = "Provider: delta" in information
+            # Use database/schema from the input relation when available.
+            # Schema-enabled lakehouses return a multi-part backtick-quoted
+            # namespace that doesn't match the cache key.
             relation: BaseRelation = self.Relation.create(
-                schema=_schema,
+                database=schema_relation.database if schema_relation else None,
+                schema=schema_relation.schema if schema_relation else _schema,
                 identifier=name,
                 type=rel_type,
                 information=information,
@@ -235,6 +240,7 @@ class FabricSparkAdapter(SQLAdapter):
             return self._build_spark_relation_list(
                 row_list=show_table_extended_rows,
                 relation_info_func=self._get_relation_information,
+                schema_relation=schema_relation,
             )
         except DbtRuntimeError as e:
             errmsg = getattr(e, "msg", "")
@@ -252,6 +258,7 @@ class FabricSparkAdapter(SQLAdapter):
                     return self._build_spark_relation_list(
                         row_list=show_table_rows,
                         relation_info_func=self._get_relation_information_using_describe,
+                        schema_relation=schema_relation,
                     )
                 except DbtRuntimeError as e:
                     description = "Error while retrieving information about"
@@ -355,7 +362,10 @@ class FabricSparkAdapter(SQLAdapter):
         return columns
 
     def _get_columns_for_catalog(self, relation: BaseRelation) -> Iterable[Dict[str, Any]]:
-        table_name = f"{relation.schema}.{relation.identifier}"
+        if relation.database:
+            table_name = f"{relation.database}.{relation.schema}.{relation.identifier}"
+        else:
+            table_name = f"{relation.schema}.{relation.identifier}"
         raw_rows = None
         try:
             raw_rows = self.execute_macro(

@@ -22,9 +22,16 @@
   {% endif %}
 {% endmacro %}
 
-{#-- Helper macro to ensure the database exists before creating tables --#}
-{% macro fabricspark__ensure_database_exists(schema_name) -%}
+{#-- Helper macro to ensure the database exists before creating tables.
+     For schema-enabled lakehouses the schema_name must be database-qualified
+     (e.g. lakehouse.schema) so Spark creates it under the correct catalog
+     namespace.  Callers that only have a bare schema name should pass the
+     database explicitly via the optional second argument. --#}
+{% macro fabricspark__ensure_database_exists(schema_name, database=none) -%}
   {% if adapter.is_lakehouse_schemas_enabled() or adapter.is_local_mode() %}
+    {%- if database is not none and '.' not in schema_name %}
+      {%- set schema_name = database ~ '.' ~ schema_name -%}
+    {%- endif -%}
     {%- call statement('ensure_database_exists') -%}
       create database if not exists {{ schema_name }}
     {%- endcall -%}
@@ -35,8 +42,8 @@
   {% endif %}
 {% endmacro %}
 
-{% macro ensure_database_exists(schema_name) %}
-  {{ return(adapter.dispatch('ensure_database_exists', 'dbt')(schema_name)) }}
+{% macro ensure_database_exists(schema_name, database=none) %}
+  {{ return(adapter.dispatch('ensure_database_exists', 'dbt')(schema_name, database=database)) }}
 {% endmacro %}
 
 {% macro fabricspark__list_schemas(database) -%}

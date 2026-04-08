@@ -16,7 +16,7 @@
                                                 is_delta=is_delta) -%}
 
   {#-- Ensure the database/schema exists before creating the table --#}
-  {% do ensure_database_exists(schema) %}
+  {% do ensure_database_exists(schema, database=database) %}
 
   {{ run_hooks(pre_hooks) }}
 

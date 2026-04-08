@@ -289,7 +289,6 @@ jobs:
   # ══════════════════════════════════════════════════════════════════
   integration-tests-with-schema:
     name: "with_schema — ${{ matrix.test_file }}"
-    needs: integration-tests-no-schema
     runs-on: ubuntu-latest
     permissions:
       contents: read

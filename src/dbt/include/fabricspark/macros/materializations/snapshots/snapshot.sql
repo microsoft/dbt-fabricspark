@@ -32,7 +32,7 @@
     and DBT_INTERNAL_SOURCE.dbt_change_type = 'insert'
     then insert *
     ;
-{% endmacro %}
+{%- endmacro %}
 
 
 {% macro spark_build_snapshot_staging_table(strategy, sql, target_relation) %}
@@ -108,7 +108,7 @@
   {% endif %}
 
   {#-- Ensure the database/schema exists before creating the snapshot table --#}
-  {% do ensure_database_exists(model.schema) %}
+  {% do ensure_database_exists(model.schema, database=model.database) %}
 
   {%- if not target_relation.is_table -%}
     {% do exceptions.relation_wrong_type(target_relation, 'table') %}

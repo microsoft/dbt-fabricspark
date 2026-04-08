@@ -85,17 +85,11 @@
         {{ dbt_spark_get_incremental_sql(strategy, tmp_relation, target_relation, existing_relation, unique_key, incremental_predicates) }}
       {%- endcall -%}
     {%- endif -%}
-    {%- if language == 'python' -%}
-      {#-- Drop the staging table after the DML completes. --#}
-      {% call statement('drop_relation') -%}
-        drop table if exists {{ tmp_relation }}
-      {%- endcall %}
-    {%- elif adapter.is_lakehouse_schemas_enabled() -%}
-      {#-- Drop the persisted staging view after the DML completes. --#}
-      {% call statement('drop_relation') -%}
-        drop view if exists {{ tmp_relation }}
-      {%- endcall %}
-    {%- endif -%}
+    {#-- Drop the staging view after the DML completes so it does not
+         appear in catalog/list_relations. --#}
+    {% call statement('drop_relation') -%}
+      drop view if exists {{ tmp_relation }}
+    {%- endcall %}
   {%- endif -%}
 
   {% set should_revoke = should_revoke(existing_relation, full_refresh_mode) %}

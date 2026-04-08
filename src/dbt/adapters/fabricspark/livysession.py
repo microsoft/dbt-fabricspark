@@ -713,6 +713,8 @@ class LivyCursor:
         statement_id = repr(json_res["id"])
         url = self.connect_url + "/sessions/" + self.session_id + "/statements/" + statement_id
         deadline = time.time() + self.credential.statement_timeout
+        consecutive_failures = 0
+        max_poll_retries = 3
         while True:
             if time.time() > deadline:
                 raise DbtDatabaseError(
@@ -720,10 +722,25 @@ class LivyCursor:
                     f"{statement_id} to complete. Increase `statement_timeout` in profiles.yml."
                 )
             poll_res = requests.get(url, headers=get_headers(self.credential, False), timeout=self.credential.http_timeout)
+            if poll_res.status_code >= 500:
+                consecutive_failures += 1
+                if consecutive_failures <= max_poll_retries:
+                    wait_time = 2 ** (consecutive_failures - 1) * 5  # 5s, 10s, 20s
+                    logger.debug(
+                        f"Livy statement poll got HTTP {poll_res.status_code}, "
+                        f"retrying in {wait_time}s (attempt {consecutive_failures}/{max_poll_retries})"
+                    )
+                    time.sleep(wait_time)
+                    continue
+                raise DbtRuntimeError(
+                    f"Livy statement poll failed after {max_poll_retries} retries "
+                    f"(HTTP {poll_res.status_code}): {poll_res.text}"
+                )
             if poll_res.status_code >= 400:
                 raise DbtRuntimeError(
                     f"Livy statement poll failed (HTTP {poll_res.status_code}): {poll_res.text}"
                 )
+            consecutive_failures = 0
             res = poll_res.json()
             if "state" not in res:
                 raise DbtRuntimeError(

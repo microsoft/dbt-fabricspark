@@ -1,3 +1,4 @@
+import functools
 import os
 
 import pytest
@@ -30,9 +31,6 @@ def dbt_profile_target(request):
     else:
         raise ValueError(f"Invalid profile type '{profile_type}'")
     return target
-
-
-import functools
 
 
 def _is_schema_enabled_lakehouse():

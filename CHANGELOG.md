@@ -108,6 +108,41 @@ The adapter also validates schema configuration:
 
 ---
 
+#### Incremental models fail with `REQUIRES_SINGLE_PART_NAMESPACE` on schema-enabled lakehouses
+
+**Problem:** The incremental materialization used temp views (`CREATE TEMPORARY VIEW`) for staging data before merge/insert. On schema-enabled lakehouses, temp views that reference three-part table names (`lakehouse.schema.table`) triggered Spark's `REQUIRES_SINGLE_PART_NAMESPACE` error because the `V2SessionCatalog` re-resolves the underlying tables during DML execution and cannot handle two-part namespaces.
+
+**Fix:** For schema-enabled lakehouses, the incremental materialization now creates a **persisted view** (`CREATE VIEW`) with full three-part naming instead of a temp view. The persisted view's references are resolved at creation time, avoiding the namespace error during DML. The staging view is dropped after the merge/insert completes. Non-schema lakehouses continue to use temp views.
+
+---
+
+#### `CREATE DATABASE` with bare schema name corrupts Spark namespace resolver
+
+**Problem:** `ensure_database_exists` emitted `CREATE DATABASE IF NOT EXISTS <schema>` with a single-part name. On schema-enabled lakehouses, this corrupted Spark's namespace resolver for the remainder of the session, causing cascading failures.
+
+**Fix:** `ensure_database_exists` now accepts an optional `database` parameter. When provided, it prepends the lakehouse name to produce a two-part `CREATE DATABASE IF NOT EXISTS lakehouse.schema` statement. All materializations (table, view, seed, snapshot, incremental) now pass `database=` to this macro.
+
+---
+
+#### Snapshot merge fails on schema-enabled lakehouses
+
+**Problem:** The snapshot materialization created a temp staging table/view with unqualified naming. On schema-enabled lakehouses, the `MERGE INTO` statement could not resolve the staging relation against the fully-qualified target table.
+
+**Fix:** The snapshot staging relation is now created as a persisted view inheriting `database` and `schema` from the target relation, ensuring proper three-part naming. The staging view is dropped after the snapshot merge completes.
+
+---
+
+#### Schema and database name generation not lakehouse-aware
+
+**Problem:** `generate_schema_name` and `generate_database_name` did not account for lakehouse type, potentially generating invalid namespace values.
+
+**Fix:**
+- **Non-schema lakehouses:** `generate_schema_name` always returns the lakehouse name (the only valid namespace).
+- **Schema-enabled lakehouses:** Uses dbt's standard `generate_schema_name_for_env` logic.
+- `generate_database_name` always returns the target lakehouse name.
+
+---
+
 ### Fabric Environment Support
 
 #### No way to specify a shared Spark environment for sessions
@@ -190,6 +225,12 @@ my_fabric_profile:
 ### Dependencies
 
 - Added `requests>=2.28.0` as an explicit dependency (previously relied on transitive installation).
+
+### Testing
+
+- Added runtime schema-enabled lakehouse detection in `conftest.py` via the Fabric REST API, allowing the same test suite to run against both schema-enabled and non-schema lakehouses without configuration changes.
+- Test fixtures automatically set `schema` to a unique per-class value (schema-enabled) or the lakehouse name (non-schema) based on the detected lakehouse type.
+- Removed standalone `test_livy_dml.py` manual test script with hardcoded workspace/lakehouse IDs.
 
 ### CI/CD
 

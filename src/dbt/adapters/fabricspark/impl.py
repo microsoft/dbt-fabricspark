@@ -27,7 +27,7 @@ from dbt_common.contracts.constraints import ConstraintType
 from dbt_common.exceptions import CompilationError, DbtRuntimeError
 from dbt_common.utils import AttrDict, executor
 
-from dbt.adapters.base import AdapterConfig, BaseRelation
+from dbt.adapters.base import AdapterConfig, BaseRelation, available
 from dbt.adapters.base.impl import ConstraintSupport, catch_as_completed
 from dbt.adapters.base.relation import InformationSchema
 from dbt.adapters.contracts.relation import RelationConfig, RelationType
@@ -104,6 +104,29 @@ class FabricSparkAdapter(SQLAdapter):
     ConnectionManager: TypeAlias = FabricSparkConnectionManager
     AdapterSpecificConfigs: TypeAlias = FabricSparkConfig
 
+    @available
+    def is_lakehouse_schemas_enabled(self) -> bool:
+        """Expose lakehouse_schemas_enabled to macros via adapter.
+
+        Uses the class-level flag on FabricSparkRelation which is set during
+        connection open. This avoids requiring a thread connection, which
+        may not exist during manifest parsing when generate_schema_name
+        is called.
+        """
+        return FabricSparkRelation._schemas_enabled
+
+    @available
+    def is_local_mode(self) -> bool:
+        """Expose local mode flag to macros via adapter.
+
+        Falls back to False if no connection is available (e.g. during parsing).
+        """
+        try:
+            conn = self.connections.get_thread_connection()
+            return conn.credentials.is_local_mode
+        except Exception:
+            return False
+
     @classmethod
     def date_function(cls) -> str:
         return "current_timestamp()"
@@ -179,6 +202,7 @@ class FabricSparkAdapter(SQLAdapter):
         self,
         row_list: "agate.Table",
         relation_info_func: Callable[["agate.Row"], RelationInfo],
+        schema_relation: Optional[BaseRelation] = None,
     ) -> List[BaseRelation]:
         """Aggregate relations with format metadata included."""
         relations = []
@@ -189,8 +213,12 @@ class FabricSparkAdapter(SQLAdapter):
                 RelationType.View if "Type: VIEW" in information else RelationType.Table
             )
             is_delta: bool = "Provider: delta" in information
+            # Use database/schema from the input relation when available.
+            # Schema-enabled lakehouses return a multi-part backtick-quoted
+            # namespace that doesn't match the cache key.
             relation: BaseRelation = self.Relation.create(
-                schema=_schema,
+                database=schema_relation.database if schema_relation else None,
+                schema=schema_relation.schema if schema_relation else _schema,
                 identifier=name,
                 type=rel_type,
                 information=information,
@@ -212,6 +240,7 @@ class FabricSparkAdapter(SQLAdapter):
             return self._build_spark_relation_list(
                 row_list=show_table_extended_rows,
                 relation_info_func=self._get_relation_information,
+                schema_relation=schema_relation,
             )
         except DbtRuntimeError as e:
             errmsg = getattr(e, "msg", "")
@@ -229,6 +258,7 @@ class FabricSparkAdapter(SQLAdapter):
                     return self._build_spark_relation_list(
                         row_list=show_table_rows,
                         relation_info_func=self._get_relation_information_using_describe,
+                        schema_relation=schema_relation,
                     )
                 except DbtRuntimeError as e:
                     description = "Error while retrieving information about"
@@ -332,7 +362,10 @@ class FabricSparkAdapter(SQLAdapter):
         return columns
 
     def _get_columns_for_catalog(self, relation: BaseRelation) -> Iterable[Dict[str, Any]]:
-        table_name = f"{relation.schema}.{relation.identifier}"
+        if relation.database:
+            table_name = f"{relation.database}.{relation.schema}.{relation.identifier}"
+        else:
+            table_name = f"{relation.schema}.{relation.identifier}"
         raw_rows = None
         try:
             raw_rows = self.execute_macro(
@@ -350,7 +383,9 @@ class FabricSparkAdapter(SQLAdapter):
             as_dict = column.to_column_dict()
             as_dict["column_name"] = as_dict.pop("column", None)
             as_dict["column_type"] = as_dict.pop("dtype")
-            as_dict["table_database"] = None
+            # Must match the database value from generate_database_name (target.lakehouse)
+            # so dbt-core can join catalog rows to manifest nodes via CatalogKey.
+            as_dict["table_database"] = relation.database or self.config.credentials.lakehouse
             yield as_dict
 
     def get_catalog(
@@ -393,7 +428,9 @@ class FabricSparkAdapter(SQLAdapter):
             )
 
         database = information_schema.database
-        logger.debug("database name is ", database)
+        if not self.Relation.get_default_include_policy().database:
+            database = None
+        logger.debug(f"database name is {database}")
         schema = list(schemas)[0]
 
         columns: List[Dict[str, Any]] = []

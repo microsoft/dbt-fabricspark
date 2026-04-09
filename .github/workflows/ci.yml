@@ -15,13 +15,7 @@
 name: Tests and Code Checks
 
 on:
-  push:
-    branches:
-      - "main"
-      - "*.latest"
-      - "v*"
   pull_request:
-  workflow_dispatch:
 
 permissions:
   contents: read   # Required to access repository files
@@ -70,7 +64,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     env:
       PYTEST_ADDOPTS: "-v --color=yes"
@@ -145,7 +139,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
       - name: Set up Python ${{ matrix.python-version }}

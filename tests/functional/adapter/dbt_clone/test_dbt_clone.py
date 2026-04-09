@@ -93,26 +93,6 @@ class BaseClone:
 
 @pytest.mark.skip("Cloning cross schema is not supported")
 class TestSparkClonePossible(BaseClone):
-    schemaname:str = None
-
-    @pytest.fixture(scope="class")
-    def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
-        profile = {
-            "test": {
-                "outputs": {
-                    "default": {},
-                },
-                "target": "default",
-            },
-        }
-        target = dbt_profile_target
-        target["schema"] = target["lakehouse"]
-        TestSparkClonePossible.schemaname = target["lakehouse"]
-        profile["test"]["outputs"]["default"] = target
-
-        if profiles_config_update:
-            profile.update(profiles_config_update)
-        return profile
 
     @pytest.fixture(scope="class")
     def profiles_config_update(self, dbt_profile_target, unique_schema, other_schema):

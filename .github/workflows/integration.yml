@@ -1,165 +1,548 @@
 # **what?**
-# Runs integration tests.
+# Runs integration tests against a dynamically provisioned Fabric Lakehouse
+# and Environment (starter pool, lowest compute).
 
 # **why?**
-# Ensure code runs as expected.
+# Ensure the adapter works end-to-end with real Fabric infrastructure.
 
 # **when?**
-# This will run when code is pushed to a main/release branch,
-# and when manually triggered. Requires Azure secrets so it
-# cannot run on PRs from forks.
+# - On pull requests targeting main (internal PRs only — forks lack secrets)
 
 name: Adapter Integration Tests
+
 on:
-  workflow_dispatch:
-  push:
+  pull_request:
     branches:
       - "main"
-      - "*.latest"
-      - "v*"
+
+# Cancel in-progress runs for the same PR / branch
+concurrency:
+  group: integration-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  WORKSPACE_ID: ${{ secrets.WORKSPACE_ID }}
+  FABRIC_API: "https://msitapi.fabric.microsoft.com/v1"
 
 jobs:
-  integration-tests-fabric-dw:
-    name: Regular
+  # ══════════════════════════════════════════════════════════════════
+  # Phase 1: Lakehouse WITHOUT schemas
+  # ══════════════════════════════════════════════════════════════════
+  integration-tests-no-schema:
+    name: "no_schema — ${{ matrix.test_file }}"
     runs-on: ubuntu-latest
     permissions:
-      contents: read   # Required to access repository files
-      packages: read   # Grant explicit read access to packages
-      id-token: write  # Needed if using OIDC authentication
+      contents: read
+      packages: read
+      id-token: write
     strategy:
       fail-fast: false
       max-parallel: 1
       matrix:
         test_file:
-          - tests/functional/adapter/basic/test_base.py
-          - tests/functional/adapter/basic/test_empty.py
+          - tests/functional/adapter/
 
     steps:
-      - name: Azure login with OIDC
+      # ── 1. Authenticate ───────────────────────────────────────────
+      - name: "Auth: Azure login with OIDC"
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.DBT_AZURE_SP_NAME }}
-          tenant-id: ${{ secrets.DBT_AZURE_TENANT }}
+          client-id: ${{ secrets.APP_ID }}
+          tenant-id: ${{ secrets.TENANT_ID }}
           allow-no-subscriptions: true
 
-      - name: Generate Unique Names
-        id: name_generation
+      # ── 2. Generate unique names ──────────────────────────────────
+      - name: "Setup: Generate unique resource names"
+        id: names
         run: |
           TIMESTAMP=$(date +"%Y%m%d%H%M%S")
-          TEST_FILE="${{ matrix.test_file }}"
-          BASENAME=$(echo "$TEST_FILE" | awk -F/ '{print $NF}')
-          CLEAN_TEST_FILE="${BASENAME%.*}"   # Remove file extension
+          CLEAN=$(basename "${{ matrix.test_file }}" .py)
 
-          LAKEHOUSE_NAME="dbt_test_${TIMESTAMP}_${CLEAN_TEST_FILE}"
-          TOKEN_FILE="token_${CLEAN_TEST_FILE}.txt"
+          echo "lakehouse_name=dbt_${TIMESTAMP}_no_schema_${CLEAN}" >> "$GITHUB_OUTPUT"
+          echo "environment_name=dbt_env_${TIMESTAMP}_no_schema_${CLEAN}" >> "$GITHUB_OUTPUT"
+          echo "Generated: dbt_${TIMESTAMP}_no_schema_${CLEAN}"
 
-          echo "Lakehouse Name: $LAKEHOUSE_NAME"
-          echo "Token File: $TOKEN_FILE"
-
-          echo "lakehouse_name=$LAKEHOUSE_NAME" >> $GITHUB_OUTPUT
-          echo "token_file=$TOKEN_FILE" >> $GITHUB_OUTPUT
-
-      - name: Fetch Access Token
-        id: fetch_token
+      # ── 3. Fetch access token ─────────────────────────────────────
+      - name: "Auth: Fetch Fabric access token"
+        id: token
         run: |
-          pip install azure-identity pyodbc azure-core
-
-          python - <<EOF
-          from azure.core.credentials import AccessToken
+          pip install -q azure-identity azure-core
+          python3 - <<'PYEOF'
+          import os
           from azure.identity import DefaultAzureCredential
-          import os
-          try:
-              credential = DefaultAzureCredential()
-              token = credential.get_token("https://analysis.windows.net/powerbi/api")
-              token_file = "${{ steps.name_generation.outputs.token_file }}"
-              with open(token_file, "w") as file:
-                file.write(token.token)
-              print(f"access_token={token.token}", file=open(os.environ["GITHUB_OUTPUT"], "a"))
-          except Exception as e:
-              raise RuntimeError(f"Failed to fetch token: {e}")
-          EOF
 
-      - name: Upload Token File
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.name_generation.outputs.LAKEHOUSE_NAME }}
-          path: ${{ steps.name_generation.outputs.token_file }}
+          credential = DefaultAzureCredential()
+          token = credential.get_token("https://analysis.windows.net/powerbi/api")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              print(f"access_token={token.token}", file=f)
+          print("Access token fetched successfully.")
+          PYEOF
 
-      - name: Create Fabric Lakehouse
-        id: create_lakehouse
+      # ── 4. Create Lakehouse (no schemas) ──────────────────────────
+      - name: "Provision: Create Fabric Lakehouse (no schema)"
+        id: lakehouse
         run: |
-          pip install requests
+          pip install -q requests
+          python3 - <<'PYEOF'
+          import requests, os, sys
 
-          python - <<EOF
-          import requests
-          import os
+          token = "${{ steps.token.outputs.access_token }}"
+          workspace = "${{ env.WORKSPACE_ID }}"
+          name = "${{ steps.names.outputs.lakehouse_name }}"
 
-          access_token = "${{ steps.fetch_token.outputs.access_token }}"
-          workspace_id = "${{ secrets.WORKSPACE_ID }}"
-          lakehouse_name = "${{ steps.name_generation.outputs.lakehouse_name }}"
+          resp = requests.post(
+              f"${{ env.FABRIC_API }}/workspaces/{workspace}/lakehouses",
+              json={"displayName": name, "description": f"CI test lakehouse (no_schema): {name}"},
+              headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+          )
 
-          url = f"https://msitapi.fabric.microsoft.com/v1/workspaces/{workspace_id}/lakehouses"
-          headers = {
-              "Authorization": f"Bearer {access_token}",
-              "Content-Type": "application/json"
-          }
-          payload = {
-              "displayName": lakehouse_name,
-              "description": f"Lakehouse created for test: {lakehouse_name}"
-          }
+          if resp.status_code != 201:
+              print(f"::error::Failed to create Lakehouse ({resp.status_code}): {resp.text}")
+              sys.exit(1)
 
-          response = requests.post(url, json=payload, headers=headers)
+          lh_id = resp.json()["id"]
+          print(f"Lakehouse '{name}' created (no_schema): {lh_id}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              print(f"lakehouse_id={lh_id}", file=f)
+          PYEOF
 
-          if response.status_code == 201:
-              lakehouse_id = response.json().get("id")
-              print(f"Lakehouse '{lakehouse_name}' created successfully.")
-              print(f"lakehouse_id={lakehouse_id}", file=open(os.environ["GITHUB_OUTPUT"], "a"))
+      # ── 5. Create Environment with starter pool ──────────────────
+      - name: "Provision: Create Fabric Environment"
+        id: environment
+        run: |
+          python3 - <<'PYEOF'
+          import requests, os, sys
+
+          token = "${{ steps.token.outputs.access_token }}"
+          workspace = "${{ env.WORKSPACE_ID }}"
+          env_name = "${{ steps.names.outputs.environment_name }}"
+          api = "${{ env.FABRIC_API }}"
+          headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+          print(f"Creating environment '{env_name}'...")
+          resp = requests.post(
+              f"{api}/workspaces/{workspace}/environments",
+              json={"displayName": env_name, "description": "CI starter-pool environment"},
+              headers=headers,
+          )
+
+          if resp.status_code not in (200, 201):
+              print(f"::error::Failed to create Environment ({resp.status_code}): {resp.text}")
+              sys.exit(1)
+
+          env_id = resp.json()["id"]
+          print(f"Environment '{env_name}' created: {env_id}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              print(f"environment_id={env_id}", file=f)
+          PYEOF
+
+      - name: "Provision: Configure starter pool (lowest compute)"
+        id: configure_env
+        run: |
+          python3 - <<'PYEOF'
+          import requests, os, sys
+
+          token = "${{ steps.token.outputs.access_token }}"
+          workspace = "${{ env.WORKSPACE_ID }}"
+          env_id = "${{ steps.environment.outputs.environment_id }}"
+          api = "${{ env.FABRIC_API }}"
+          headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+          print("Configuring Starter Pool (8 cores, 1 executor, no dynamic allocation)...")
+          resp = requests.patch(
+              f"{api}/workspaces/{workspace}/environments/{env_id}/staging/sparkcompute",
+              json={
+                  "instancePool": {
+                      "name": "Starter Pool",
+                      "type": "Workspace",
+                  },
+                  "driverCores": 8,
+                  "driverMemory": "56g",
+                  "executorCores": 8,
+                  "executorMemory": "56g",
+                  "dynamicExecutorAllocation": {
+                      "enabled": False,
+                      "minExecutors": 1,
+                      "maxExecutors": 1,
+                  },
+                  "runtimeVersion": "1.3",
+              },
+              headers=headers,
+          )
+
+          if resp.status_code in (200, 201):
+              print("Starter pool configured successfully.")
           else:
-              print("Failed to create Lakehouse:", response.text)
-              exit(1)
-          EOF
+              print(f"::warning::Configure compute returned {resp.status_code}: {resp.text}")
+              print("Continuing with default compute settings...")
+          PYEOF
 
+      - name: "Provision: Publish environment"
+        run: |
+          python3 - <<'PYEOF'
+          import requests, time, sys
+
+          token = "${{ steps.token.outputs.access_token }}"
+          workspace = "${{ env.WORKSPACE_ID }}"
+          env_id = "${{ steps.environment.outputs.environment_id }}"
+          api = "${{ env.FABRIC_API }}"
+          headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+          print("Publishing environment to apply staged changes...")
+          resp = requests.post(
+              f"{api}/workspaces/{workspace}/environments/{env_id}/staging/publish",
+              headers=headers,
+          )
+
+          if resp.status_code not in (200, 202):
+              print(f"::warning::Publish returned {resp.status_code}: {resp.text}")
+              print("Environment may use default settings.")
+              sys.exit(0)
+
+          for attempt in range(30):
+              time.sleep(10)
+              status = requests.get(
+                  f"{api}/workspaces/{workspace}/environments/{env_id}",
+                  headers=headers,
+              )
+              if status.ok:
+                  state = status.json().get("properties", {}).get("publishDetails", {}).get("state", "unknown")
+                  print(f"  Publish state: {state} (attempt {attempt + 1}/30)")
+                  if state.lower() in ("success", "completed"):
+                      print("Environment published successfully.")
+                      sys.exit(0)
+
+          print("::warning::Publish did not complete within 5 minutes. Continuing...")
+          PYEOF
+
+      # ── 6. Checkout & install ─────────────────────────────────────
       - uses: actions/checkout@v4
 
-      - name: Install uv
+      - name: "Setup: Install Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: "Setup: Install uv"
         uses: astral-sh/setup-uv@v5
 
-      - name: Install dependencies
+      - name: "Setup: Install dependencies"
         run: uv sync
 
-      - name: Run Functional Test ${{ matrix.test_file }}
+      # ── 7. Run tests ─────────────────────────────────────────────
+      # For non-schema lakehouses, schema must equal the lakehouse name.
+      - name: "Test: Run ${{ matrix.test_file }} (no_schema)"
         env:
-          WORKSPACE_ID: ${{ secrets.WORKSPACE_ID }}
-          LAKEHOUSE_ID: ${{ steps.create_lakehouse.outputs.lakehouse_id }}
-          LAKEHOUSE_NAME: ${{ steps.name_generation.outputs.lakehouse_name }}
-          SCHEMA_NAME: ${{ steps.name_generation.outputs.lakehouse_name }}
-          CLIENT_ID: ${{ secrets.DBT_AZURE_SP_NAME }}
-          TENANT_ID: ${{ secrets.DBT_AZURE_TENANT }}
-          FABRIC_INTEGRATION_TESTS_TOKEN: ${{ steps.fetch_token.outputs.access_token }}
+          WORKSPACE_ID: ${{ env.WORKSPACE_ID }}
+          LAKEHOUSE_ID: ${{ steps.lakehouse.outputs.lakehouse_id }}
+          LAKEHOUSE_NAME: ${{ steps.names.outputs.lakehouse_name }}
+          SCHEMA_NAME: ${{ steps.names.outputs.lakehouse_name }}
+          FABRIC_ENVIRONMENT_ID: ${{ steps.environment.outputs.environment_id }}
+          CLIENT_ID: ${{ secrets.APP_ID }}
+          TENANT_ID: ${{ secrets.TENANT_ID }}
+          FABRIC_INTEGRATION_TESTS_TOKEN: ${{ steps.token.outputs.access_token }}
         run: uv run pytest -ra -v ${{ matrix.test_file }} --profile "int_tests"
 
-      - name: Delete Fabric Lakehouse
-        if: always() && steps.create_lakehouse.outputs.lakehouse_id
+      # ── 8. Cleanup (always runs) ─────────────────────────────────
+      - name: "Cleanup: Delete Fabric Lakehouse"
+        if: always() && steps.lakehouse.outputs.lakehouse_id
         run: |
-          pip install requests
-
-          python - <<EOF
+          uv run python3 - <<'PYEOF'
           import requests
 
-          access_token = "${{ steps.fetch_token.outputs.access_token }}"
-          workspace_id = "${{ secrets.WORKSPACE_ID }}"
-          lakehouse_id = "${{ steps.create_lakehouse.outputs.lakehouse_id }}"
+          token = "${{ steps.token.outputs.access_token }}"
+          workspace = "${{ env.WORKSPACE_ID }}"
+          lh_id = "${{ steps.lakehouse.outputs.lakehouse_id }}"
 
-          url = f"https://api.fabric.microsoft.com/v1/workspaces/{workspace_id}/lakehouses/{lakehouse_id}"
-          headers = {
-              "Authorization": f"Bearer {access_token}",
-              "Content-Type": "application/json"
-          }
-
-          response = requests.delete(url, headers=headers)
-
-          if response.status_code == 200:
-              print(f"Lakehouse '{lakehouse_id}' deleted successfully.")
+          resp = requests.delete(
+              f"${{ env.FABRIC_API }}/workspaces/{workspace}/lakehouses/{lh_id}",
+              headers={"Authorization": f"Bearer {token}"},
+          )
+          if resp.status_code in (200, 204):
+              print(f"Lakehouse '{lh_id}' deleted.")
           else:
-              print("Failed to delete Lakehouse:", response.text)
-          EOF
+              print(f"::warning::Failed to delete Lakehouse ({resp.status_code}): {resp.text}")
+          PYEOF
+
+      - name: "Cleanup: Delete Fabric Environment"
+        if: always() && steps.environment.outputs.environment_id
+        run: |
+          uv run python3 - <<'PYEOF'
+          import requests
+
+          token = "${{ steps.token.outputs.access_token }}"
+          workspace = "${{ env.WORKSPACE_ID }}"
+          env_id = "${{ steps.environment.outputs.environment_id }}"
+
+          resp = requests.delete(
+              f"${{ env.FABRIC_API }}/workspaces/{workspace}/environments/{env_id}",
+              headers={"Authorization": f"Bearer {token}"},
+          )
+          if resp.status_code in (200, 204):
+              print(f"Environment '{env_id}' deleted.")
+          else:
+              print(f"::warning::Failed to delete Environment ({resp.status_code}): {resp.text}")
+          PYEOF
+
+  # ══════════════════════════════════════════════════════════════════
+  # Phase 2: Lakehouse WITH schemas (runs after no-schema completes)
+  # ══════════════════════════════════════════════════════════════════
+  integration-tests-with-schema:
+    name: "with_schema — ${{ matrix.test_file }}"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        test_file:
+          - tests/functional/adapter/
+
+    steps:
+      # ── 1. Authenticate ───────────────────────────────────────────
+      - name: "Auth: Azure login with OIDC"
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          tenant-id: ${{ secrets.TENANT_ID }}
+          allow-no-subscriptions: true
+
+      # ── 2. Generate unique names ──────────────────────────────────
+      - name: "Setup: Generate unique resource names"
+        id: names
+        run: |
+          TIMESTAMP=$(date +"%Y%m%d%H%M%S")
+          CLEAN=$(basename "${{ matrix.test_file }}" .py)
+
+          echo "lakehouse_name=dbt_${TIMESTAMP}_with_schema_${CLEAN}" >> "$GITHUB_OUTPUT"
+          echo "environment_name=dbt_env_${TIMESTAMP}_with_schema_${CLEAN}" >> "$GITHUB_OUTPUT"
+          echo "Generated: dbt_${TIMESTAMP}_with_schema_${CLEAN}"
+
+      # ── 3. Fetch access token ─────────────────────────────────────
+      - name: "Auth: Fetch Fabric access token"
+        id: token
+        run: |
+          pip install -q azure-identity azure-core
+          python3 - <<'PYEOF'
+          import os
+          from azure.identity import DefaultAzureCredential
+
+          credential = DefaultAzureCredential()
+          token = credential.get_token("https://analysis.windows.net/powerbi/api")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              print(f"access_token={token.token}", file=f)
+          print("Access token fetched successfully.")
+          PYEOF
+
+      # ── 4. Create Lakehouse (with schemas) ────────────────────────
+      - name: "Provision: Create Fabric Lakehouse (with schema)"
+        id: lakehouse
+        run: |
+          pip install -q requests
+          python3 - <<'PYEOF'
+          import requests, os, sys
+
+          token = "${{ steps.token.outputs.access_token }}"
+          workspace = "${{ env.WORKSPACE_ID }}"
+          name = "${{ steps.names.outputs.lakehouse_name }}"
+
+          resp = requests.post(
+              f"${{ env.FABRIC_API }}/workspaces/{workspace}/lakehouses",
+              json={
+                  "displayName": name,
+                  "description": f"CI test lakehouse (with_schema): {name}",
+                  "creationPayload": {"enableSchemas": True},
+              },
+              headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+          )
+
+          if resp.status_code != 201:
+              print(f"::error::Failed to create Lakehouse ({resp.status_code}): {resp.text}")
+              sys.exit(1)
+
+          lh_id = resp.json()["id"]
+          print(f"Lakehouse '{name}' created (with_schema): {lh_id}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              print(f"lakehouse_id={lh_id}", file=f)
+          PYEOF
+
+      # ── 5. Create Environment with starter pool ──────────────────
+      - name: "Provision: Create Fabric Environment"
+        id: environment
+        run: |
+          python3 - <<'PYEOF'
+          import requests, os, sys
+
+          token = "${{ steps.token.outputs.access_token }}"
+          workspace = "${{ env.WORKSPACE_ID }}"
+          env_name = "${{ steps.names.outputs.environment_name }}"
+          api = "${{ env.FABRIC_API }}"
+          headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+          print(f"Creating environment '{env_name}'...")
+          resp = requests.post(
+              f"{api}/workspaces/{workspace}/environments",
+              json={"displayName": env_name, "description": "CI starter-pool environment"},
+              headers=headers,
+          )
+
+          if resp.status_code not in (200, 201):
+              print(f"::error::Failed to create Environment ({resp.status_code}): {resp.text}")
+              sys.exit(1)
+
+          env_id = resp.json()["id"]
+          print(f"Environment '{env_name}' created: {env_id}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              print(f"environment_id={env_id}", file=f)
+          PYEOF
+
+      - name: "Provision: Configure starter pool (lowest compute)"
+        id: configure_env
+        run: |
+          python3 - <<'PYEOF'
+          import requests, os, sys
+
+          token = "${{ steps.token.outputs.access_token }}"
+          workspace = "${{ env.WORKSPACE_ID }}"
+          env_id = "${{ steps.environment.outputs.environment_id }}"
+          api = "${{ env.FABRIC_API }}"
+          headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+          print("Configuring Starter Pool (8 cores, 1 executor, no dynamic allocation)...")
+          resp = requests.patch(
+              f"{api}/workspaces/{workspace}/environments/{env_id}/staging/sparkcompute",
+              json={
+                  "instancePool": {
+                      "name": "Starter Pool",
+                      "type": "Workspace",
+                  },
+                  "driverCores": 8,
+                  "driverMemory": "56g",
+                  "executorCores": 8,
+                  "executorMemory": "56g",
+                  "dynamicExecutorAllocation": {
+                      "enabled": False,
+                      "minExecutors": 1,
+                      "maxExecutors": 1,
+                  },
+                  "runtimeVersion": "1.3",
+              },
+              headers=headers,
+          )
+
+          if resp.status_code in (200, 201):
+              print("Starter pool configured successfully.")
+          else:
+              print(f"::warning::Configure compute returned {resp.status_code}: {resp.text}")
+              print("Continuing with default compute settings...")
+          PYEOF
+
+      - name: "Provision: Publish environment"
+        run: |
+          python3 - <<'PYEOF'
+          import requests, time, sys
+
+          token = "${{ steps.token.outputs.access_token }}"
+          workspace = "${{ env.WORKSPACE_ID }}"
+          env_id = "${{ steps.environment.outputs.environment_id }}"
+          api = "${{ env.FABRIC_API }}"
+          headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+          print("Publishing environment to apply staged changes...")
+          resp = requests.post(
+              f"{api}/workspaces/{workspace}/environments/{env_id}/staging/publish",
+              headers=headers,
+          )
+
+          if resp.status_code not in (200, 202):
+              print(f"::warning::Publish returned {resp.status_code}: {resp.text}")
+              print("Environment may use default settings.")
+              sys.exit(0)
+
+          for attempt in range(30):
+              time.sleep(10)
+              status = requests.get(
+                  f"{api}/workspaces/{workspace}/environments/{env_id}",
+                  headers=headers,
+              )
+              if status.ok:
+                  state = status.json().get("properties", {}).get("publishDetails", {}).get("state", "unknown")
+                  print(f"  Publish state: {state} (attempt {attempt + 1}/30)")
+                  if state.lower() in ("success", "completed"):
+                      print("Environment published successfully.")
+                      sys.exit(0)
+
+          print("::warning::Publish did not complete within 5 minutes. Continuing...")
+          PYEOF
+
+      # ── 6. Checkout & install ─────────────────────────────────────
+      - uses: actions/checkout@v4
+
+      - name: "Setup: Install Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: "Setup: Install uv"
+        uses: astral-sh/setup-uv@v5
+
+      - name: "Setup: Install dependencies"
+        run: uv sync
+
+      # ── 7. Run tests ─────────────────────────────────────────────
+      # For schema-enabled lakehouses, use "dbo" (the default schema created by Fabric).
+      - name: "Test: Run ${{ matrix.test_file }} (with_schema)"
+        env:
+          WORKSPACE_ID: ${{ env.WORKSPACE_ID }}
+          LAKEHOUSE_ID: ${{ steps.lakehouse.outputs.lakehouse_id }}
+          LAKEHOUSE_NAME: ${{ steps.names.outputs.lakehouse_name }}
+          SCHEMA_NAME: "dbo"
+          FABRIC_ENVIRONMENT_ID: ${{ steps.environment.outputs.environment_id }}
+          CLIENT_ID: ${{ secrets.APP_ID }}
+          TENANT_ID: ${{ secrets.TENANT_ID }}
+          FABRIC_INTEGRATION_TESTS_TOKEN: ${{ steps.token.outputs.access_token }}
+        run: uv run pytest -ra -v ${{ matrix.test_file }} --profile "int_tests"
+
+      # ── 8. Cleanup (always runs) ─────────────────────────────────
+      - name: "Cleanup: Delete Fabric Lakehouse"
+        if: always() && steps.lakehouse.outputs.lakehouse_id
+        run: |
+          uv run python3 - <<'PYEOF'
+          import requests
+
+          token = "${{ steps.token.outputs.access_token }}"
+          workspace = "${{ env.WORKSPACE_ID }}"
+          lh_id = "${{ steps.lakehouse.outputs.lakehouse_id }}"
+
+          resp = requests.delete(
+              f"${{ env.FABRIC_API }}/workspaces/{workspace}/lakehouses/{lh_id}",
+              headers={"Authorization": f"Bearer {token}"},
+          )
+          if resp.status_code in (200, 204):
+              print(f"Lakehouse '{lh_id}' deleted.")
+          else:
+              print(f"::warning::Failed to delete Lakehouse ({resp.status_code}): {resp.text}")
+          PYEOF
+
+      - name: "Cleanup: Delete Fabric Environment"
+        if: always() && steps.environment.outputs.environment_id
+        run: |
+          uv run python3 - <<'PYEOF'
+          import requests
+
+          token = "${{ steps.token.outputs.access_token }}"
+          workspace = "${{ env.WORKSPACE_ID }}"
+          env_id = "${{ steps.environment.outputs.environment_id }}"
+
+          resp = requests.delete(
+              f"${{ env.FABRIC_API }}/workspaces/{workspace}/environments/{env_id}",
+              headers={"Authorization": f"Bearer {token}"},
+          )
+          if resp.status_code in (200, 204):
+              print(f"Environment '{env_id}' deleted.")
+          else:
+              print(f"::warning::Failed to delete Environment ({resp.status_code}): {resp.text}")
+          PYEOF

@@ -6,7 +6,6 @@ from agate import Row
 
 import dbt.flags as flags
 from dbt.adapters.fabricspark import FabricSparkAdapter, FabricSparkRelation
-from dbt.exceptions import DbtRuntimeError
 
 from .utils import config_from_parts_or_dicts
 
@@ -37,7 +36,6 @@ class TestSparkAdapter(unittest.TestCase):
                         "type": "fabricspark",
                         "method": "livy",
                         "authentication": "CLI",
-                        "schema": "dbtsparktest",
                         "lakehouse": "dbtsparktest",
                         "workspaceid": "1de8390c-9aca-4790-bee8-72049109c0f4",
                         "lakehouseid": "8c5bc260-bc3a-4898-9ada-01e433d461ba",
@@ -63,7 +61,6 @@ class TestSparkAdapter(unittest.TestCase):
                         "method": "livy",
                         "livy_mode": "local",
                         "livy_url": "http://localhost:8998",
-                        "schema": "default",
                         "connect_retries": 0,
                         "connect_timeout": 10,
                         "threads": 1,
@@ -94,13 +91,13 @@ class TestSparkAdapter(unittest.TestCase):
             self.assertEqual(connection.state, "open")
             self.assertIsNotNone(connection.handle)
             self.assertEqual(connection.credentials.authentication, "CLI")
-            self.assertIsNone(connection.credentials.database)
+            self.assertEqual(connection.credentials.database, "dbtsparktest")
 
     def test_local_livy_credentials(self):
         """Test that local Livy mode credentials are properly set up."""
         config = self._get_target_livy_local(self.project_cfg)
-        adapter = FabricSparkAdapter(config, self.mp_context)
-        
+        FabricSparkAdapter(config, self.mp_context)
+
         # Get credentials from config
         creds = config.credentials
         self.assertEqual(creds.livy_mode, "local")
@@ -112,7 +109,7 @@ class TestSparkAdapter(unittest.TestCase):
     def test_fabric_livy_credentials(self):
         """Test that Fabric Livy mode credentials are properly set up."""
         config = self._get_target_livy(self.project_cfg)
-        
+
         creds = config.credentials
         self.assertEqual(creds.livy_mode, "fabric")
         self.assertFalse(creds.is_local_mode)
@@ -314,22 +311,68 @@ class TestSparkAdapter(unittest.TestCase):
     def test_relation_with_database(self):
         config = self._get_target_livy(self.project_cfg)
         adapter = FabricSparkAdapter(config, self.mp_context)
-        # fine
+        # fine - database excluded from rendering by include_policy
         adapter.Relation.create(schema="different", identifier="table")
-        with self.assertRaises(DbtRuntimeError):
-            # not fine - database set
-            adapter.Relation.create(database="something", schema="different", identifier="table")
+        # also fine now - database is excluded from rendering
+        adapter.Relation.create(database="something", schema="different", identifier="table")
 
-    def test_profile_with_database(self):
+    def test_relation_two_part_mode(self):
+        """Test that non-schema mode uses two-part naming (schema.identifier)."""
+        FabricSparkRelation._schemas_enabled = False
+        try:
+            rel = FabricSparkRelation.create(
+                database="my_lakehouse", schema="my_lakehouse", identifier="my_table"
+            )
+            # include_policy.database should be False
+            assert rel.include_policy.database is False
+            assert rel.include_policy.schema is True
+            # Renders as schema.identifier (two-part)
+            assert str(rel) == "my_lakehouse.my_table"
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_relation_three_part_mode(self):
+        """Test that schema-enabled mode uses three-part naming (database.schema.identifier)."""
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            rel = FabricSparkRelation.create(
+                database="my_lakehouse", schema="dbo", identifier="my_table"
+            )
+            # include_policy.database should be True
+            assert rel.include_policy.database is True
+            assert rel.include_policy.schema is True
+            # Renders as database.schema.identifier (three-part)
+            assert str(rel) == "my_lakehouse.dbo.my_table"
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_relation_mode_isolation(self):
+        """Test that changing the ClassVar affects new relations, not existing ones."""
+        FabricSparkRelation._schemas_enabled = False
+        try:
+            rel_two = FabricSparkRelation.create(
+                database="lh", schema="lh", identifier="t1"
+            )
+            FabricSparkRelation._schemas_enabled = True
+            rel_three = FabricSparkRelation.create(
+                database="lh", schema="dbo", identifier="t2"
+            )
+            # Existing relation retains its original policy
+            assert str(rel_two) == "lh.t1"
+            # New relation uses updated policy
+            assert str(rel_three) == "lh.dbo.t2"
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_profile_with_schema(self):
+        """Test that schema is accepted as user input and database is derived from lakehouse."""
         profile = {
             "outputs": {
                 "test": {
                     "type": "fabricspark",
                     "method": "livy",
                     "authentication": "CLI",
-                    "schema": "dbtsparktest",
-                    # not allowed
-                    "database": "dbtsparktest",
+                    "schema": "custom_schema",
                     "lakehouse": "dbtsparktest",
                     "workspaceid": "1de8390c-9aca-4790-bee8-72049109c0f4",
                     "lakehouseid": "8c5bc260-bc3a-4898-9ada-01e433d461ba",
@@ -337,12 +380,16 @@ class TestSparkAdapter(unittest.TestCase):
                     "connect_timeout": 10,
                     "threads": 1,
                     "endpoint": "https://dailyapi.fabric.microsoft.com/v1",
+                    "spark_config": {"name": "test-session"},
                 }
             },
             "target": "test",
         }
-        with self.assertRaises(DbtRuntimeError):
-            config_from_parts_or_dicts(self.project_cfg, profile)
+        config = config_from_parts_or_dicts(self.project_cfg, profile)
+        # schema is user input
+        assert config.credentials.schema == "custom_schema"
+        # database is always derived from lakehouse name
+        assert config.credentials.database == "dbtsparktest"
 
     def test_parse_columns_from_information_with_table_type_and_delta_provider(self):
         self.maxDiff = None

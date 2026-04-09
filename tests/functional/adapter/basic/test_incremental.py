@@ -13,24 +13,6 @@ from dbt.tests.util import check_relations_equal, relation_from_name, run_dbt
 
 class BaseIncremental:
     @pytest.fixture(scope="class")
-    def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
-        profile = {
-            "test": {
-                "outputs": {
-                    "default": {},
-                },
-                "target": "default",
-            },
-        }
-        target = dbt_profile_target
-        target["schema"] = target["lakehouse"]
-        profile["test"]["outputs"]["default"] = target
-
-        if profiles_config_update:
-            profile.update(profiles_config_update)
-        return profile
-
-    @pytest.fixture(scope="class")
     def project_config_update(self):
         return {"name": "incremental"}
 
@@ -80,24 +62,6 @@ class BaseIncremental:
 
 
 class BaseIncrementalNotSchemaChange:
-
-    @pytest.fixture(scope="class")
-    def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
-        profile = {
-            "test": {
-                "outputs": {
-                    "default": {},
-                },
-                "target": "default",
-            },
-        }
-        target = dbt_profile_target
-        target["schema"] = target["lakehouse"]
-        profile["test"]["outputs"]["default"] = target
-
-        if profiles_config_update:
-            profile.update(profiles_config_update)
-        return profile
 
     @pytest.fixture(scope="class")
     def project_config_update(self):

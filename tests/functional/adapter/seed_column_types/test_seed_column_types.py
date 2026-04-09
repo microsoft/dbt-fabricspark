@@ -17,24 +17,6 @@ class TestSeedColumnTypesCast:
     def seeds(self):
         return {"payments.csv": _SEED_CSV, "schema.yml": _SEED_YML}
 
-    @pytest.fixture(scope="class")
-    def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
-        profile = {
-            "test": {
-                "outputs": {
-                    "default": {},
-                },
-                "target": "default",
-            },
-        }
-        target = dbt_profile_target
-        target["schema"] = target["lakehouse"]
-        profile["test"]["outputs"]["default"] = target
-
-        if profiles_config_update:
-            profile.update(profiles_config_update)
-        return profile
-
     #  We want to test seed types because hive would cause all fields to be strings.
     # setting column_types in project.yml should change them and pass.
     def test_column_seed_type(self, project):

@@ -20,26 +20,7 @@ from dbt.tests.util import (
 
 
 class StoreTestFailuresBase:
-    schemaname: str = None
     audit_schema_suffix: str = ""
-    @pytest.fixture(scope="class")
-    def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
-        profile = {
-            "test": {
-                "outputs": {
-                    "default": {},
-                },
-                "target": "default",
-            },
-        }
-        target = dbt_profile_target
-        target["schema"] = target["lakehouse"]
-        StoreTestFailuresBase.schemaname = target["lakehouse"]
-        profile["test"]["outputs"]["default"] = target
-
-        if profiles_config_update:
-            profile.update(profiles_config_update)
-        return profile
 
     @pytest.fixture(scope="function", autouse=True)
     def setUp(self, project):
@@ -82,7 +63,7 @@ class StoreTestFailuresBase:
             "seeds": {
                 "quote_columns": True,
             },
-            "tests": {"+store_failures": True, "schema": StoreTestFailuresBase.schemaname},
+            "tests": {"+store_failures": True},
         }
 
     def column_type_overrides(self):

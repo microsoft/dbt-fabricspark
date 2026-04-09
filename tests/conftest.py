@@ -1,3 +1,4 @@
+import functools
 import os
 
 import pytest
@@ -32,13 +33,89 @@ def dbt_profile_target(request):
     return target
 
 
+def _is_schema_enabled_lakehouse():
+    """Detect whether the target lakehouse has schemas enabled via the Fabric REST API.
+
+    Calls GET /v1/workspaces/{workspaceId}/lakehouses/{lakehouseId} and checks
+    for the ``defaultSchema`` property in the response, which indicates a
+    schema-enabled lakehouse.
+
+    Returns False when required env vars are missing (e.g. local dev) or
+    when the API call fails. Result is cached for the process lifetime.
+    """
+    return _is_schema_enabled_lakehouse_cached()
+
+
+@functools.lru_cache(maxsize=1)
+def _is_schema_enabled_lakehouse_cached():
+    workspace_id = os.getenv("WORKSPACE_ID")
+    lakehouse_id = os.getenv("LAKEHOUSE_ID")
+    endpoint = os.getenv("LIVY_ENDPOINT", "https://api.fabric.microsoft.com/v1")
+
+    if not all([workspace_id, lakehouse_id]):
+        return False
+
+    import requests
+
+    # Use explicit token if available (CI), otherwise fall back to Azure CLI (local dev).
+    token = os.getenv("FABRIC_INTEGRATION_TESTS_TOKEN")
+    if not token:
+        try:
+            from azure.identity import AzureCliCredential
+
+            credential = AzureCliCredential()
+            token = credential.get_token("https://analysis.windows.net/powerbi/api").token
+        except Exception:
+            return False
+
+    url = f"{endpoint}/workspaces/{workspace_id}/lakehouses/{lakehouse_id}"
+    try:
+        resp = requests.get(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return "defaultSchema" in resp.json().get("properties", {})
+    except Exception:
+        return False
+
+
+@pytest.fixture(scope="class")
+def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
+    """Build profile data for both schema-enabled and non-schema lakehouses.
+
+    - Non-schema lakehouse: schema = lakehouse name (only valid namespace)
+    - Schema-enabled lakehouse: schema = unique_schema (test isolation via
+      dbt-core's per-class unique schema)
+    """
+    profile = {
+        "test": {
+            "outputs": {
+                "default": {},
+            },
+            "target": "default",
+        },
+    }
+    target = dbt_profile_target
+    if _is_schema_enabled_lakehouse():
+        target["schema"] = unique_schema
+    else:
+        target["schema"] = target.get("lakehouse")
+    profile["test"]["outputs"]["default"] = target
+
+    if profiles_config_update:
+        profile.update(profiles_config_update)
+    return profile
+
+
 def _all_profiles_base():
     return {
         "type": "fabricspark",
         "method": "livy",
         "connect_retries": 2,
         "connect_timeout": 10,
-        "endpoint": os.getenv("LIVY_ENDPOINT", "https://msitapi.fabric.microsoft.com/v1"),
+        "endpoint": os.getenv("LIVY_ENDPOINT", "https://api.fabric.microsoft.com/v1"),
         "workspaceid": os.getenv("WORKSPACE_ID"),
         "lakehouseid": os.getenv("LAKEHOUSE_ID"),
         "lakehouse": os.getenv("LAKEHOUSE_NAME"),
@@ -46,7 +123,8 @@ def _all_profiles_base():
         "retry_all": True,
         "create_shortcuts": False,
         "shortcuts_json_str": os.getenv("SHORTCUTS_JSON_STR"),
-        "lakehouse_schemas_enabled": False,
+        "environmentId": os.getenv("FABRIC_ENVIRONMENT_ID"),
+        "livy_mode": os.getenv("LIVY_MODE", "fabric"),
     }
 
 

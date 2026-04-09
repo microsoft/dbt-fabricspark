@@ -7,24 +7,6 @@ from dbt.tests.util import run_dbt
 
 
 class IncrementalOnSchemaChangeIgnoreFail(BaseIncrementalOnSchemaChangeSetup):
-    @pytest.fixture(scope="class")
-    def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
-        profile = {
-            "test": {
-                "outputs": {
-                    "default": {},
-                },
-                "target": "default",
-            },
-        }
-        target = dbt_profile_target
-        target["schema"] = target["lakehouse"]
-        profile["test"]["outputs"]["default"] = target
-
-        if profiles_config_update:
-            profile.update(profiles_config_update)
-        return profile
-
     def test_run_incremental_ignore(self, project):
         select = "model_a incremental_ignore incremental_ignore_target"
         compare_source = "incremental_ignore"
@@ -50,24 +32,6 @@ class TestAppendOnSchemaChange(IncrementalOnSchemaChangeIgnoreFail):
 
 class TestInsertOverwriteOnSchemaChange(IncrementalOnSchemaChangeIgnoreFail):
     @pytest.fixture(scope="class")
-    def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
-        profile = {
-            "test": {
-                "outputs": {
-                    "default": {},
-                },
-                "target": "default",
-            },
-        }
-        target = dbt_profile_target
-        target["schema"] = target["lakehouse"]
-        profile["test"]["outputs"]["default"] = target
-
-        if profiles_config_update:
-            profile.update(profiles_config_update)
-        return profile
-
-    @pytest.fixture(scope="class")
     def project_config_update(self):
         return {
             "models": {
@@ -79,24 +43,6 @@ class TestInsertOverwriteOnSchemaChange(IncrementalOnSchemaChangeIgnoreFail):
 
 
 class TestDeltaOnSchemaChange(BaseIncrementalOnSchemaChangeSetup):
-    @pytest.fixture(scope="class")
-    def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update):
-        profile = {
-            "test": {
-                "outputs": {
-                    "default": {},
-                },
-                "target": "default",
-            },
-        }
-        target = dbt_profile_target
-        target["schema"] = target["lakehouse"]
-        profile["test"]["outputs"]["default"] = target
-
-        if profiles_config_update:
-            profile.update(profiles_config_update)
-        return profile
-
     @pytest.fixture(scope="class")
     def project_config_update(self):
         return {

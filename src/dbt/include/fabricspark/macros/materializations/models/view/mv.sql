@@ -1,6 +1,16 @@
 {% materialization view, adapter='fabricspark' -%}
     {#-- Ensure the database/schema exists before creating the view --#}
-    {% do ensure_database_exists(model.schema) %}
-    -- This uses the dbt implementation - https://github.com/dbt-labs/dbt-adapters/blob/60005a0a2bd33b61cb65a591bc1604b1b3fd25d5/dbt/include/global_project/macros/relations/view/replace.sql#L24
+    {% do ensure_database_exists(model.schema, database=model.database) %}
     {{ return(create_or_replace_view()) }}
 {%- endmaterialization %}
+
+{% macro fabricspark__handle_existing_table(full_refresh, old_relation) %}
+    {#-- Fabric Spark: drop the table, then also drop as view to clear any
+         auto-discovered metadata that lingers after the table drop. --#}
+    {{ log("Dropping relation " ~ old_relation.render() ~ " because it is of type " ~ old_relation.type) }}
+    {{ adapter.drop_relation(old_relation) }}
+    {#-- Also drop as view in case Fabric auto-discovery re-registered it --#}
+    {% call statement('drop_view_cleanup', auto_begin=False) -%}
+        drop view if exists {{ old_relation.include(database=old_relation.database is not none) }}
+    {%- endcall %}
+{% endmacro %}

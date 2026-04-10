@@ -17,7 +17,7 @@ The `dbt-fabricspark` package contains all of the code enabling dbt to work with
 - Read the [introduction](https://docs.getdbt.com/docs/introduction/) and [viewpoint](https://docs.getdbt.com/docs/about/viewpoint/)
 
 ## Running locally
-Use livy endpoint to connect to Synapse Spark in Microsoft Fabric. The binaries required to setup local environment is not possiblw with Synapse Spark in Microsoft Fabric. However, you can configure profile to connect via livy endpoints.
+Use Livy endpoint to connect to Synapse Spark in Microsoft Fabric. The binaries required to setup local environment is not possible with Synapse Spark in Microsoft Fabric. However, you can configure profile to connect via Livy endpoints.
 
 Create a profile like this one:
 
@@ -56,10 +56,13 @@ fabric-spark-test:
   outputs:
     fabricspark-dev:
         # ... other settings ...
+        reuse_session: true
         session_id_file: /path/to/my-session-id.txt
 ```
 
 **Session reuse behavior:**
+
+Make sure to set `reuse_session` to `true` in your profile.yml to enable this feature.
 
 1. On first run: Creates a new Livy session and saves the session ID to the file
 2. On subsequent runs: Reads the session ID from file and attempts to reuse it

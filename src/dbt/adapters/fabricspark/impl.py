@@ -112,6 +112,10 @@ class FabricSparkAdapter(SQLAdapter):
         connection open. This avoids requiring a thread connection, which
         may not exist during manifest parsing when generate_schema_name
         is called.
+
+        Note: This returns False during manifest parsing (before connection.open).
+        The generate_schema_name macro uses a parse-time fallback by comparing
+        target.schema != target.lakehouse to infer schema-enabled mode.
         """
         return FabricSparkRelation._schemas_enabled
 

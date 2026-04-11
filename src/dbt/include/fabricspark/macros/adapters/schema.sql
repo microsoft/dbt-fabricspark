@@ -71,8 +71,16 @@
        (which maps to the single Spark database).
        For schema-enabled lakehouses, use the default dbt behavior.
        For cross-lakehouse writes (model sets database), use the custom_schema_name
-       as-is since the target default schema belongs to the source lakehouse. --#}
-  {% if adapter.is_lakehouse_schemas_enabled() or adapter.is_local_mode() %}
+       as-is since the target default schema belongs to the source lakehouse.
+
+       NOTE: adapter.is_lakehouse_schemas_enabled() is only available at runtime
+       (set during connection.open via Fabric REST API). During manifest parsing,
+       it defaults to False. As a parse-time fallback, we also check whether
+       target.schema differs from target.lakehouse — when the user sets a distinct
+       schema in profiles.yml (e.g. schema: dbo, lakehouse: bronze), that is a
+       reliable signal that the lakehouse has schemas enabled. --#}
+  {% set _schema_enabled = adapter.is_lakehouse_schemas_enabled() or adapter.is_local_mode() or (target.schema is defined and target.lakehouse is defined and target.schema != target.lakehouse) %}
+  {% if _schema_enabled %}
     {% if node and node.config and node.config.get('database') %}
       {% if custom_schema_name %}
         {% do return(custom_schema_name) %}

@@ -167,6 +167,51 @@ In this mode:
 - Schemas are created automatically via `CREATE DATABASE IF NOT EXISTS lakehouse.schema`
 - Incremental models use persisted staging tables (instead of temp views) to work around Spark's `REQUIRES_SINGLE_PART_NAMESPACE` limitation
 
+### Schema Detection
+
+The adapter detects whether a lakehouse has schemas enabled using two complementary mechanisms:
+
+1. **Runtime detection (Fabric REST API):** During `connection.open()`, the adapter calls the Fabric REST API to fetch lakehouse properties. If the response contains `defaultSchema`, the lakehouse is treated as schema-enabled and three-part naming is used.
+
+2. **Parse-time detection (profile heuristic):** During manifest parsing (before any connection is opened), the adapter checks whether `schema` differs from `lakehouse` in your profile. When they differ (e.g., `lakehouse: bronze`, `schema: dbo`), the adapter infers schema-enabled mode. This ensures correct schema resolution at compile time.
+
+> **Important:** For schema-enabled lakehouses, always set `schema` to a value **different** from `lakehouse` in your profile (e.g., `schema: dbo`). If `schema` equals `lakehouse`, the adapter cannot distinguish schema-enabled from non-schema mode at parse time, and the lakehouse name will be used as the schema name instead.
+
+| Lakehouse Type | `lakehouse` | `schema` | Naming |
+|---|---|---|---|
+| Without schema | `my_lakehouse` | `my_lakehouse` | `my_lakehouse.table_name` |
+| With schema | `my_lakehouse` | `dbo` | `my_lakehouse.dbo.table_name` |
+
+### Cross-Lakehouse Writes
+
+A single profile can write to multiple lakehouses using the `database` config on individual models. The profile's `lakehouse` is the default target; set `database` on a model to redirect writes to a different lakehouse in the same workspace.
+
+```yaml
+# profiles.yml — profile targets the "bronze" lakehouse
+fabric-spark:
+  type: fabricspark
+  lakehouse: bronze
+  schema: dbo
+  # ... other settings
+```
+
+```sql
+-- models/silver/silver_orders.sql — writes to the "silver" lakehouse
+{{ config(
+    materialized='table',
+    database='silver',
+    schema='dbo'
+) }}
+
+select * from {{ ref('bronze_orders') }}
+```
+
+In this example:
+- Seeds and bronze models write to `bronze.dbo.*` (the default lakehouse)
+- Silver models write to `silver.dbo.*` via `database='silver'`
+- Gold models write to `gold.dbo.*` via `database='gold'`
+- All three lakehouses must exist in the same Fabric workspace and have schemas enabled
+
 ### Configuration Reference
 
 | Option | Type | Default | Description |
@@ -177,10 +222,10 @@ In this mode:
 | `workspaceid` | string | — | Fabric workspace UUID |
 | `lakehouseid` | string | — | Lakehouse UUID |
 | `lakehouse` | string | — | Lakehouse name |
-| `schema` | string | — | Schema name (same as `lakehouse` for non-schema, different for schema-enabled) |
+| `schema` | string | — | Schema name. Must equal `lakehouse` for non-schema lakehouses, must differ from `lakehouse` for schema-enabled (e.g., `dbo`) |
 | `threads` | int | `1` | Number of threads for parallel execution |
 | **Authentication** | | | |
-| `authentication` | string | `az_cli` | Auth method: `CLI` or `SPN` |
+| `authentication` | string | `CLI` | Auth method: `CLI`, `SPN`, or `fabric_notebook` |
 | `client_id` | string | — | Service principal client ID (SPN only) |
 | `tenant_id` | string | — | Azure AD tenant ID (SPN only) |
 | `client_secret` | string | — | Service principal secret (SPN only) |
@@ -206,6 +251,14 @@ In this mode:
 | `shortcuts_json_str` | string | — | JSON string defining shortcuts |
 | `livy_mode` | string | `fabric` | `fabric` for Fabric cloud, `local` for local Livy |
 | `livy_url` | string | `http://localhost:8998` | Local Livy URL (local mode only) |
+
+### Authentication Modes
+
+| Mode | Value | Use Case | Required Fields |
+|------|-------|----------|-----------------|
+| **Azure CLI** | `CLI` | Local development. Uses `az login` credentials. | None (run `az login` first) |
+| **Service Principal** | `SPN` | CI/CD and automation. Uses Azure AD app registration. | `client_id`, `tenant_id`, `client_secret` |
+| **Fabric Notebook** | `fabric_notebook` | Running dbt inside a Fabric notebook. Uses `notebookutils.credentials`. | None (runs in Fabric runtime) |
 
 ## Reporting bugs and contributing code
 

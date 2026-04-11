@@ -17,7 +17,7 @@ prompts:
         hint: Use CLI (az login) for interactive execution or SPN for automation
       client_id:
         hint: Use when SPN auth is used.
-      client_scrent:
+      client_secret:
         hint: Use when SPN auth is used.
       tenant_id:
         hint: Use when SPN auth is used.

@@ -22,8 +22,6 @@ dbt is the T in ELT. Organize, cleanse, denormalize, filter, rename, and pre-agg
 
 The `dbt-fabricspark` package contains all of the code enabling dbt to work with Apache Spark in Microsoft Fabric. This adapter connects to Fabric Lakehouses via Livy endpoints and supports both **schema-enabled** and **non-schema** Lakehouse configurations.
 
-**Current version: `1.9.3`**
-
 ### Key Features
 
 - **Livy session management** with session reuse across dbt runs
@@ -48,6 +46,14 @@ pip install dbt-fabricspark
 ## Configuration
 
 Use a Livy endpoint to connect to Apache Spark in Microsoft Fabric. Configure your `profiles.yml` to connect via Livy endpoints.
+
+### Connection Modes
+
+The adapter supports two connection modes via the `livy_mode` setting:
+
+- **Local mode** (`livy_mode: local`) — Connects to a self-hosted Spark instance running in a Docker container (contributed by @mdrakiburrahman). This mode supports the `reuse_session` flag and does not require Fabric compute, making it ideal for offline development and testing.
+
+- **Fabric mode** (`livy_mode: fabric`, default) — Connects to Apache Spark in Microsoft Fabric via the Fabric Livy API. For development workflows, enable `reuse_session: true` to persist the Livy session ID to a local file (configured via `session_id_file`, defaults to `./livy-session-id.txt`). On subsequent `dbt` runs, the adapter reuses the existing session from the persisted file instead of creating a new one. If the file does not exist or the session has expired, a new session is created automatically.
 
 ### Lakehouse without Schema
 

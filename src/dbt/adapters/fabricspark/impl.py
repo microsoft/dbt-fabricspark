@@ -166,75 +166,17 @@ class FabricSparkAdapter(SQLAdapter):
         conn = self.connections.get_thread_connection()
         return mlv_api.resolve_lakehouse_id(conn.credentials, lakehouse_name)
 
-    # Minimum Apache Spark version required for Materialized Lake Views.
-    # Fabric Runtime 1.3 ships with Spark 3.5.
-    MLV_MIN_SPARK_VERSION = "3.5"
-
     @available
     def mlv_validate_prerequisites(self) -> None:
         """Validate runtime prerequisites for Materialized Lake View models.
 
-        Checks:
-        1. Not running in local mode (MLV requires Fabric runtime).
-        2. Fabric Runtime version is 1.3+ (Spark >= 3.5).
-        3. Schema-enabled lakehouse is required.
-
-        Raises ``DbtRuntimeError`` if any check fails.
+        Reads the cached result from ``check_mlv_prerequisites()`` which
+        ran at connection open time. If prerequisites are not met, raises
+        ``DbtRuntimeError`` immediately — no SQL is executed first.
         """
-        # 1. Local mode check
-        if self.is_local_mode():
-            raise DbtRuntimeError(
-                "Materialized Lake Views require Fabric Runtime 1.3+. "
-                "Local mode (Docker Spark) does not support MLV."
-            )
-
-        # 2. Fabric Runtime / Spark version check
-        spark_version = FabricSparkConnectionManager.spark_version
-        if spark_version:
-            try:
-                major_minor = ".".join(spark_version.split(".")[:2])
-                if tuple(int(x) for x in major_minor.split(".")) < tuple(
-                    int(x) for x in self.MLV_MIN_SPARK_VERSION.split(".")
-                ):
-                    raise DbtRuntimeError(
-                        f"Materialized Lake Views require Fabric Runtime 1.3+ "
-                        f"(Apache Spark >= {self.MLV_MIN_SPARK_VERSION}). "
-                        f"Detected Spark version: {spark_version}. "
-                        f"Please upgrade your Fabric Runtime."
-                    )
-            except DbtRuntimeError:
-                raise
-            except Exception:
-                logger.warning(
-                    f"Could not parse Spark version '{spark_version}' for MLV "
-                    f"compatibility check. Proceeding, but MLV may fail at runtime."
-                )
-        else:
-            logger.warning(
-                "Spark version not detected. Cannot verify Fabric Runtime 1.3+ "
-                "requirement for Materialized Lake Views. Proceeding anyway."
-            )
-
-        # 3. Schema-enabled lakehouse check
-        if not self.is_lakehouse_schemas_enabled():
-            try:
-                conn = self.connections.get_thread_connection()
-                schema = conn.credentials.schema
-                lakehouse = conn.credentials.lakehouse
-                if schema == lakehouse:
-                    raise DbtRuntimeError(
-                        "Materialized Lake Views require a schema-enabled lakehouse. "
-                        "The target lakehouse does not have schemas enabled. "
-                        "Enable schemas on the lakehouse or set target.schema "
-                        "to a schema name different from the lakehouse name."
-                    )
-            except DbtRuntimeError:
-                raise
-            except Exception:
-                raise DbtRuntimeError(
-                    "Materialized Lake Views require a schema-enabled lakehouse. "
-                    "Could not verify lakehouse schema support."
-                )
+        error = FabricSparkConnectionManager.mlv_prereq_error
+        if error:
+            raise DbtRuntimeError(error)
 
     @available
     def mlv_validate_delta_sources(self, upstream_relations: List[Dict[str, Any]]) -> None:

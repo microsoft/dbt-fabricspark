@@ -57,6 +57,9 @@
          PRE-FLIGHT VALIDATION
          ===================================================================== --#}
 
+    {#-- 0. Runtime prerequisites (local mode, Spark version, schema-enabled) --#}
+    {% do adapter.mlv_validate_prerequisites() %}
+
     {#-- 1. Either on-demand or schedule MUST be configured --#}
     {% if not mlv_on_demand and mlv_schedule is none %}
         {{ exceptions.raise_compiler_error(

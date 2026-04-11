@@ -181,39 +181,25 @@ class TestMaterializedLakeView:
     def test_01_seed_data(self, project):
         """Seed the base data into the lakehouse."""
         results = run_dbt(["seed"])
-        # results include the on-run-start hook + 1 seed
-        seed_results = [r for r in results if r.node.resource_type == "seed"]
-        assert len(seed_results) == 1
+        assert len(results) == 1
 
     def test_02_create_source_table(self, project):
         """Create the Delta source table the MLVs depend on."""
         results = run_dbt(["run", "--select", "mlv_source_table"])
-        model_results = [r for r in results if r.node.resource_type == "model"]
-        assert len(model_results) == 1
-        assert model_results[0].status == "success"
+        assert len(results) == 1
+        assert results[0].status == "success"
 
     # ------------------------------------------------------------------
-    # 2. Preflight validation
+    # 2. MLV creation — on-demand
     # ------------------------------------------------------------------
 
-    def test_03_preflight_passes_with_mlv_models(self, project):
-        """The on-run-start preflight hook should pass when runtime
-        prerequisites (Spark version, schema-enabled) are met."""
-        # Running parse first to confirm the MLV models are recognized
-        run_dbt(["parse"])
-
-    # ------------------------------------------------------------------
-    # 3. MLV creation — on-demand
-    # ------------------------------------------------------------------
-
-    def test_04_create_mlv_on_demand(self, project):
+    def test_03_create_mlv_on_demand(self, project):
         """Create an MLV with on-demand refresh and verify it succeeds."""
         results = run_dbt(["run", "--select", "mlv_on_demand"])
-        model_results = [r for r in results if r.node.resource_type == "model"]
-        assert len(model_results) == 1
-        assert model_results[0].status == "success"
+        assert len(results) == 1
+        assert results[0].status == "success"
 
-    def test_05_mlv_on_demand_has_data(self, project):
+    def test_04_mlv_on_demand_has_data(self, project):
         """The on-demand MLV should contain the expected rows."""
         result = project.run_sql(
             f"select count(*) from {project.test_schema}.mlv_on_demand",
@@ -221,7 +207,7 @@ class TestMaterializedLakeView:
         )
         assert int(result[0]) == 3
 
-    def test_06_mlv_on_demand_has_computed_column(self, project):
+    def test_05_mlv_on_demand_has_computed_column(self, project):
         """Verify the tier column is computed correctly."""
         result = project.run_sql(
             f"select tier from {project.test_schema}.mlv_on_demand where name = 'alice'",
@@ -230,17 +216,16 @@ class TestMaterializedLakeView:
         assert result[0] == "low"  # alice has amount=100
 
     # ------------------------------------------------------------------
-    # 4. MLV creation — scheduled
+    # 3. MLV creation — scheduled
     # ------------------------------------------------------------------
 
-    def test_07_create_mlv_scheduled(self, project):
+    def test_06_create_mlv_scheduled(self, project):
         """Create an MLV with a daily schedule and verify it succeeds."""
         results = run_dbt(["run", "--select", "mlv_scheduled"])
-        model_results = [r for r in results if r.node.resource_type == "model"]
-        assert len(model_results) == 1
-        assert model_results[0].status == "success"
+        assert len(results) == 1
+        assert results[0].status == "success"
 
-    def test_08_mlv_scheduled_has_data(self, project):
+    def test_07_mlv_scheduled_has_data(self, project):
         """The scheduled MLV should have aggregated data."""
         result = project.run_sql(
             f"select count(*) from {project.test_schema}.mlv_scheduled",
@@ -249,21 +234,20 @@ class TestMaterializedLakeView:
         assert int(result[0]) == 3  # 3 distinct names
 
     # ------------------------------------------------------------------
-    # 5. MLV re-run (CREATE OR REPLACE — idempotent)
+    # 4. MLV re-run (CREATE OR REPLACE — idempotent)
     # ------------------------------------------------------------------
 
-    def test_09_rerun_mlv_is_idempotent(self, project):
+    def test_08_rerun_mlv_is_idempotent(self, project):
         """Running the same MLV again should succeed (CREATE OR REPLACE)."""
         results = run_dbt(["run", "--select", "mlv_on_demand"])
-        model_results = [r for r in results if r.node.resource_type == "model"]
-        assert len(model_results) == 1
-        assert model_results[0].status == "success"
+        assert len(results) == 1
+        assert results[0].status == "success"
 
     # ------------------------------------------------------------------
-    # 6. Full build (seed + all models + tests)
+    # 5. Full build (seed + all models + tests)
     # ------------------------------------------------------------------
 
-    def test_10_full_build(self, project):
+    def test_09_full_build(self, project):
         """dbt build should succeed for the entire project including MLVs."""
         results = run_dbt(["build"])
         for r in results:
@@ -304,9 +288,8 @@ class TestMLVMissingRefreshConfig:
         run_dbt(["seed"])
         run_dbt(["run", "--select", "mlv_source_table"])
         results = run_dbt(["run", "--select", "mlv_no_refresh"], expect_pass=False)
-        model_results = [r for r in results if r.node.resource_type == "model"]
-        assert len(model_results) == 1
-        assert model_results[0].status == "error"
+        assert len(results) == 1
+        assert results[0].status == "error"
 
 
 @pytest.mark.skipif(
@@ -331,6 +314,5 @@ class TestMLVNonDeltaSourceValidation:
         """Model should fail because the upstream source is a view, not a Delta table."""
         run_dbt(["run", "--select", "non_delta_view"])
         results = run_dbt(["run", "--select", "mlv_on_non_delta"], expect_pass=False)
-        model_results = [r for r in results if r.node.resource_type == "model"]
-        assert len(model_results) == 1
-        assert model_results[0].status == "error"
+        assert len(results) == 1
+        assert results[0].status == "error"

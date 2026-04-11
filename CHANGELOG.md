@@ -99,15 +99,15 @@ The adapter resolves the lakehouse name (from `database` config or `target.lakeh
 
 ---
 
-#### Preflight validation (on-run-start hook)
+#### Preflight validation (connection open)
 
-An `on-run-start` hook scans the project graph for MLV models. If any are found, it validates:
+MLV prerequisites are validated eagerly at connection open time (after Spark version detection). The adapter checks:
 
 1. **Not running in local/Docker mode** — MLV requires Fabric Runtime
 2. **Spark version ≥ 3.5** — checked via `SELECT split(version(), ' ')[0]`
 3. **Schema-enabled lakehouse** — detected automatically on connection open
 
-If validation fails, the entire run is aborted with a clear error before any model executes.
+If any check fails, a warning is logged immediately and the error is cached. When an MLV model executes, it reads the cached error and fails instantly with a clear message — no wasted time running models that cannot succeed. Non-MLV projects are completely unaffected.
 
 ---
 

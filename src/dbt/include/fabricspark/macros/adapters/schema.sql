@@ -46,6 +46,12 @@
   {{ return(adapter.dispatch('ensure_database_exists', 'dbt')(schema_name, database=database)) }}
 {% endmacro %}
 
+{% macro drop_materialized_lake_view(relation) %}
+  {% call statement('drop_mlv') -%}
+    drop materialized lake view if exists {{ relation }}
+  {%- endcall %}
+{% endmacro %}
+
 {% macro fabricspark__list_schemas(database) -%}
   {% call statement('list_schemas', fetch_result=True, auto_begin=False) %}
     show databases

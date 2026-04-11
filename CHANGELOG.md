@@ -1,5 +1,135 @@
 # Changelog
 
+## v1.9.5
+
+### Materialized Lake View Support
+
+#### New materialization: `materialized_lake_view`
+
+dbt-fabricspark now supports [Materialized Lake Views](https://learn.microsoft.com/en-us/fabric/data-engineering/materialized-lake-views/materialized-lake-views) as a first-class materialization. MLVs are precomputed, incrementally-maintained views in Fabric lakehouses that accelerate queries over Delta tables without manual refresh pipelines.
+
+**Requirements:**
+- Fabric Runtime 1.3+ (Apache Spark ≥ 3.5)
+- Schema-enabled lakehouse
+
+**Model configuration:**
+
+```sql
+{{ config(
+    materialized='materialized_lake_view',
+    database='my_lakehouse',
+    schema='dbo',
+    mlv_on_demand=true,
+    mlv_schedule={
+        "enabled": true,
+        "configuration": {
+            "startDateTime": "2026-04-10T00:00:00",
+            "endDateTime": "2027-04-10T00:00:00",
+            "localTimeZoneId": "Central Standard Time",
+            "type": "Daily",
+            "times": ["06:00"]
+        }
+    },
+    mlv_comment='Customer summary refreshed daily',
+    partitioned_by=['region'],
+    mlv_constraints=[
+        {"name": "amount_positive", "expression": "amount > 0", "on_mismatch": "DROP"}
+    ],
+    tblproperties={"delta.autoOptimize.optimizeWrite": "true"}
+) }}
+
+select * from {{ ref('orders') }}
+```
+
+**Config options:**
+
+| Option | Type | Required | Description |
+|---|---|---|---|
+| `mlv_on_demand` | bool | At least one of `mlv_on_demand` or `mlv_schedule` | Trigger an immediate refresh after creation |
+| `mlv_schedule` | dict | At least one of `mlv_on_demand` or `mlv_schedule` | Schedule config for periodic refresh. Must include `endDateTime` |
+| `mlv_comment` | string | No | Description added to the view |
+| `partitioned_by` | list | No | Partition columns |
+| `mlv_constraints` | list | No | CHECK constraints with optional `on_mismatch` (DROP or FAIL) |
+| `tblproperties` | dict | No | Delta table properties |
+
+---
+
+#### Automatic Change Data Feed (CDF) enablement
+
+MLVs require Change Data Feed on all upstream Delta tables. The adapter automatically enables CDF on every source table before creating the view:
+
+```sql
+ALTER TABLE <source> SET TBLPROPERTIES (delta.enableChangeDataFeed = true)
+```
+
+This is always-on and not user-configurable.
+
+---
+
+#### On-demand refresh with job polling
+
+When `mlv_on_demand: true`, the adapter triggers an immediate refresh via the Fabric Job Scheduler API and polls until the job reaches a terminal status:
+
+1. `POST .../jobs/RefreshMaterializedLakeViews/instances` → 202 Accepted
+2. Extract job instance ID from `Location` header
+3. Poll `GET .../jobs/instances/{jobInstanceId}` using `poll_statement_wait` interval (default: 5s)
+4. Wait up to `statement_timeout` (default: 3600s)
+5. Return on `Completed`, raise `MLVApiError` on `Failed`, `Cancelled`, or `Deduped`
+
+Terminal statuses follow the Fabric `ItemJobStatus` enum: `NotStarted`, `InProgress`, `Completed`, `Failed`, `Cancelled`, `Deduped`.
+
+---
+
+#### Schedule management (create / update / delete)
+
+When `mlv_schedule` is provided, the adapter creates or updates a refresh schedule via the Fabric REST API. The operation is idempotent — if a schedule already exists, it is updated in place.
+
+Supported schedule types:
+- **Cron** — `interval` in minutes
+- **Daily** — list of `times` (e.g., `["06:00", "18:00"]`)
+- **Weekly** — `weekdays` and `times`
+
+The `endDateTime` field is mandatory in the schedule configuration. The adapter validates its presence before calling the API and raises a clear error if missing.
+
+---
+
+#### Automatic lakehouse ID resolution
+
+The adapter resolves the lakehouse name (from `database` config or `target.lakehouse`) to a lakehouse ID automatically via `GET /v1/workspaces/{workspaceId}/lakehouses`. Results are cached per workspace for the duration of the run. No manual `mlv_lakehouse_id` configuration is required.
+
+---
+
+#### Preflight validation (on-run-start hook)
+
+An `on-run-start` hook scans the project graph for MLV models. If any are found, it validates:
+
+1. **Not running in local/Docker mode** — MLV requires Fabric Runtime
+2. **Spark version ≥ 3.5** — checked via `SELECT split(version(), ' ')[0]`
+3. **Schema-enabled lakehouse** — detected automatically on connection open
+
+If validation fails, the entire run is aborted with a clear error before any model executes.
+
+---
+
+#### Delta source validation
+
+At model execution time (before `CREATE OR REPLACE`), the adapter checks that all upstream tables referenced by the MLV are Delta format. Non-Delta sources (e.g., views, CSV tables) cause an immediate model failure with a descriptive error.
+
+---
+
+#### REST API error handling with retries
+
+All Fabric REST API calls use automatic retries with exponential backoff:
+
+- **3 attempts** per operation
+- **Exponential backoff:** 2s, 4s, 8s between retries
+- **Retryable:** HTTP 429, 500, 502, 503, 504, connection errors, timeouts
+- **Non-retryable:** HTTP 4xx client errors (except 429)
+
+Errors surface as `MLVApiError` (extends `DbtRuntimeError`) with the operation name, HTTP status, and parsed Fabric error details. Failed API calls always fail the model.
+
+---
+
 ## v1.9.3
 
 ### Session Lifecycle & Stability

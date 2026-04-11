@@ -214,6 +214,10 @@ class FabricSparkConnectionManager(SQLConnectionManager):
 
         connection.handle = handle
         connection.state = ConnectionState.OPEN
+
+        # Cache the Spark version for downstream checks (e.g. MLV runtime requirement).
+        cls.fetch_spark_version(connection)
+
         return connection
 
     @classmethod
@@ -263,7 +267,7 @@ class FabricSparkConnectionManager(SQLConnectionManager):
             return FabricSparkConnectionManager.spark_version
 
         try:
-            sql = "split(version(), ' ')[0] as version"
+            sql = "SELECT split(version(), ' ')[0] as version"
             cursor = connection.handle.cursor()
             cursor.execute(sql)
             res = cursor.fetchall()

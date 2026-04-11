@@ -3,3 +3,6 @@ version: 1.0
 config-version: 2
 
 macro-paths: ["macros"]
+
+on-run-start:
+  - "{{ fabricspark_mlv_preflight_check() }}"

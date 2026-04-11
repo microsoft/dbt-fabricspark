@@ -34,6 +34,8 @@ from dbt.adapters.contracts.relation import RelationConfig, RelationType
 from dbt.adapters.events.logging import AdapterLogger
 from dbt.adapters.fabricspark import FabricSparkColumn, FabricSparkConnectionManager
 from dbt.adapters.fabricspark.relation import FabricSparkRelation
+from dbt.adapters.fabricspark import mlv_api
+from dbt.adapters.fabricspark.mlv_api import MLVApiError
 from dbt.adapters.sql import SQLAdapter
 
 logger = AdapterLogger("fabricspark")
@@ -131,6 +133,162 @@ class FabricSparkAdapter(SQLAdapter):
         except Exception:
             return False
 
+    @available
+    def mlv_run_on_demand(self, lakehouse_id: Optional[str] = None) -> Dict[str, Any]:
+        """Trigger an on-demand MLV lineage refresh via the Fabric REST API.
+
+        Exposed to macros as ``adapter.mlv_run_on_demand()``.
+        Raises ``MLVApiError`` (a ``DbtRuntimeError``) on failure, which
+        causes the model to fail.
+        """
+        conn = self.connections.get_thread_connection()
+        return mlv_api.run_on_demand_refresh(conn.credentials, lakehouse_id)
+
+    @available
+    def mlv_create_or_update_schedule(
+        self, schedule_config: Dict[str, Any], lakehouse_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Create or update an MLV refresh schedule via the Fabric REST API.
+
+        Exposed to macros as ``adapter.mlv_create_or_update_schedule(schedule_config)``.
+        Raises ``MLVApiError`` (a ``DbtRuntimeError``) on failure, which
+        causes the model to fail.
+        """
+        conn = self.connections.get_thread_connection()
+        return mlv_api.create_or_update_schedule(conn.credentials, schedule_config, lakehouse_id)
+
+    @available
+    def mlv_resolve_lakehouse_id(self, lakehouse_name: str) -> str:
+        """Resolve a lakehouse name to its ID within the workspace.
+
+        Exposed to macros as ``adapter.mlv_resolve_lakehouse_id(lakehouse_name)``.
+        Uses the Fabric REST API with caching to avoid repeated calls.
+        Raises ``MLVApiError`` if the lakehouse is not found.
+        """
+        conn = self.connections.get_thread_connection()
+        return mlv_api.resolve_lakehouse_id(conn.credentials, lakehouse_name)
+
+    # Minimum Apache Spark version required for Materialized Lake Views.
+    # Fabric Runtime 1.3 ships with Spark 3.5.
+    MLV_MIN_SPARK_VERSION = "3.5"
+
+    @available
+    def mlv_validate_prerequisites(self) -> None:
+        """Validate runtime prerequisites for Materialized Lake View models.
+
+        Checks:
+        1. Not running in local mode (MLV requires Fabric runtime).
+        2. Fabric Runtime version is 1.3+ (Spark >= 3.5).
+        3. Schema-enabled lakehouse is required.
+
+        Raises ``DbtRuntimeError`` if any check fails.
+        """
+        # 1. Local mode check
+        if self.is_local_mode():
+            raise DbtRuntimeError(
+                "Materialized Lake Views require Fabric Runtime 1.3+. "
+                "Local mode (Docker Spark) does not support MLV."
+            )
+
+        # 2. Fabric Runtime / Spark version check
+        spark_version = FabricSparkConnectionManager.spark_version
+        if spark_version:
+            try:
+                major_minor = ".".join(spark_version.split(".")[:2])
+                if tuple(int(x) for x in major_minor.split(".")) < tuple(
+                    int(x) for x in self.MLV_MIN_SPARK_VERSION.split(".")
+                ):
+                    raise DbtRuntimeError(
+                        f"Materialized Lake Views require Fabric Runtime 1.3+ "
+                        f"(Apache Spark >= {self.MLV_MIN_SPARK_VERSION}). "
+                        f"Detected Spark version: {spark_version}. "
+                        f"Please upgrade your Fabric Runtime."
+                    )
+            except DbtRuntimeError:
+                raise
+            except Exception:
+                logger.warning(
+                    f"Could not parse Spark version '{spark_version}' for MLV "
+                    f"compatibility check. Proceeding, but MLV may fail at runtime."
+                )
+        else:
+            logger.warning(
+                "Spark version not detected. Cannot verify Fabric Runtime 1.3+ "
+                "requirement for Materialized Lake Views. Proceeding anyway."
+            )
+
+        # 3. Schema-enabled lakehouse check
+        if not self.is_lakehouse_schemas_enabled():
+            try:
+                conn = self.connections.get_thread_connection()
+                schema = conn.credentials.schema
+                lakehouse = conn.credentials.lakehouse
+                if schema == lakehouse:
+                    raise DbtRuntimeError(
+                        "Materialized Lake Views require a schema-enabled lakehouse. "
+                        "The target lakehouse does not have schemas enabled. "
+                        "Enable schemas on the lakehouse or set target.schema "
+                        "to a schema name different from the lakehouse name."
+                    )
+            except DbtRuntimeError:
+                raise
+            except Exception:
+                raise DbtRuntimeError(
+                    "Materialized Lake Views require a schema-enabled lakehouse. "
+                    "Could not verify lakehouse schema support."
+                )
+
+    @available
+    def mlv_validate_delta_sources(self, upstream_relations: List[Dict[str, Any]]) -> None:
+        """Validate that all upstream source tables are Delta format.
+
+        Parameters
+        ----------
+        upstream_relations : list of dict
+            Each dict has keys ``database``, ``schema``, ``identifier`` for an
+            upstream table.
+
+        Raises ``DbtRuntimeError`` if any source is not a Delta table.
+        """
+        non_delta = []
+        for rel_info in upstream_relations:
+            try:
+                relation = self.Relation.create(
+                    database=rel_info.get("database"),
+                    schema=rel_info.get("schema"),
+                    identifier=rel_info["identifier"],
+                    type=RelationType.Table,
+                )
+                # Use list_relations to find the relation with metadata
+                relations = self.list_relations_without_caching(
+                    self.Relation.create(
+                        database=rel_info.get("database"),
+                        schema=rel_info.get("schema"),
+                        identifier=None,
+                        type=RelationType.Table,
+                    )
+                )
+                found = False
+                for r in relations:
+                    if r.identifier == rel_info["identifier"]:
+                        if hasattr(r, "is_delta") and not r.is_delta:
+                            non_delta.append(str(relation))
+                        found = True
+                        break
+                if not found:
+                    logger.warning(
+                        f"Could not verify Delta format for {relation} — table not found. "
+                        "Proceeding, but MLV creation may fail if the table is not Delta."
+                    )
+            except Exception as e:
+                logger.warning(f"Could not verify Delta format for {rel_info}: {e}")
+
+        if non_delta:
+            raise DbtRuntimeError(
+                "Materialized Lake Views require all source tables to be Delta format. "
+                f"The following tables are NOT Delta: {', '.join(non_delta)}"
+            )
+
     @classmethod
     def date_function(cls) -> str:
         return "current_timestamp()"
@@ -214,7 +372,11 @@ class FabricSparkAdapter(SQLAdapter):
             _schema, name, information = relation_info_func(row)
 
             rel_type: RelationType = (
-                RelationType.View if "Type: VIEW" in information else RelationType.Table
+                RelationType.MaterializedView
+                if "Type: MATERIALIZED_VIEW" in information
+                else RelationType.View
+                if "Type: VIEW" in information
+                else RelationType.Table
             )
             is_delta: bool = "Provider: delta" in information
             # Use database/schema from the input relation when available.

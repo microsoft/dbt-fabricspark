@@ -16,8 +16,8 @@ Run with:
 import os
 
 import pytest
-from dbt.tests.util import run_dbt
 
+from dbt.tests.util import run_dbt
 
 # ---------------------------------------------------------------------------
 # Skip guard — only run on schema-enabled lakehouses

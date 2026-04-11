@@ -32,10 +32,8 @@ from dbt.adapters.base.impl import ConstraintSupport, catch_as_completed
 from dbt.adapters.base.relation import InformationSchema
 from dbt.adapters.contracts.relation import RelationConfig, RelationType
 from dbt.adapters.events.logging import AdapterLogger
-from dbt.adapters.fabricspark import FabricSparkColumn, FabricSparkConnectionManager
+from dbt.adapters.fabricspark import FabricSparkColumn, FabricSparkConnectionManager, mlv_api
 from dbt.adapters.fabricspark.relation import FabricSparkRelation
-from dbt.adapters.fabricspark import mlv_api
-from dbt.adapters.fabricspark.mlv_api import MLVApiError
 from dbt.adapters.sql import SQLAdapter
 
 logger = AdapterLogger("fabricspark")

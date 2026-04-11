@@ -4,11 +4,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
-
 from dbt.adapters.fabricspark.mlv_api import (
     MAX_RETRIES,
     MLVApiError,
-    _TERMINAL_STATUSES,
     _lakehouse_id_cache,
     _base_url,
     _extract_error_detail,

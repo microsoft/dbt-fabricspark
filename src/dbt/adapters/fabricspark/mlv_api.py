@@ -14,8 +14,8 @@ import time
 from typing import Any, Dict, List, Optional
 
 import requests
-
 from dbt_common.exceptions import DbtRuntimeError
+
 from dbt.adapters.events.logging import AdapterLogger
 from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
 from dbt.adapters.fabricspark.livysession import get_headers
@@ -315,7 +315,6 @@ def run_on_demand_refresh(
     logger.info(f"On-demand MLV refresh triggered. Job instance URL: {location}")
 
     # Extract the job instance ID from the Location header
-    # Format: .../jobs/instances/{jobInstanceId}
     job_instance_id = location.rstrip("/").rsplit("/", 1)[-1] if location else ""
     if not job_instance_id:
         raise MLVApiError(

@@ -92,6 +92,7 @@ class FabricSparkConnectionManager(SQLConnectionManager):
 
     connection_managers = {}
     spark_version = None
+    mlv_prereq_error: Optional[str] = None
 
     @contextmanager
     def exception_handler(self, sql: str) -> Generator[None, None, None]:
@@ -214,6 +215,14 @@ class FabricSparkConnectionManager(SQLConnectionManager):
 
         connection.handle = handle
         connection.state = ConnectionState.OPEN
+
+        # Cache the Spark version for downstream checks (e.g. MLV runtime requirement).
+        cls.fetch_spark_version(connection)
+
+        # Eagerly validate MLV prerequisites and cache the result.
+        # Logs a warning immediately so it's visible before any model runs.
+        cls.check_mlv_prerequisites(connection)
+
         return connection
 
     @classmethod
@@ -263,7 +272,7 @@ class FabricSparkConnectionManager(SQLConnectionManager):
             return FabricSparkConnectionManager.spark_version
 
         try:
-            sql = "split(version(), ' ')[0] as version"
+            sql = "SELECT split(version(), ' ')[0] as version"
             cursor = connection.handle.cursor()
             cursor.execute(sql)
             res = cursor.fetchall()
@@ -276,6 +285,62 @@ class FabricSparkConnectionManager(SQLConnectionManager):
 
         os.environ["DBT_SPARK_VERSION"] = FabricSparkConnectionManager.spark_version
         logger.debug(f"SPARK VERSION {os.getenv('DBT_SPARK_VERSION')}")
+
+    MLV_MIN_SPARK_VERSION = "3.5"
+
+    @classmethod
+    def check_mlv_prerequisites(cls, connection) -> None:
+        """Validate MLV prerequisites at connection open time and cache the result.
+
+        If prerequisites are not met, stores the error message in
+        ``cls.mlv_prereq_error`` and logs a warning. Does NOT raise —
+        non-MLV models should not be affected. The MLV materialization
+        reads the cached error and fails instantly.
+        """
+        creds = connection.credentials
+
+        # 1. Local mode
+        if creds.is_local_mode:
+            cls.mlv_prereq_error = (
+                "Materialized Lake Views require Fabric Runtime 1.3+. "
+                "Local mode (Docker Spark) does not support MLV."
+            )
+            logger.warning(f"MLV prerequisite not met: {cls.mlv_prereq_error}")
+            return
+
+        # 2. Spark version
+        spark_version = cls.spark_version or ""
+        if spark_version:
+            try:
+                major_minor = ".".join(spark_version.split(".")[:2])
+                if tuple(int(x) for x in major_minor.split(".")) < tuple(
+                    int(x) for x in cls.MLV_MIN_SPARK_VERSION.split(".")
+                ):
+                    cls.mlv_prereq_error = (
+                        f"Materialized Lake Views require Fabric Runtime 1.3+ "
+                        f"(Apache Spark >= {cls.MLV_MIN_SPARK_VERSION}). "
+                        f"Detected Spark version: {spark_version}."
+                    )
+                    logger.warning(f"MLV prerequisite not met: {cls.mlv_prereq_error}")
+                    return
+            except Exception:
+                logger.warning(
+                    f"Could not parse Spark version '{spark_version}' for MLV check. "
+                    f"MLV models may fail at runtime."
+                )
+
+        # 3. Schema-enabled lakehouse
+        if not creds.lakehouse_schemas_enabled:
+            cls.mlv_prereq_error = (
+                "Materialized Lake Views require a schema-enabled lakehouse. "
+                "The target lakehouse does not have schemas enabled."
+            )
+            logger.warning(f"MLV prerequisite not met: {cls.mlv_prereq_error}")
+            return
+
+        # All checks passed
+        cls.mlv_prereq_error = None
+        logger.debug("MLV prerequisites validated successfully at connection open.")
 
     def add_query(
         self,

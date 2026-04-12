@@ -47,7 +47,7 @@ class FabricSparkCredentials(Credentials):
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
     tenant_id: Optional[str] = None
-    authentication: str = "az_cli"
+    authentication: str = "CLI"
     connect_retries: int = 1
     connect_timeout: int = 10
     create_shortcuts: Optional[bool] = False

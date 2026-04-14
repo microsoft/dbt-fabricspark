@@ -48,7 +48,7 @@
    source ~/.bashrc
    ```
 
-5. Dev loop:
+5. Dev loop (`TODO` get rid of this and replace with run.sh):
 
    ```bash
    # Build wheel

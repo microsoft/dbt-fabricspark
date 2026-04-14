@@ -8,7 +8,7 @@
 #
 # ---------------------------------------------------------------------------------------
 #
-set -e
+set -euo pipefail
 
 export REPO_ROOT=$(git rev-parse --show-toplevel)
 export DEBIAN_FRONTEND=noninteractive

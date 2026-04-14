@@ -22,7 +22,7 @@
 
    read -p "Enter your name (e.g. 'FirstName LastName'): " user_name
    read -p "Enter your email (e.g. 'your-alias@foo.com'): " user_email
-   read -p "Enter your git fork (e.g. 'https://github.com/<your-git-alias>/dbt-fabricspark.git'): " git_fork_url
+   read -p "Enter your git fork (e.g. 'https://github.com/microsoft/dbt-fabricspark.git'): " git_fork_url
    read -p "Enter the existing branch to switch to: (e.g. 'main'): " branch_name
    
    git config --global user.name "$user_name"

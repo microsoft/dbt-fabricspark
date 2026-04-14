@@ -20,9 +20,15 @@
    ```bash
    cd ~/
 
-   git config --global user.name "Raki Rahman"
-   git config --global user.email "mdrakiburrahman@gmail.com"
-   git clone https://github.com/mdrakiburrahman/dbt-fabricspark.git
+   read -p "Enter your name (e.g. 'FirstName LastName'): " user_name
+   read -p "Enter your email (e.g. 'your-alias@foo.com'): " user_email
+   read -p "Enter your git fork (e.g. 'https://github.com/<your-git-alias>/dbt-fabricspark.git'): " git_fork_url
+   read -p "Enter the existing branch to switch to: (e.g. 'main'): " branch_name
+   
+   git config --global user.name "$user_name"
+   git config --global user.email "$user_email"
+   git clone "$git_fork_url"
+   git checkout "$branch_name"
 
    cd dbt-fabricspark/
    code .
@@ -41,7 +47,6 @@
    source ~/.bashrc
    ```
 
-
 5. Dev loop:
 
    ```bash
@@ -51,8 +56,4 @@
 
    # Run unit tests
    uv run pytest -v
-   
-   # Upload to storage, and install wheel on client machine
-   pip uninstall -y dbt-fabricspark 2>/dev/null
-   pip install https://rakirahman.blob.core.windows.net/public/whls/dbt_fabricspark-1.9.1-py3-none-any.whl
    ```

@@ -18,7 +18,7 @@
 2. Clone the repo, and open VSCode in it:
 
    ```bash
-   cd ~/
+   sudo mkdir -p /workspaces && sudo chmod 777 /workspaces && cd /workspaces
 
    read -p "Enter your name (e.g. 'FirstName LastName'): " user_name
    read -p "Enter your email (e.g. 'your-alias@foo.com'): " user_email
@@ -29,7 +29,7 @@
    git config --global user.email "$user_email"
    git clone "$git_fork_url"
 
-   cd dbt-fabricspark/
+   cd /workspaces/dbt-fabricspark
    git checkout "$branch_name"
 
    code .

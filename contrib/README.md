@@ -58,7 +58,7 @@
 1. Login to github and ensure to authorize `Microsoft` if you're an employee:
 
    ```bash
-   gh auth refresh -s admin:org
+   gh auth login
    ```
 
 1. Dev loop (`TODO` get rid of this and replace with run.sh):

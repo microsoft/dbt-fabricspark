@@ -28,9 +28,10 @@
    git config --global user.name "$user_name"
    git config --global user.email "$user_email"
    git clone "$git_fork_url"
-   git checkout "$branch_name"
 
    cd dbt-fabricspark/
+   git checkout "$branch_name"
+
    code .
    ```
 

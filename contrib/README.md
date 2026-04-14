@@ -15,7 +15,7 @@
    & "$GIT_ROOT\contrib\bootstrap-dev-env.ps1"
    ```
 
-2. Clone the repo, and open VSCode in it:
+1. Clone the repo, and open VSCode in it:
 
    ```bash
    sudo mkdir -p /workspaces && sudo chmod 777 /workspaces && cd /workspaces
@@ -35,26 +35,33 @@
    code .
    ```
 
-3. Run the bootstrapper script, that installs all tools idempotently:
+1. Run the bootstrapper script, that installs all tools idempotently:
 
    ```bash
    GIT_ROOT=$(git rev-parse --show-toplevel)
    chmod +x ${GIT_ROOT}/contrib/bootstrap-dev-env.sh && ${GIT_ROOT}/contrib/bootstrap-dev-env.sh
    ```
 
-4. Source the path to apply environment changes:
+1. Source the path to apply environment changes:
 
    ```bash
    source ~/.bashrc
    ```
 
-5. Login to github and ensure to authorize `Microsoft` if you're an employee:
+1. Install copilot etc:
+
+  ```bash
+  curl -fsSL https://gh.io/copilot-install | bash
+  $HOME/.local/bin/copilot -i /login
+  ```
+
+1. Login to github and ensure to authorize `Microsoft` if you're an employee:
 
    ```bash
    gh auth refresh -s admin:org
    ```
 
-6. Dev loop (`TODO` get rid of this and replace with run.sh):
+1. Dev loop (`TODO` get rid of this and replace with run.sh):
 
    ```bash
    # Build wheel

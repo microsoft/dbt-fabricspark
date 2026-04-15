@@ -24,7 +24,7 @@ select
     {{ dbt_utils.generate_surrogate_key(['stg_salesorderdetail.salesorderid', 'salesorderdetailid']) }} as sales_key,
     {{ dbt_utils.generate_surrogate_key(['productid']) }} as product_key,
     {{ dbt_utils.generate_surrogate_key(['customerid']) }} as customer_key,
-    {{ dbt_utils.generate_surrogate_key(['creditcardid']) }} as creditcard_key,
+    case when creditcardid is not null then {{ dbt_utils.generate_surrogate_key(['creditcardid']) }} else null end as creditcard_key,
     {{ dbt_utils.generate_surrogate_key(['shiptoaddressid']) }} as ship_address_key,
     {{ dbt_utils.generate_surrogate_key(['order_status']) }} as order_status_key,
     {{ dbt_utils.generate_surrogate_key(['orderdate']) }} as order_date_key,

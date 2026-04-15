@@ -500,10 +500,6 @@ class FabricSparkAdapter(SQLAdapter):
         used_schemas: FrozenSet[Tuple[str, str]],
     ) -> Tuple["agate.Table", List[Exception]]:
         schema_map = self._get_catalog_schemas(relation_configs)
-        if len(schema_map) > 1:
-            raise CompilationError(
-                f"Expected only one database in get_catalog, found " f"{list(schema_map)}"
-            )
 
         with executor(self.config) as tpe:
             futures: List[Future["agate.Table"]] = []

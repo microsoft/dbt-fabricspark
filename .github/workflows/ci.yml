@@ -12,7 +12,7 @@ env:
   FABRIC_API: "https://msitapi.fabric.microsoft.com/v1"
 
 jobs:
-  gci-linux:
+  linux:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     container:

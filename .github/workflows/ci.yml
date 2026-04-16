@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     container:
-      image: dbtfabric.azurecr.io/devcontainer/spark:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+      image: dbtfabric.azurecr.io/devcontainer/spark:a72458498c9d0f34359fbb92714c1f31d106b28a8147330406c35067e920c0a6
       options: >-
         --cap-add=SYS_ADMIN
         --device=/dev/fuse
@@ -43,19 +43,19 @@ jobs:
         run: /tmp/overlay/post-attach-commands.sh
 
       - name: "🧹 Clean Projects"
-        run: npx nx run-many -t clean --parallel=3 --output-style=stream
+        run: npx nx affected --base=origin/main -t clean --parallel=3 --output-style=stream --verbose
 
       - name: "🔧 Init Projects"
-        run: npx nx run-many -t init --parallel=3 --output-style=stream
+        run: npx nx affected --base=origin/main -t init --parallel=3 --output-style=stream --verbose
 
       - name: "📦 Build Projects"
-        run: npx nx run-many -t build --parallel=3 --configuration=ci --output-style=stream
+        run: npx nx affected --base=origin/main -t build --parallel=3 --configuration=ci --output-style=stream --verbose
 
       - name: "🧹 Lint Projects"
-        run: npx nx run-many -t lint --parallel=3 --configuration=ci --verbose --output-style=stream
+        run: npx nx affected --base=origin/main -t lint --parallel=3 --configuration=ci --verbose --output-style=stream --verbose
 
       - name: "🧪 Test Projects"
-        run: npx nx run-many -t test --configuration=ci --verbose --output-style=stream
+        run: npx nx affected --base=origin/main -t test --configuration=ci --verbose --output-style=stream --verbose
 
       - name: "📁 Verify No Untracked Files"
         run: npx nx fail-on-untracked-files

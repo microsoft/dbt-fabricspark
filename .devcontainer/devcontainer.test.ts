@@ -1,16 +1,20 @@
 import { execSync } from 'child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { join, resolve } from 'path';
+import { load } from 'js-yaml';
 
-describe('Devcontainer Integration Tests', () => {
+const workspaceRoot = execSync('git rev-parse --show-toplevel').toString().trim();
+const devcontainerJsonPath = join(workspaceRoot, '.devcontainer', 'devcontainer.json');
+const ciWorkflowPath = join(workspaceRoot, '.github', 'workflows', 'ci.yml');
+
+const devcontainerConfig = JSON.parse(readFileSync(devcontainerJsonPath, 'utf-8'));
+const devcontainerImage: string = devcontainerConfig.image;
+if (!devcontainerImage) throw new Error('Could not read image from devcontainer.json');
+
+describe('Devcontainer Tests', () => {
   const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').split('.')[0];
-  const workspaceRoot = execSync('git rev-parse --show-toplevel').toString().trim();
-  const devcontainerJson = join(workspaceRoot, '.devcontainer', 'devcontainer.json');
-  const devcontainerImage = readFileSync(devcontainerJson, 'utf8').match(/"image":\s*"([^"]+)"/)?.[1];
   const logDir = join(workspaceRoot, 'logs', 'test-runs', timestamp);
   let containerId: string;
-
-  if (!devcontainerImage) throw new Error('Could not read image from devcontainer.json');
 
   beforeAll(() => {
     mkdirSync(logDir, { recursive: true });
@@ -42,6 +46,13 @@ describe('Devcontainer Integration Tests', () => {
     const status = execSync('docker inspect spark-devcontainer-test --format="{{.State.Status}}"', { encoding: 'utf8' }).trim();
     expect(status).toBe('running');
     expect(containerId).toBeTruthy();
+  });
+
+  test('devcontainer.json and ci.yml use the same container image', () => {
+    const ciWorkflow = load(readFileSync(ciWorkflowPath, 'utf-8')) as any;
+    const ciImage = ciWorkflow.jobs.linux.container.image;
+    expect(ciImage).toBeDefined();
+    expect(devcontainerImage).toBe(ciImage);
   });
 
   test('Verify base image tools', () => {

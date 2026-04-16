@@ -1,56 +1,42 @@
 {
-  "name": "devcontainer",
-  "$schema": "../node_modules/nx/schemas/project-schema.json",
-  "targets": {
-    "tag": {
-      "executor": "nx:run-commands",
-      "options": {
-        "command": "tsx ./.devcontainer/scripts/compute-devcontainer-hash.ts"
+   "name":"devcontainer",
+   "$schema":"../node_modules/nx/schemas/project-schema.json",
+   "targets":{
+      "publish":{
+         "executor":"nx:run-commands",
+         "options":{
+            "commands":[
+               "tsx ./.devcontainer/scripts/compute-devcontainer-hash.ts",
+               "tsx ./.devcontainer/scripts/build-devcontainer.ts",
+               "tsx ./.devcontainer/scripts/push-devcontainer.ts"
+            ],
+            "files":[
+               "{workspaceRoot}/.devcontainer/**/*"
+            ],
+            "exclude":[
+               "{workspaceRoot}/.devcontainer/.devcontainer-hash.txt",
+               "{workspaceRoot}/.devcontainer/.env",
+               "{workspaceRoot}/.devcontainer/scripts/**/*"
+            ],
+            "outputs":[
+               "{workspaceRoot}/.devcontainer/.devcontainer-hash.txt"
+            ],
+            "parallel":false
+         },
+         "inputs":[
+            "{workspaceRoot}/.devcontainer/.devcontainer-hash.txt"
+         ]
       },
-      "files": ["{workspaceRoot}/.devcontainer/**/*"],
-      "exclude": [
-        "{workspaceRoot}/.devcontainer/.devcontainer-hash.txt",
-        "{workspaceRoot}/.devcontainer/.env",
-        "{workspaceRoot}/.devcontainer/scripts/**/*"
-      ],
-      "outputs": ["{workspaceRoot}/.devcontainer/.devcontainer-hash.txt"]
-    },
-    "build": {
-      "executor": "nx:run-commands",
-      "options": {
-        "commands": [
-          {
-            "command": "tsx ./.devcontainer/scripts/build-devcontainer.ts",
-            "forwardAllArgs": false
-          }
-        ]
-      },
-      "inputs": ["{workspaceRoot}/.devcontainer/.devcontainer-hash.txt"],
-      "dependsOn": ["tag"]
-    },
-    "publish": {
-      "executor": "nx:run-commands",
-      "options": {
-        "commands": [
-          {
-            "command": "tsx ./.devcontainer/scripts/push-devcontainer.ts",
-            "forwardAllArgs": false
-          }
-        ]
-      },
-      "inputs": ["{workspaceRoot}/.devcontainer/.devcontainer-hash.txt"],
-      "dependsOn": ["build"]
-    },
-    "test": {
-      "executor": "nx:run-commands",
-      "options": {
-        "commands": [
-          {
-            "command": "jest --config jest.config.ts --runInBand",
-            "forwardAllArgs": false
-          }
-        ]
+      "test":{
+         "executor":"nx:run-commands",
+         "options":{
+            "commands":[
+               {
+                  "command":"jest --config jest.config.ts --runInBand",
+                  "forwardAllArgs":false
+               }
+            ]
+         }
       }
-    }
-  }
+   }
 }

@@ -13,7 +13,7 @@ name: Adapter Integration Tests
 on:
   pull_request:
     branches:
-      - "main"
+      - "do-not-merge"
 
 # Cancel in-progress runs for the same PR / branch
 concurrency:

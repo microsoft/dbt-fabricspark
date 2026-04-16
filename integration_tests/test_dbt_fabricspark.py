@@ -69,7 +69,9 @@ def _run_dbt(
     env = {
         **os.environ,
         "DBT_PROFILES_DIR": project_dir,
-        "PYTHONPATH": os.pathsep.join(filter(None, [_ADAPTER_ROOT, os.environ.get("PYTHONPATH", "")])),
+        "PYTHONPATH": os.pathsep.join(
+            filter(None, [_ADAPTER_ROOT, os.environ.get("PYTHONPATH", "")])
+        ),
     }
 
     result = subprocess.run(
@@ -99,8 +101,9 @@ class TestDbtFabricSparkIntegration:
     """End-to-end integration tests for dbt-fabricspark with adventureworks.
 
     Tests run in declaration order and form a single lifecycle.
-    The main test is ``dbt build --full-refresh`` which seeds, runs models,
-    and executes data tests in dependency order.
+    Seeds are loaded first, then models are built and data tests are
+    executed.  Seeds run in a separate step because dbt's DAG does not
+    create implicit edges from source-level tests to seed nodes.
     """
 
     def test_01_dbt_debug(self, docker_spark_livy, dbt_project_dir):
@@ -115,14 +118,29 @@ class TestDbtFabricSparkIntegration:
 
     def test_03_dbt_build_full_refresh(self, docker_spark_livy, dbt_project_dir):
         """
-        Full lifecycle via ``dbt build --full-refresh``.
+        Full lifecycle: seed first, then build models + tests.
 
-        Seeds data, builds all models, and runs all data tests in a single
-        invocation with correct dependency ordering.
+        Seeds are run separately because ``dbt build`` does not create
+        implicit DAG edges from source-level tests to the seed nodes
+        that populate those sources.  Running seeds first guarantees the
+        tables exist before any relationship tests execute.
         """
-        result = _run_dbt(
+        # 1. Load seed data so source tables exist
+        seed_result = _run_dbt(
             dbt_project_dir,
-            ["build", "--target", "local-local", "--full-refresh"],
+            ["seed", "--target", "local-local", "--full-refresh"],
             timeout=1800,
         )
-        assert result.returncode == 0, f"dbt build --full-refresh failed:\n{result.stdout}\n{result.stderr}"
+        assert seed_result.returncode == 0, (
+            f"dbt seed --full-refresh failed:\n{seed_result.stdout}\n{seed_result.stderr}"
+        )
+
+        # 2. Build models and run tests (seeds already in place)
+        build_result = _run_dbt(
+            dbt_project_dir,
+            ["build", "--target", "local-local", "--exclude", "resource_type:seed"],
+            timeout=1800,
+        )
+        assert build_result.returncode == 0, (
+            f"dbt build --exclude resource_type:seed failed:\n{build_result.stdout}\n{build_result.stderr}"
+        )

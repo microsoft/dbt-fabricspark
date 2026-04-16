@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 #
-#       Sets up a dev env with all pre-reqs. 
+#       Sets up a Ubuntu Linux machine with all dev/test pre-reqs. 
 #
 #       This script is idempotent, it will only attempt to install 
 #       dependencies if not exists.
@@ -34,10 +34,6 @@ if [[ -z "$AZ_PATH" || "$AZ_PATH" == *"/mnt/c"* ]]; then
 else
   echo "Native Linux Azure CLI already installed at: $AZ_PATH"
 fi
-if ! az account get-access-token --query "expiresOn" -o tsv >/dev/null 2>&1; then
-    echo "az is not logged in, logging in..."
-    az login >/dev/null
-fi
 
 if ! [ -x "$(command -v docker)" ]; then
   echo "docker is not installed on your devbox, installing..."
@@ -66,6 +62,8 @@ source "$REPO_ROOT/.venv/bin/activate"
 uv pip install -e . --group dev
 [ ! -f "$REPO_ROOT/test.env" ] && cp "$REPO_ROOT/test.env.example" "$REPO_ROOT/test.env"
 
-code --install-extension donjayamanne.python-extension-pack
-
-echo "Done. Python: $(python --version), uv: $(uv --version), az: $(az version -o tsv 2>/dev/null | head -1), docker: $(docker --version)"
+echo "  Python: $(python --version)"
+echo "  uv:     $(uv --version)"
+echo "  az:     $(az version -o tsv 2>/dev/null | head -1)"
+echo "  docker: $(docker --version)"
+echo "Done."

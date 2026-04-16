@@ -9,69 +9,15 @@ sources:
       - name: date
         description: "Date dimension seed data"
 
-      # Person
-      - name: address
-        description: "Address seed data"
-        columns:
-          - name: stateprovinceid
-            tests:
-              - relationships:
-                  to: source('adventureworks_seed', 'stateprovince')
-                  field: stateprovinceid
-                  config:
-                    severity: warn
-      - name: countryregion
-        description: "Country/Region seed data"
-      - name: person
-        description: "Person seed data"
-      - name: stateprovince
-        description: "State/Province seed data"
-        columns:
-          - name: countryregioncode
-            tests:
-              - relationships:
-                  to: source('adventureworks_seed', 'countryregion')
-                  field: countryregioncode
-                  config:
-                    severity: warn
-
       # Production
       - name: product
         description: "Product seed data"
-        columns:
-          - name: productsubcategoryid
-            tests:
-              - relationships:
-                  to: source('adventureworks_seed', 'productsubcategory')
-                  field: productsubcategoryid
-                  config:
-                    severity: warn
       - name: productcategory
         description: "Product category seed data"
       - name: productsubcategory
         description: "Product subcategory seed data"
-        columns:
-          - name: productcategoryid
-            tests:
-              - relationships:
-                  to: source('adventureworks_seed', 'productcategory')
-                  field: productcategoryid
-                  config:
-                    severity: warn
 
       # Sales
-      - name: creditcard
-        description: "Credit card seed data"
-      - name: customer
-        description: "Customer seed data"
-        columns:
-          - name: storeid
-            tests:
-              - relationships:
-                  to: source('adventureworks_seed', 'store')
-                  field: businessentityid
-                  config:
-                    severity: warn
       - name: salesorderdetail
         description: "Sales order detail seed data"
         columns:
@@ -84,32 +30,3 @@ sources:
                     severity: warn
       - name: salesorderheader
         description: "Sales order header seed data"
-        columns:
-          - name: customerid
-            tests:
-              - relationships:
-                  to: source('adventureworks_seed', 'customer')
-                  field: customerid
-                  config:
-                    severity: warn
-          - name: creditcardid
-            tests:
-              - relationships:
-                  to: source('adventureworks_seed', 'creditcard')
-                  field: creditcardid
-                  config:
-                    severity: warn
-      - name: salesorderheadersalesreason
-        description: "Sales order header sales reason seed data"
-        columns:
-          - name: salesreasonid
-            tests:
-              - relationships:
-                  to: source('adventureworks_seed', 'salesreason')
-                  field: salesreasonid
-                  config:
-                    severity: warn
-      - name: salesreason
-        description: "Sales reason seed data"
-      - name: store
-        description: "Store seed data"

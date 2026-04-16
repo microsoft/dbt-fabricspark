@@ -48,11 +48,13 @@
    source ~/.bashrc
    ```
 
-1. Install copilot etc:
+1. Install recommended developer tooling (optional):
 
   ```bash
   curl -fsSL https://gh.io/copilot-install | bash
   $HOME/.local/bin/copilot -i /login
+  
+  code --install-extension donjayamanne.python-extension-pack
   ```
 
 1. Login to github and ensure to authorize `Microsoft` if you're an employee:

@@ -4,7 +4,7 @@
 #
 # Usage: .scripts/run.sh <target>
 #
-# Targets: venv | build | fix | lint | unit-test | seed-ci | integration-test | e2e | all
+# Targets: venv | build | fix | lint | unit-test | integration-test | e2e | all
 #
 # Each target is idempotent — auto-creates the venv if missing.
 # Set SPARK_SKIP_DOCKER=1 / LIVY_URL to control Docker behavior.
@@ -17,7 +17,6 @@ VENV_DIR="${PROJECT_DIR}/.venv"
 DOCKER_COMPOSE_FILE="${PROJECT_DIR}/integration_tests/docker-compose.yml"
 DOCKER_PROJECT="fabricspark-dbt-test"
 DBT_PROJECT="${PROJECT_DIR}/integration_tests/dbt-adventureworks"
-SEED_MANIFEST="ci_seeds.yaml"
 export DBT_THREADS="${DBT_THREADS:-$(nproc)}"
 
 declare -A TARGETS=(
@@ -26,12 +25,11 @@ declare -A TARGETS=(
     ["fix"]="ruff auto-fix + format"
     ["lint"]="ruff check + format"
     ["unit-test"]="pytest unit tests"
-    ["seed-ci"]="Download seed data from GitHub Gist"
     ["integration-test"]="pytest integration with Spark+Livy in Docker"
     ["e2e"]="dbt CLI end-to-end with Spark+Livy in Docker"
     ["all"]="Run all targets in sequence"
 )
-TARGET_ORDER=("venv" "build" "fix" "lint" "unit-test" "seed-ci" "integration-test" "e2e")
+TARGET_ORDER=("venv" "build" "fix" "lint" "unit-test" "integration-test" "e2e")
 
 print_usage() {
     echo
@@ -190,18 +188,9 @@ run_fix()              { ensure_venv; cd "${PROJECT_DIR}"; uv run ruff check --f
 run_lint()             { ensure_venv; cd "${PROJECT_DIR}"; uv run ruff check src/ tests/; uv run ruff format --check src/ tests/; }
 run_unit_test()        { ensure_venv; cd "${PROJECT_DIR}"; uv run pytest tests/unit -vv; }
 
-run_seed_ci() {
-    ensure_venv
-    cd "${PROJECT_DIR}"
-    echo "Downloading seed data from GitHub Gist..."
-    uv run python integration_tests/scripts/download_seeds.py --manifest "$SEED_MANIFEST" "$DBT_PROJECT"
-}
-
 run_integration_test() {
     ensure_venv
     cd "${PROJECT_DIR}"
-
-    run_seed_ci
 
     local skip_docker="${SPARK_SKIP_DOCKER:-}"
 
@@ -231,7 +220,6 @@ run_integration_test() {
 run_e2e() {
     ensure_venv
     cd "${PROJECT_DIR}"
-    run_seed_ci
     SPARK_SKIP_DOCKER="${SPARK_SKIP_DOCKER:-}" bash integration_tests/scripts/run-dbt-local.sh
 }
 
@@ -244,7 +232,7 @@ echo "=== dbt-fabricspark: ${TARGET} ==="
 case "$TARGET" in
     "all")
         # Non-Docker targets first
-        for t in "venv" "build" "fix" "lint" "unit-test" "seed-ci"; do
+        for t in "venv" "build" "fix" "lint" "unit-test"; do
             echo ""; echo "── ${t} ──"
             "run_${t//-/_}"
         done

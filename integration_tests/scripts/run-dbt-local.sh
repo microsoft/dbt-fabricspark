@@ -2,7 +2,7 @@
 #
 # End-to-end dbt CLI lifecycle test for dbt-fabricspark.
 #
-# Downloads seeds, starts Spark+Livy via Docker Compose (unless SPARK_SKIP_DOCKER=1),
+# Starts Spark+Livy via Docker Compose (unless SPARK_SKIP_DOCKER=1),
 # builds the adapter wheel, creates a temporary venv, installs everything, and runs
 # the full dbt lifecycle: debug → deps → seed → run → test → docs generate.
 #
@@ -15,7 +15,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INTEGRATION_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PROJECT_DIR="$(cd "${INTEGRATION_DIR}/.." && pwd)"
 DBT_PROJECT="${INTEGRATION_DIR}/dbt-adventureworks"
-SEED_MANIFEST="ci_seeds.yaml"
 DOCKER_COMPOSE_FILE="${INTEGRATION_DIR}/docker-compose.yml"
 DOCKER_PROJECT="fabricspark-dbt-test"
 LIVY_URL="${LIVY_URL:-http://localhost:8998}"
@@ -59,11 +58,7 @@ trap cleanup EXIT
 
 echo "=== dbt-fabricspark e2e test ==="
 
-# 1. Download seeds
-echo ""; echo "── Downloading seed data ──"
-python "${SCRIPT_DIR}/download_seeds.py" --manifest "$SEED_MANIFEST" "$DBT_PROJECT"
-
-# 2. Start Docker Compose (if not skipped)
+# 1. Start Docker Compose (if not skipped)
 if [[ -z "$SKIP_DOCKER" ]]; then
     echo ""; echo "── Starting Spark+Livy via Docker Compose ──"
     nuke_docker
@@ -82,7 +77,7 @@ if [[ -z "$SKIP_DOCKER" ]]; then
     done
 fi
 
-# 3. Build the wheel
+# 2. Build the wheel
 echo ""; echo "── Building adapter wheel ──"
 cd "$PROJECT_DIR"
 rm -rf dist/
@@ -90,7 +85,7 @@ uv build --wheel 2>&1 | tail -5
 WHEEL=$(ls dist/*.whl)
 echo "Built: ${WHEEL}"
 
-# 4. Create temp venv and install
+# 3. Create temp venv and install
 echo ""; echo "── Creating temp venv ──"
 E2E_VENV=$(mktemp -d)/e2e-venv
 uv venv "$E2E_VENV"
@@ -98,7 +93,7 @@ uv venv "$E2E_VENV"
 source "${E2E_VENV}/bin/activate"
 uv pip install "${WHEEL}" dbt-core
 
-# 5. Run dbt lifecycle
+# 4. Run dbt lifecycle
 echo ""; echo "── dbt debug ──"
 dbt debug --target local-local --profiles-dir "$DBT_PROJECT" --project-dir "$DBT_PROJECT"
 

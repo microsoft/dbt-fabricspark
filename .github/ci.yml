@@ -1,4 +1,4 @@
-name: Gated Check-In (GCI)
+name: Continuous Integration
 
 on:
   pull_request:

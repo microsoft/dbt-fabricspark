@@ -46,7 +46,7 @@ if grep -q "$ACR_URL" ~/.docker/config.json 2>/dev/null; then
     echo "$docker_password" | docker login "$ACR_URL" --username "$ACR_NAME" --password-stdin
 fi
 
-export PATH=$(echo $PATH | tr ':' '\n' | grep -v "/mnt/c/Program Files/nodejs" | grep -v "/mnt/c/ProgramData/global-npm" | tr '\n' ':' | sed 's/:$//')
+export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "/mnt/c" | tr '\n' ':' | sed 's/:$//')
 if ! [ -x "$(command -v npm)" ]; then
   echo "Installing Node.js and npm for WSL..."
   curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
@@ -54,6 +54,21 @@ if ! [ -x "$(command -v npm)" ]; then
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
 else
   echo "WSL npm is available."
+fi
+
+AZ_PATH=$(which az 2>/dev/null)
+if [[ -z "$AZ_PATH" || "$AZ_PATH" == *"/mnt/c"* ]]; then
+  echo "Native Linux Azure CLI not found, installing..."
+  curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+  export PATH="$HOME/bin:$PATH"
+  [[ -f "$HOME/.bashrc" ]] && source "$HOME/.bashrc"
+else
+  echo "Native Linux Azure CLI already installed at: $AZ_PATH"
+fi
+az account get-access-token --query "expiresOn" -o tsv >/dev/null 2>&1
+if [[ $? -ne 0 ]]; then
+    echo "az is not logged in, logging in..."
+    az login >/dev/null
 fi
 
 cd "$REPO_ROOT"

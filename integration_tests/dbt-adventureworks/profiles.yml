@@ -1,0 +1,19 @@
+adventureworks:
+  target: local-local
+  outputs:
+    # Local dbt client + Local Spark server (Docker Compose)
+    local-local:
+      authentication: cli
+      method: livy
+      livy_mode: local
+      livy_url: "{{ env_var('LIVY_URL', 'http://localhost:8998') }}"
+      session_id_file: /tmp/dbt-fabricspark-integration/livy-session-id.txt
+      connect_retries: 25
+      connect_timeout: 10
+      lakehouse: default
+      schema: default
+      threads: 1
+      type: fabricspark
+      retry_all: true
+      spark_config:
+        name: dbt-adventureworks-integration

@@ -1,0 +1,30 @@
+version: 2
+
+seeds:
+  - name: salesorderheader
+    description: contains sales data between 2011-01-01 to 2011-12-31.
+    config:
+      column_types:
+        salesorderid: integer
+        shipmethodid: integer
+        billtoaddressid: integer
+        modifieddate: timestamp
+        rowguid: string
+        taxamt: decimal
+        shiptoaddressid: integer
+        onlineorderflag: boolean
+        territoryid: integer
+        status: short
+        orderdate: timestamp
+        creditcardapprovalcode: string
+        subtotal: decimal
+        creditcardid: integer
+        currencyrateid: integer
+        revisionnumber: short
+        freight: decimal
+        duedate: timestamp
+        totaldue: decimal
+        customerid: integer
+        salespersonid: integer
+        shipdate: timestamp
+        accountnumber: string

@@ -1,0 +1,15 @@
+version: 2
+
+seeds:
+  - name: address
+    config:
+      column_types:
+        addressid: integer
+        stateprovinceid: integer
+        city: string
+        addressline2: string
+        modifieddate: timestamp
+        rowguid: string
+        postalcode: string
+        spatiallocation: string
+        addressline1: string

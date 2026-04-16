@@ -59,9 +59,7 @@ class FabricSparkRelation(BaseRelation):
             if not isinstance(type_val, RelationType):
                 type_str = str(type_val)
                 if type_str not in _VALID_RELATION_TYPES:
-                    logger.debug(
-                        f"Replacing invalid relation type '{type_str}' with None"
-                    )
+                    logger.debug(f"Replacing invalid relation type '{type_str}' with None")
                     data = dict(data)
                     data["type"] = None
         return super().from_dict(data)

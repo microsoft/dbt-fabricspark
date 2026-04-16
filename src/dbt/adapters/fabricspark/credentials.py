@@ -172,14 +172,22 @@ class FabricSparkCredentials(Credentials):
         logger.debug(f"Lakehouse schemas enabled: {self.lakehouse_schemas_enabled}")
 
         if self.lakehouse_schemas_enabled:
-            if self.schema is not None and self.lakehouse is not None and self.schema == self.lakehouse:
+            if (
+                self.schema is not None
+                and self.lakehouse is not None
+                and self.schema == self.lakehouse
+            ):
                 raise DbtRuntimeError(
                     f"Lakehouse '{self.lakehouse}' has schemas enabled. "
                     f"Please set `schema` in profiles.yml to a schema name other than "
                     f"the lakehouse name (e.g. 'dbo')."
                 )
         else:
-            if self.schema is not None and self.lakehouse is not None and self.schema != self.lakehouse:
+            if (
+                self.schema is not None
+                and self.lakehouse is not None
+                and self.schema != self.lakehouse
+            ):
                 logger.debug(
                     f"Non-schema lakehouse: overriding schema '{self.schema}' "
                     f"to lakehouse name '{self.lakehouse}'"
@@ -203,14 +211,10 @@ class FabricSparkCredentials(Credentials):
 
         parsed = urlparse(self.endpoint)
         if parsed.scheme != "https":
-            raise DbtRuntimeError(
-                f"endpoint must use HTTPS, got: {self.endpoint}"
-            )
+            raise DbtRuntimeError(f"endpoint must use HTTPS, got: {self.endpoint}")
 
         hostname = parsed.hostname or ""
-        is_known_domain = any(
-            re.search(pattern, hostname) for pattern in _ALLOWED_FABRIC_DOMAINS
-        )
+        is_known_domain = any(re.search(pattern, hostname) for pattern in _ALLOWED_FABRIC_DOMAINS)
         if not is_known_domain:
             logger.warning(
                 f"Security warning: endpoint '{self.endpoint}' does not match any known "

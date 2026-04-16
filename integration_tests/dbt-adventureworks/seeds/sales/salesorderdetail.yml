@@ -1,0 +1,16 @@
+version: 2
+
+seeds:
+  - name: salesorderdetail
+    description: contains sales data between 2011-01-01 to 2011-12-31.
+    config:
+      column_types:
+        salesorderid: integer
+        orderqty: short
+        salesorderdetailid: integer
+        unitprice: decimal
+        specialofferid: integer
+        modifieddate: timestamp
+        rowguid: string
+        productid: integer
+        unitpricediscount: decimal

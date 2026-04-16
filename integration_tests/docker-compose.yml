@@ -1,0 +1,68 @@
+name: fabricspark-dbt-integration
+
+services:
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2025-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Hive@Pass123"
+      MSSQL_PID: "Developer"
+    healthcheck:
+      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "Hive@Pass123" -C -Q "SELECT 1" || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: always
+    stop_signal: SIGKILL
+    stop_grace_period: 0s
+    ports:
+      - "${MSSQL_PORT:-11434}:1433"
+    networks:
+      - spark-network
+
+  metastore-init:
+    image: mcr.microsoft.com/mssql/server:2025-latest
+    depends_on:
+      mssql:
+        condition: service_healthy
+    volumes:
+      - ./config/hive-schema-4.0.0.mssql.sql:/opt/init/hive-schema-4.0.0.mssql.sql:ro
+      - ./scripts/init-metastore.sh:/opt/init/init-metastore.sh:ro
+    entrypoint: ["/bin/bash", "/opt/init/init-metastore.sh"]
+    networks:
+      - spark-network
+
+  spark-livy:
+    image: "${SPARK_IMAGE:-rakirahman.azurecr.io/devcontainer/spark:2d6281b13738c8576a232df9a708f5c083820105d8d3f6d4696c28aa99bb091e}"
+    depends_on:
+      metastore-init:
+        condition: service_completed_successfully
+    ports:
+      - "${LIVY_PORT:-8998}:8998"
+    volumes:
+      - ./config/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+      - ./config/hive-site.xml:/opt/spark/conf/hive-site.xml:ro
+      - ./config/livy.conf:/opt/livy/conf/livy.conf:ro
+      - ./config/livy-env.sh:/opt/livy/conf/livy-env.sh:ro
+      - ./scripts/entrypoint.sh:/opt/entrypoint.sh:ro
+      - warehouse-data:/opt/spark/warehouse
+    entrypoint: ["/bin/bash", "/opt/entrypoint.sh"]
+    environment:
+      - SPARK_HOME=/opt/spark
+      - LIVY_HOME=/opt/livy
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://localhost:8998/sessions || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    networks:
+      - spark-network
+
+networks:
+  spark-network:
+    name: spark-network
+
+volumes:
+  warehouse-data:

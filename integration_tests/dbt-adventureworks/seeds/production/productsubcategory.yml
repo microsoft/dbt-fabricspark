@@ -1,0 +1,10 @@
+version: 2
+
+seeds:
+  - name: productsubcategory
+    config:
+      column_types:
+        productsubcategoryid: integer
+        productcategoryid: integer
+        name: string
+        modifieddate: timestamp

@@ -1,0 +1,14 @@
+version: 2
+
+seeds:
+  - name: stateprovince
+    config:
+      column_types:
+        stateprovinceid: integer
+        countryregioncode: string
+        modifieddate: timestamp
+        rowguid: string
+        name: string
+        territoryid: integer
+        isonlystateprovinceflag: boolean
+        stateprovincecode: string

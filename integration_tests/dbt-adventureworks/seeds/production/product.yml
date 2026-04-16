@@ -1,0 +1,26 @@
+version: 2
+
+seeds:
+  - name: product
+    config:
+      column_types:
+        productid: integer
+        name: string
+        safetystocklevel: short
+        finishedgoodsflag: boolean
+        class: string
+        makeflag: boolean
+        productnumber: string
+        reorderpoint: short
+        modifieddate: timestamp
+        rowguid: string
+        productmodelid: integer
+        weightunitmeasurecode: string
+        standardcost: decimal
+        productsubcategoryid: integer
+        listprice: decimal
+        daystomanufacture: integer
+        productline: string
+        color: string
+        sellstartdate: timestamp
+        weight: decimal

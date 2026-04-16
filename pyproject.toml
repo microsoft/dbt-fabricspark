@@ -55,6 +55,8 @@ dev = [
     "ruff>=0.11.2",
     # Packaging
     "twine~=4.0",
+    # Integration test dependencies
+    "pytest-timeout~=2.2",
     # Adapter specific dependencies
     "mock~=5.1",
 ]
@@ -87,6 +89,9 @@ filterwarnings = [
 ]
 env_files = ["test.env"]
 testpaths = ["tests/unit"]
+markers = [
+    "integration: marks tests as integration tests (require Docker)",
+]
 
 [tool.ruff]
 # Target Python versions

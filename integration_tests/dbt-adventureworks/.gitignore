@@ -1,0 +1,8 @@
+# dbt artifacts
+target/
+dbt_packages/
+logs/
+.user.yml
+
+# Seed CSV files are downloaded from GitHub Gist (not committed to git)
+seeds/**/*.csv

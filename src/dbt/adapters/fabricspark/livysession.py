@@ -58,7 +58,7 @@ def read_session_id_from_file(file_path: str) -> Optional[str]:
             logger.debug(f"Session ID file does not exist: {file_path}")
             return None
 
-        with open(file_path, 'r') as f:
+        with open(file_path, "r") as f:
             session_id = f.read().strip()
             if session_id:
                 logger.debug(f"Read session ID from file: {session_id}")
@@ -91,7 +91,7 @@ def write_session_id_to_file(file_path: str, session_id: str) -> bool:
         if dir_path and not os.path.exists(dir_path):
             os.makedirs(dir_path, exist_ok=True)
 
-        with open(file_path, 'w') as f:
+        with open(file_path, "w") as f:
             f.write(session_id)
         logger.debug(f"Wrote session ID to file: {session_id} -> {file_path}")
         return True
@@ -206,7 +206,7 @@ def get_fabric_notebook_access_token(credentials: FabricSparkCredentials) -> Acc
 
     _ = credentials
     aad_token = notebookutils.credentials.getToken(FABRIC_NOTEBOOK_CREDENTIAL_SCOPE)
-    expires_on = json.loads(base64.b64decode(aad_token.split('.')[1] + '=='))['exp']
+    expires_on = json.loads(base64.b64decode(aad_token.split(".")[1] + "=="))["exp"]
 
     now = time.time()
     remaining_seconds = expires_on - now
@@ -240,7 +240,10 @@ def get_headers(credentials: FabricSparkCredentials, tokenPrint: bool = False) -
             elif credentials.authentication and credentials.authentication.lower() == "int_tests":
                 logger.info("Using int_tests auth")
                 accessToken = get_default_access_token(credentials)
-            elif credentials.authentication and credentials.authentication.lower() == "fabric_notebook":
+            elif (
+                credentials.authentication
+                and credentials.authentication.lower() == "fabric_notebook"
+            ):
                 logger.info("Using Fabric Notebook auth")
                 accessToken = get_fabric_notebook_access_token(credentials)
             else:
@@ -372,8 +375,13 @@ class LivySession:
                     logger.info(f"Successfully reusing existing Livy session: {session_id}")
                     self.is_new_session_required = False
                     return True
-                elif current_state in ("starting", "not_started", "busy") or top_level_state in ("starting", "not_started"):
-                    logger.debug(f"Session {session_id} is {current_state} (top: {top_level_state}), waiting...")
+                elif current_state in ("starting", "not_started", "busy") or top_level_state in (
+                    "starting",
+                    "not_started",
+                ):
+                    logger.debug(
+                        f"Session {session_id} is {current_state} (top: {top_level_state}), waiting..."
+                    )
                     self._wait_for_existing_session(session_id)
                     logger.info(f"Successfully reusing existing Livy session: {session_id}")
                     self.is_new_session_required = False
@@ -419,11 +427,17 @@ class LivySession:
 
                 if livy_state == "idle":
                     return
-                elif livy_state in ("dead", "error", "killed") or top_level_state in ("dead", "error", "killed"):
+                elif livy_state in ("dead", "error", "killed") or top_level_state in (
+                    "dead",
+                    "error",
+                    "killed",
+                ):
                     raise FailedToConnectError(f"Session {session_id} died while waiting")
                 else:
                     # Session still starting or in transition
-                    logger.debug(f"Session {session_id} state: top={top_level_state}, livy={livy_state}, waiting...")
+                    logger.debug(
+                        f"Session {session_id} state: top={top_level_state}, livy={livy_state}, waiting..."
+                    )
 
             time.sleep(self.credential.poll_wait)
 
@@ -532,11 +546,12 @@ class LivySession:
                     raise FailedToConnectError("failed to connect")
                 else:
                     # Unknown state, keep waiting (could be transitioning)
-                    logger.debug(f"Session {self.session_id} in state: top={top_level_state}, livy={livy_state}, waiting...")
+                    logger.debug(
+                        f"Session {self.session_id} in state: top={top_level_state}, livy={livy_state}, waiting..."
+                    )
                     time.sleep(self.credential.poll_wait)
 
     def delete_session(self) -> None:
-
         try:
             # delete the session_id
             res = requests.delete(
@@ -619,7 +634,9 @@ class LivyCursor:
         return True
 
     @property
-    def description(self,) -> list[tuple[str, str, None, None, None, None, bool]]:
+    def description(
+        self,
+    ) -> list[tuple[str, str, None, None, None, None, bool]]:
         """
         Get the description.
 
@@ -680,7 +697,7 @@ class LivyCursor:
             if res.status_code < 500:
                 break
             if attempt < max_retries - 1:
-                wait_time = 2 ** attempt * 5  # 5s, 10s
+                wait_time = 2**attempt * 5  # 5s, 10s
                 logger.debug(
                     f"Livy statement submit got HTTP {res.status_code}, "
                     f"retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})"
@@ -721,7 +738,11 @@ class LivyCursor:
                     f"Timeout ({self.credential.statement_timeout}s) waiting for statement "
                     f"{statement_id} to complete. Increase `statement_timeout` in profiles.yml."
                 )
-            poll_res = requests.get(url, headers=get_headers(self.credential, False), timeout=self.credential.http_timeout)
+            poll_res = requests.get(
+                url,
+                headers=get_headers(self.credential, False),
+                timeout=self.credential.http_timeout,
+            )
             if poll_res.status_code >= 500:
                 consecutive_failures += 1
                 if consecutive_failures <= max_poll_retries:
@@ -859,6 +880,7 @@ class LivyCursor:
 
         return row
 
+
 class LivyConnection:
     """
     Mock a pyodbc connection.
@@ -915,12 +937,14 @@ class LivyConnection:
         self.close()
         return True
 
+
 def _atexit_cleanup() -> None:
     """Delete the Fabric Livy session on process exit.
 
     Local-mode sessions are kept alive for reuse across runs.
     """
     LivySessionManager.disconnect()
+
 
 atexit.register(_atexit_cleanup)
 
@@ -968,7 +992,11 @@ class LivySessionManager:
         session = LivySessionManager.livy_global_session
 
         # 1. Fast path: reuse current in-memory session if it's valid and idle
-        if session is not None and session.is_valid_session() and not session.is_new_session_required:
+        if (
+            session is not None
+            and session.is_valid_session()
+            and not session.is_new_session_required
+        ):
             logger.debug(f"Reusing session: {session.session_id}")
             return
 
@@ -1014,9 +1042,7 @@ class LivySessionManager:
         """Connect in Fabric mode — always creates a new session."""
         session = LivySessionManager.livy_global_session
         needs_new_session = (
-            session is None
-            or not session.is_valid_session()
-            or session.is_new_session_required
+            session is None or not session.is_valid_session() or session.is_new_session_required
         )
 
         if not needs_new_session:
@@ -1038,7 +1064,11 @@ class LivySessionManager:
         session = LivySessionManager.livy_global_session
 
         # 1. Fast path: reuse current in-memory session if it's valid and idle
-        if session is not None and session.is_valid_session() and not session.is_new_session_required:
+        if (
+            session is not None
+            and session.is_valid_session()
+            and not session.is_new_session_required
+        ):
             logger.debug(f"Reusing Fabric session: {session.session_id}")
             return
 
@@ -1068,18 +1098,24 @@ class LivySessionManager:
 
         # Inject environmentId into spark_config if configured
         if credentials.environmentId:
-            spark_config = {**spark_config, "conf": {
-                **spark_config.get("conf", {}),
-                "spark.fabric.environment.id": credentials.environmentId,
-            }}
+            spark_config = {
+                **spark_config,
+                "conf": {
+                    **spark_config.get("conf", {}),
+                    "spark.fabric.environment.id": credentials.environmentId,
+                },
+            }
             logger.debug(f"Using Fabric Environment: {credentials.environmentId}")
 
         # Inject session idle timeout into spark_config
         if credentials.session_idle_timeout:
-            spark_config = {**spark_config, "conf": {
-                **spark_config.get("conf", {}),
-                "spark.livy.session.idle.timeout": credentials.session_idle_timeout,
-            }}
+            spark_config = {
+                **spark_config,
+                "conf": {
+                    **spark_config.get("conf", {}),
+                    "spark.livy.session.idle.timeout": credentials.session_idle_timeout,
+                },
+            }
             logger.debug(f"Session idle timeout: {credentials.session_idle_timeout}")
 
         LivySessionManager.livy_global_session.create_session(spark_config)
@@ -1103,7 +1139,9 @@ class LivySessionManager:
         """Create a new session and write the session ID to file (local mode only)."""
         LivySessionManager.livy_global_session.create_session(spark_config)
         LivySessionManager.livy_global_session.is_new_session_required = False
-        write_session_id_to_file(session_file_path, LivySessionManager.livy_global_session.session_id)
+        write_session_id_to_file(
+            session_file_path, LivySessionManager.livy_global_session.session_id
+        )
 
     @staticmethod
     def disconnect() -> None:
@@ -1125,7 +1163,9 @@ class LivySessionManager:
 
             if session.is_local_mode or session.credential.reuse_session:
                 # Local mode or Fabric reuse mode: keep the session alive
-                logger.debug(f"Disconnecting from session manager (session {session_id} kept alive for reuse)")
+                logger.debug(
+                    f"Disconnecting from session manager (session {session_id} kept alive for reuse)"
+                )
             else:
                 # Fabric mode: delete the session since it won't be reused
                 logger.debug(f"Deleting Fabric Livy session: {session_id}")
@@ -1133,6 +1173,7 @@ class LivySessionManager:
 
             # Reset the local reference in both cases
             LivySessionManager.livy_global_session = None
+
 
 class LivySessionConnectionWrapper(object):
     """Connection wrapper for the livy sessoin connection method."""

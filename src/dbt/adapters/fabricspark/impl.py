@@ -502,7 +502,7 @@ class FabricSparkAdapter(SQLAdapter):
         schema_map = self._get_catalog_schemas(relation_configs)
         if len(schema_map) > 1:
             raise CompilationError(
-                f"Expected only one database in get_catalog, found " f"{list(schema_map)}"
+                f"Expected only one database in get_catalog, found {list(schema_map)}"
             )
 
         with executor(self.config) as tpe:
@@ -530,7 +530,7 @@ class FabricSparkAdapter(SQLAdapter):
     ) -> "agate.Table":
         if len(schemas) != 1:
             raise CompilationError(
-                f"Expected only one schema in spark _get_one_catalog, found " f"{schemas}"
+                f"Expected only one schema in spark _get_one_catalog, found {schemas}"
             )
 
         database = information_schema.database

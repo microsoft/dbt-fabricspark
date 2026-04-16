@@ -1,0 +1,9 @@
+version: 2
+
+seeds:
+  - name: countryregion
+    config:
+      column_types:
+        countryregioncode: string
+        modifieddate: timestamp
+        name: string

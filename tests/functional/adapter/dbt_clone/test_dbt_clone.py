@@ -23,6 +23,7 @@ get_schema_name_sql = """
 {%- endmacro %}
 """
 
+
 class BaseClone:
     @pytest.fixture(scope="class")
     def models(self):
@@ -91,14 +92,13 @@ class BaseClone:
         # copy files
         self.copy_state(project_root)
 
+
 @pytest.mark.skip("Cloning cross schema is not supported")
 class TestSparkClonePossible(BaseClone):
-
     @pytest.fixture(scope="class")
     def profiles_config_update(self, dbt_profile_target, unique_schema, other_schema):
         outputs = {"default": dbt_profile_target, "otherschema": deepcopy(dbt_profile_target)}
         return {"test": {"outputs": outputs, "target": "default"}}
-
 
     @pytest.fixture(scope="class")
     def project_config_update(self):
@@ -149,7 +149,11 @@ class TestSparkClonePossible(BaseClone):
         schema_relations = project.adapter.list_relations(
             database=project.database, schema=TestSparkClonePossible.schemaname
         )
-        filtered_schema_relations = [relation for relation in schema_relations if relation.identifier in ["seed","table_model","my_cool_snapshot","view_model"]]
+        filtered_schema_relations = [
+            relation
+            for relation in schema_relations
+            if relation.identifier in ["seed", "table_model", "my_cool_snapshot", "view_model"]
+        ]
         types = [r.type for r in filtered_schema_relations]
         count_types = Counter(types)
         assert count_types == Counter({"table": 3, "view": 1})

@@ -15,10 +15,9 @@ ACR_NAME="dbtfabric"
 ACR_URL="${ACR_NAME}.azurecr.io"
 DOCKER_VERSION="5:27.5.1-1~ubuntu.24.04~noble"
 
-if ! [ -x "$(command -v jq)" ]; then
-  echo "jq is not installed on your devbox, installing..."
-  sudo apt-get update >/dev/null && sudo apt-get install -y jq >/dev/null
-fi
+command -v jq &>/dev/null || PACKAGES="jq"
+command -v gh &>/dev/null || PACKAGES="$PACKAGES gh"
+[ -n "$PACKAGES" ] && sudo apt-get update -qq && sudo apt-get install -yqq $PACKAGES
 
 if ! [ -x "$(command -v docker)" ]; then
   echo "docker is not installed on your devbox, installing..."

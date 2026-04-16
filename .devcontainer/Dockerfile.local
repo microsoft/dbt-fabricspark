@@ -1,0 +1,12 @@
+# Grabs VS Code's devcontainer base image for Ubuntu
+FROM mcr.microsoft.com/vscode/devcontainers/base:dev-ubuntu-22.04
+
+# Copy library scripts to execute
+COPY overlay/*.sh /tmp/overlay/
+
+# Copy default config files
+COPY config/defaults /opt/spark-devcontainer/config/defaults
+
+# Install necessary packages
+RUN /tmp/overlay/install-packages.sh
+RUN /tmp/overlay/install-python-tooling.sh

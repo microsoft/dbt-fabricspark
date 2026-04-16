@@ -42,10 +42,12 @@
    chmod +x ${GIT_ROOT}/contrib/bootstrap-dev-env.sh && ${GIT_ROOT}/contrib/bootstrap-dev-env.sh
    ```
 
-1. Source the path to apply environment changes:
+1. Launch the devcontainer:
 
    ```bash
-   source ~/.bashrc
+   cd /workspaces/dbt-fabricspark
+   HEX=$(printf '%s' "$(wslpath -w .)" | xxd -ps -c 256)
+   code --folder-uri "vscode-remote://dev-container+${HEX}/workspaces/dbt-fabricspark"
    ```
 
 1. Install recommended developer tooling (optional):
@@ -53,11 +55,9 @@
   ```bash
   curl -fsSL https://gh.io/copilot-install | bash
   $HOME/.local/bin/copilot -i /login
-  
-  code --install-extension donjayamanne.python-extension-pack
   ```
 
-1. Login to github and ensure to authorize `Microsoft` if you're an employee:
+1. Login to github and ensure to authorize `Microsoft` if you're an employee (optional):
 
    ```bash
    gh auth login

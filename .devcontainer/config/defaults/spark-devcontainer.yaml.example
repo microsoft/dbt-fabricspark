@@ -1,0 +1,36 @@
+# spark-devcontainer.yaml
+#
+# Configuration contract for spark-devcontainer.
+# Place this file at the root of your repository to customize Spark/Livy configuration.
+#
+# If this file is missing, or if any config file path is missing, the devcontainer
+# will automatically use defaults from its built-in config/defaults/ directory.
+#
+# All paths are relative to the repository root (GIT_ROOT).
+
+version: "1.0"
+
+config:
+  # Spark resource allocation configuration (YAML)
+  # Defines driver/executor memory/cores as percentages of host resources
+  spark_defaults_breakdown: "config/spark-defaults-breakdown.yaml"
+
+  # Spark configuration template (will be processed to spark-defaults.conf)
+  # Variables like ${SPARK_DRIVER_MEMORY} will be substituted at runtime
+  spark_defaults_template: "config/spark-defaults.conf.tmpl"
+
+  # Hive metastore configuration template (will be processed to hive-site.xml)
+  # Variables like ${GIT_ROOT} will be substituted at runtime
+  hive_site_template: "config/hive-site.xml.tmpl"
+
+  # Livy server configuration template (will be processed to livy.conf)
+  livy_conf_template: "config/livy.conf.tmpl"
+
+  # Livy server logging configuration (log4j 1.x for Livy process)
+  # Variables like ${LIVY_SPARK_LOG_DIR} will be substituted at runtime
+  livy_server_log4j_template: "config/livy-server-log4j.properties.tmpl"
+
+  # Livy Spark session logging configuration (log4j2 for Spark 3.5+)
+  # Variables like ${LIVY_SPARK_LOG_DIR} will be substituted at runtime
+  livy_spark_log4j_template: "config/livy-spark-log4j.properties.tmpl"
+# Updated on Sat Feb 14 02:53:03 UTC 2026

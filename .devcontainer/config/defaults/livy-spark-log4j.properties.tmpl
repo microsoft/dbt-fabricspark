@@ -1,0 +1,26 @@
+# Log4j2 config for Livy-created Spark sessions (Spark 3.5+ uses log4j2).
+
+rootLogger.level = info
+rootLogger.appenderRef.file.ref = file
+
+appender.file.type = RollingFile
+appender.file.name = file
+appender.file.fileName = ${LIVY_SPARK_LOG_DIR}/spark-session.log
+appender.file.filePattern = ${LIVY_SPARK_LOG_DIR}/spark-session-%i.log.gz
+appender.file.layout.type = PatternLayout
+appender.file.layout.pattern = %d{yy/MM/dd HH:mm:ss} %p %c{1}: %m%n%ex
+appender.file.policies.type = Policies
+appender.file.policies.size.type = SizeBasedTriggeringPolicy
+appender.file.policies.size.size = 50MB
+appender.file.strategy.type = DefaultRolloverStrategy
+appender.file.strategy.max = 5
+
+# Keep noisy loggers quieter
+logger.replexprTyper.name = org.apache.spark.repl.SparkIMain$exprTyper
+logger.replexprTyper.level = warn
+logger.replSparkILoopInterpreter.name = org.apache.spark.repl.SparkILoop$SparkILoopInterpreter
+logger.replSparkILoopInterpreter.level = warn
+logger.jetty.name = org.sparkproject.jetty
+logger.jetty.level = warn
+logger.hadoop.name = org.apache.hadoop
+logger.hadoop.level = warn

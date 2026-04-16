@@ -1,0 +1,61 @@
+name: Gated Check-In (GCI)
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  IS_GH_ACTION: "1"
+  CLIENT_ID: ${{ secrets.APP_ID }}
+  TENANT_ID: ${{ secrets.TENANT_ID }}
+  FABRIC_WORKSPACE_ID: ${{ secrets.WORKSPACE_ID }}
+  FABRIC_API: "https://msitapi.fabric.microsoft.com/v1"
+
+jobs:
+  gci-linux:
+    runs-on: self-hosted
+    container:
+      image: dbtfabric.azurecr.io/devcontainer/spark:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+      options: >-
+        --cap-add=SYS_ADMIN
+        --device=/dev/fuse
+        --security-opt=apparmor:unconfined
+        --add-host=host.docker.internal:host-gateway
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: "🔒 Configure container permissions and PATH"
+        run: |
+          sudo usermod -a -G vscode
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: "⚙️ Post create commands"
+        run: /tmp/overlay/post-create-commands.sh
+
+      - name: "⚙️ Post attach commands"
+        run: /tmp/overlay/post-attach-commands.sh
+
+      - name: "🧹 Clean Projects"
+        run: npx nx run-many -t clean --parallel=3 --output-style=stream
+
+      - name: "🔧 Init Projects"
+        run: npx nx run-many -t init --parallel=3 --output-style=stream
+
+      - name: "📦 Build Projects"
+        run: npx nx run-many -t build --parallel=3 --configuration=ci --output-style=stream
+
+      - name: "🧹 Lint Projects"
+        run: npx nx run-many -t lint --parallel=3 --configuration=ci --verbose --output-style=stream
+
+      - name: "🧪 Test Projects"
+        run: npx nx run-many -t test --configuration=ci --verbose --output-style=stream
+
+      - name: "📁 Verify No Untracked Files"
+        run: npx nx fail-on-untracked-files

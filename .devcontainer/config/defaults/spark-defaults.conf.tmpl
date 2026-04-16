@@ -1,0 +1,36 @@
+# * ----------------------------------------------------------------------- *
+# |                                                                         |
+# | Default Spark configuration — applies to all local[*] jobs, including   |
+# | Livy interactive sessions and spark-submit invocations.                 |
+# | Per-job overrides can be passed via --conf flags or session conf.       |
+# |                                                                         |
+# | ```text                                                                 |
+# | spark.hadoop.parquet.block.size 1073741824                              |
+# | ```                                                                     |
+# |                                                                         |
+# * ----------------------------------------------------------------------- *
+
+# Catalog configuration
+spark.sql.catalogImplementation=hive
+spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog
+spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension
+spark.sql.sources.default=delta
+
+# Delta schema options
+spark.databricks.delta.schema.autoMerge.enabled=true
+
+# Resource allocation
+spark.driver.memory=${SPARK_DRIVER_MEMORY}
+spark.driver.cores=${SPARK_DRIVER_CORES}
+spark.executor.memory=${SPARK_EXECUTOR_MEMORY}
+spark.executor.cores=${SPARK_EXECUTOR_CORES}
+spark.sql.shuffle.partitions=${SPARK_SUBMIT_SHUFFLE_PARTITIONS}
+spark.default.parallelism=${SPARK_SUBMIT_DEFAULT_PARALLELISM}
+
+# Performance — AQE and single-machine optimizations
+spark.sql.adaptive.enabled=true
+spark.sql.adaptive.coalescePartitions.enabled=true
+spark.locality.wait=0s
+
+# Warehouse location
+spark.sql.warehouse.dir=${GIT_ROOT}/warehouse

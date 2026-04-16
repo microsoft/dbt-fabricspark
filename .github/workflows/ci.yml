@@ -32,11 +32,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: "🔒 Configure container permissions and PATH"
-        run: |
-          sudo usermod -a -G vscode
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
       - name: "⚙️ Post create commands"
         run: /tmp/overlay/post-create-commands.sh
 

@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     container:
-      image: dbtfabric.azurecr.io/devcontainer/spark:a72458498c9d0f34359fbb92714c1f31d106b28a8147330406c35067e920c0a6
+      image: dbtfabric.azurecr.io/devcontainer/spark:b296e609fa851da70c93b4f7b29e56c64a742cb26c193935e17afddcca151fca
       options: >-
         --cap-add=SYS_ADMIN
         --device=/dev/fuse

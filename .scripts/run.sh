@@ -18,6 +18,7 @@ DOCKER_COMPOSE_FILE="${PROJECT_DIR}/integration_tests/docker-compose.yml"
 DOCKER_PROJECT="fabricspark-dbt-test"
 DBT_PROJECT="${PROJECT_DIR}/integration_tests/dbt-adventureworks"
 SEED_MANIFEST="ci_seeds.yaml"
+export DBT_THREADS="${DBT_THREADS:-$(nproc)}"
 
 declare -A TARGETS=(
     ["venv"]="Fresh venv + install deps"

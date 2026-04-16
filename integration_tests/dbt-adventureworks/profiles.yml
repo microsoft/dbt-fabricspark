@@ -12,7 +12,7 @@ adventureworks:
       connect_timeout: 10
       lakehouse: default
       schema: default
-      threads: 1
+      threads: "{{ env_var('DBT_THREADS', '4') | int }}"
       type: fabricspark
       retry_all: true
       spark_config:

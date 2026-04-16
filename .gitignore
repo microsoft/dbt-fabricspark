@@ -318,3 +318,12 @@ test.env
 
 # Temp
 .temp/*
+logs/**/*
+!logs/test-runs/
+!logs/test-runs/README.md
+
+# Node
+node_modules/
+
+# nx
+.nx/*

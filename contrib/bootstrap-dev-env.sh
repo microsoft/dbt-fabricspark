@@ -1,69 +1,67 @@
 #!/bin/bash
 #
 #
-#       Sets up a Ubuntu Linux machine with all dev/test pre-reqs. 
+#       Bootstraps a Linux Ubuntu host for the VS Code devcontainer idempotently,
+#       with the minimal set of dependencies.
 #
-#       This script is idempotent, it will only attempt to install 
-#       dependencies if not exists.
+#       If your host restarts, rerun this script.
 #
 # ---------------------------------------------------------------------------------------
 #
-set -euo pipefail
 
-export REPO_ROOT=$(git rev-parse --show-toplevel)
-export DEBIAN_FRONTEND=noninteractive
-export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "/mnt/c" | tr '\n' ':' | sed 's/:$//')
+REPO_ROOT=$(git rev-parse --show-toplevel)
 
+ACR_NAME="dbtfabric"
+ACR_URL="${ACR_NAME}.azurecr.io"
 DOCKER_VERSION="5:27.5.1-1~ubuntu.24.04~noble"
-PACKAGES=""
-command -v python &>/dev/null || PACKAGES="python3 python-is-python3 python3-venv"
-command -v pip &>/dev/null || PACKAGES="$PACKAGES python3-pip"
-command -v curl &>/dev/null || PACKAGES="$PACKAGES curl"
-command -v gh &>/dev/null || PACKAGES="$PACKAGES gh"
 
-[ -n "$PACKAGES" ] && sudo apt-get update -qq && sudo apt-get install -yqq $PACKAGES
-
-command -v uv &>/dev/null || { curl -LsSf https://astral.sh/uv/install.sh | sh; source "$HOME/.local/bin/env" 2>/dev/null || true; }
-
-AZ_PATH=$(which az 2>/dev/null || true)
-if [[ -z "$AZ_PATH" || "$AZ_PATH" == *"/mnt/c"* ]]; then
-  echo "Native Linux Azure CLI not found, installing..."
-  curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-  export PATH="$HOME/bin:$PATH"
-  [[ -f "$HOME/.bashrc" ]] && source "$HOME/.bashrc"
-else
-  echo "Native Linux Azure CLI already installed at: $AZ_PATH"
+if ! [ -x "$(command -v jq)" ]; then
+  echo "jq is not installed on your devbox, installing..."
+  sudo apt-get update >/dev/null && sudo apt-get install -y jq >/dev/null
 fi
 
 if ! [ -x "$(command -v docker)" ]; then
   echo "docker is not installed on your devbox, installing..."
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-  sudo add-apt-repository -y "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+  sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
   sudo apt-get update -q
   sudo apt-get install -y apt-transport-https ca-certificates curl
   sudo apt-get install -y --allow-downgrades docker-ce="$DOCKER_VERSION" docker-ce-cli="$DOCKER_VERSION" containerd.io
+else
+  echo "docker is already installed."
 fi
-
-sudo mkdir -p /etc/docker
-echo '{"max-concurrent-downloads": 32}' | sudo tee /etc/docker/daemon.json > /dev/null
-
-echo "docker is installed, restarting..."
-sudo systemctl restart docker
 
 sudo chmod 666 /var/run/docker.sock
 docker container ls
 docker ps -q | xargs -r docker kill
 
-[[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
+if grep -q "$ACR_URL" ~/.docker/config.json 2>/dev/null; then
+     echo "Already logged in to ${ACR_URL}"
+ else
+    if [ -n "$ACR_PASSWORD" ]; then
+        docker_password="$ACR_PASSWORD"
+    else
+        read -sp "Enter Docker Admin password for ${ACR_URL}: " docker_password
+        echo
+    fi
+    echo "$docker_password" | docker login "$ACR_URL" --username "$ACR_NAME" --password-stdin
+fi
+
+export PATH=$(echo $PATH | tr ':' '\n' | grep -v "/mnt/c/Program Files/nodejs" | grep -v "/mnt/c/ProgramData/global-npm" | tr '\n' ':' | sed 's/:$//')
+if ! [ -x "$(command -v npm)" ]; then
+  echo "Installing Node.js and npm for WSL..."
+  curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+  sudo apt-get update 2>&1 > /dev/null
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
+else
+  echo "WSL npm is available."
+fi
 
 cd "$REPO_ROOT"
-[ ! -d "$REPO_ROOT/.venv" ] && uv venv "$REPO_ROOT/.venv"
-source "$REPO_ROOT/.venv/bin/activate"
-uv pip install -e . --group dev
-[ ! -f "$REPO_ROOT/test.env" ] && cp "$REPO_ROOT/test.env.example" "$REPO_ROOT/test.env"
+sudo npm install
+sudo chmod -R 777 ${REPO_ROOT}/node_modules
 
-echo "  Python: $(python --version)"
-echo "  uv:     $(uv --version)"
-echo "  az:     $(az version -o tsv 2>/dev/null | head -1)"
-echo "  docker: $(docker --version)"
-echo "Done."
+echo "Docker: $(docker --version)"
+echo "npm: $(npm version)"
+echo "nx: $(npx nx --version)"
+echo "devcontainer: $(npx devcontainer --version)"

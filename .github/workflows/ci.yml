@@ -58,4 +58,4 @@ jobs:
         run: npx nx affected --base=origin/main -t test --configuration=ci --verbose --output-style=stream --verbose
 
       - name: "📁 Verify No Untracked Files"
-        run: npx nx fail-on-untracked-files
+        run: npm run fail-on-untracked-files

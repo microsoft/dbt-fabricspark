@@ -10,22 +10,8 @@
                "tsx ./.devcontainer/scripts/build-devcontainer.ts",
                "tsx ./.devcontainer/scripts/push-devcontainer.ts"
             ],
-            "files":[
-               "{workspaceRoot}/.devcontainer/**/*"
-            ],
-            "exclude":[
-               "{workspaceRoot}/.devcontainer/.devcontainer-hash.txt",
-               "{workspaceRoot}/.devcontainer/.env",
-               "{workspaceRoot}/.devcontainer/scripts/**/*"
-            ],
-            "outputs":[
-               "{workspaceRoot}/.devcontainer/.devcontainer-hash.txt"
-            ],
             "parallel":false
-         },
-         "inputs":[
-            "{workspaceRoot}/.devcontainer/.devcontainer-hash.txt"
-         ]
+         }
       },
       "test":{
          "executor":"nx:run-commands",

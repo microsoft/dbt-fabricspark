@@ -17,5 +17,6 @@
   "scripts": {
     "fail-on-untracked-files": "tsx tools/scripts/fail-on-untracked-files.ts"
   },
-  "type": "module"
+  "type": "module",
+  "nx": {}
 }

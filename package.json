@@ -14,5 +14,8 @@
     "tsx": "^4.7.1",
     "typescript": "^5.4.0"
   },
+  "scripts": {
+    "fail-on-untracked-files": "tsx tools/scripts/fail-on-untracked-files.ts"
+  },
   "type": "module"
 }

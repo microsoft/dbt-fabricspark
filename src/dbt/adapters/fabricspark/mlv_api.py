@@ -68,7 +68,10 @@ def resolve_lakehouse_id(
 
     try:
         response = _request_with_retry(
-            "GET", url, headers, operation=f"resolve lakehouse '{lakehouse_name}'",
+            "GET",
+            url,
+            headers,
+            operation=f"resolve lakehouse '{lakehouse_name}'",
             timeout=credentials.http_timeout,
         )
     except MLVApiError:
@@ -89,9 +92,7 @@ def resolve_lakehouse_id(
 
     name_lower = lakehouse_name.lower()
     if name_lower not in name_to_id:
-        available = ", ".join(
-            lh.get("displayName", "?") for lh in lakehouses
-        ) or "(none)"
+        available = ", ".join(lh.get("displayName", "?") for lh in lakehouses) or "(none)"
         raise MLVApiError(
             f"resolve lakehouse '{lakehouse_name}'",
             f"Lakehouse '{lakehouse_name}' not found in workspace {workspace_id}. "
@@ -156,7 +157,7 @@ def _request_with_retry(
             # Retryable server / throttle errors
             if response.status_code in RETRYABLE_STATUS_CODES and attempt < max_retries:
                 retry_after = int(response.headers.get("Retry-After", 0))
-                wait = max(retry_after, RETRY_BACKOFF_BASE ** attempt)
+                wait = max(retry_after, RETRY_BACKOFF_BASE**attempt)
                 detail = _extract_error_detail(response)
                 logger.warning(
                     f"MLV API {operation} returned {response.status_code} "
@@ -175,7 +176,7 @@ def _request_with_retry(
         except requests.exceptions.ConnectionError as exc:
             last_exception = exc
             if attempt < max_retries:
-                wait = RETRY_BACKOFF_BASE ** attempt
+                wait = RETRY_BACKOFF_BASE**attempt
                 logger.warning(
                     f"MLV API {operation} connection error: {exc}. "
                     f"Retrying in {wait}s (attempt {attempt}/{max_retries})..."
@@ -185,7 +186,7 @@ def _request_with_retry(
         except requests.exceptions.Timeout as exc:
             last_exception = exc
             if attempt < max_retries:
-                wait = RETRY_BACKOFF_BASE ** attempt
+                wait = RETRY_BACKOFF_BASE**attempt
                 logger.warning(
                     f"MLV API {operation} timed out: {exc}. "
                     f"Retrying in {wait}s (attempt {attempt}/{max_retries})..."
@@ -204,7 +205,9 @@ def _request_with_retry(
     )
 
 
-def _job_instance_url(credentials: FabricSparkCredentials, lakehouse_id: Optional[str], job_instance_id: str) -> str:
+def _job_instance_url(
+    credentials: FabricSparkCredentials, lakehouse_id: Optional[str], job_instance_id: str
+) -> str:
     """Build the URL for a specific job instance (Get Item Job Instance)."""
     lh_id = lakehouse_id or credentials.lakehouseid
     return (
@@ -232,7 +235,10 @@ def get_job_instance(
     headers = get_headers(credentials)
 
     response = _request_with_retry(
-        "GET", url, headers, operation=f"get MLV job instance {job_instance_id}",
+        "GET",
+        url,
+        headers,
+        operation=f"get MLV job instance {job_instance_id}",
         timeout=credentials.http_timeout,
     )
     return response.json()
@@ -319,8 +325,7 @@ def run_on_demand_refresh(
     if not job_instance_id:
         raise MLVApiError(
             "on-demand MLV refresh",
-            "Could not extract job instance ID from Location header. "
-            f"Location: '{location}'",
+            f"Could not extract job instance ID from Location header. Location: '{location}'",
         )
 
     # Poll until the job completes or fails
@@ -386,7 +391,7 @@ def create_schedule(
             "create MLV schedule",
             "The 'endDateTime' field is required in the schedule configuration. "
             "Add it to your mlv_schedule config, e.g.: "
-            "\"endDateTime\": \"2027-12-31T23:59:59\"",
+            '"endDateTime": "2027-12-31T23:59:59"',
         )
 
     url = f"{_base_url(credentials, lakehouse_id)}/schedules"

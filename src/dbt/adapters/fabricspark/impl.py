@@ -526,7 +526,7 @@ class FabricSparkAdapter(SQLAdapter):
     ) -> "agate.Table":
         if len(schemas) != 1:
             raise CompilationError(
-                f"Expected only one schema in spark _get_one_catalog, found " f"{schemas}"
+                f"Expected only one schema in spark _get_one_catalog, found {schemas}"
             )
 
         database = information_schema.database

@@ -219,7 +219,9 @@ def test_apply_lakehouse_properties_schemas_enabled_rejects_default_schema() -> 
     )
     # schema defaults to lakehouse name — should be rejected for schema-enabled lakehouse
     with pytest.raises(DbtRuntimeError, match="schemas enabled.*schema.*other than"):
-        credentials.apply_lakehouse_properties({"defaultSchema": "dbo", "oneLakeTablesPath": "..."})
+        credentials.apply_lakehouse_properties(
+            {"defaultSchema": "dbo", "oneLakeTablesPath": "..."}
+        )
 
 
 def test_apply_lakehouse_properties_no_schemas() -> None:

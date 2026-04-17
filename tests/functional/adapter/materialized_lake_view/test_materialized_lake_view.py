@@ -23,6 +23,7 @@ from dbt.tests.util import run_dbt
 # Skip guard — only run on schema-enabled lakehouses
 # ---------------------------------------------------------------------------
 
+
 def _schema_enabled_configured() -> bool:
     """Return True when the target lakehouse appears to be schema-enabled."""
     schema = os.getenv("SCHEMA_NAME", "")

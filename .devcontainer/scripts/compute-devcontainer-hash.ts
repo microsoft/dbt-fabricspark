@@ -35,12 +35,17 @@ export function writeDevcontainerHashToFile(filename: string) {
  */
 function computeHash(directory: string): string {
     const hash = createHash('sha256');
-    // git ls-files will automatically exclude anything gitignored
-    const files = spawnSync('git', ['ls-files', directory]).stdout
+    // Use --cached + --others + --exclude-standard to include untracked files,
+    // and subtract --deleted to exclude files removed from the working tree.
+    const deleted = new Set(
+        spawnSync('git', ['ls-files', '--deleted', directory]).stdout
+            .toString().split('\n').map(f => f.trim()).filter(f => f !== '')
+    );
+    const files = spawnSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', directory]).stdout
         .toString()
         .split('\n')
         .map(f => f.trim())
-        .filter(f => f !== '')
+        .filter(f => f !== '' && !deleted.has(f))
         .sort()
 
     const disallowedFiles = [

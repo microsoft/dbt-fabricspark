@@ -102,7 +102,9 @@ class TestCurrentTimestamp(BaseCurrentTimestampNaive):
         tolerance = timedelta(minutes=10)
         assert (sql_timestamp > (now_utc - tolerance)) and (
             sql_timestamp < (now_utc + tolerance)
-        ), f"SQL timestamp {sql_timestamp.isoformat()} is not close enough to Python UTC {now_utc.isoformat()}"
+        ), (
+            f"SQL timestamp {sql_timestamp.isoformat()} is not close enough to Python UTC {now_utc.isoformat()}"
+        )
 
     def test_current_timestamp_type(self, current_timestamp):
         assert current_timestamp

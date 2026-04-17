@@ -9,4 +9,3 @@ COPY config/defaults /opt/spark-devcontainer/config/defaults
 
 # Install necessary packages
 RUN /tmp/overlay/install-packages.sh
-RUN /tmp/overlay/install-python-tooling.sh

@@ -17,7 +17,6 @@ from dbt.tests.util import (
 
 
 class BaseSimpleMaterializations:
-
     @pytest.fixture(scope="class")
     def models(self):
         return {
@@ -40,7 +39,6 @@ class BaseSimpleMaterializations:
         }
 
     def test_base(self, project):
-
         # seed command
         results = run_dbt(["seed"])
         # seed result length
@@ -106,6 +104,7 @@ class BaseSimpleMaterializations:
             "swappable": "table",
         }
         check_relation_types(project.adapter, expected)
+
 
 class TestSimpleMaterializations(BaseSimpleMaterializations):
     pass

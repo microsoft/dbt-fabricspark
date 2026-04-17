@@ -62,7 +62,6 @@ class BaseIncremental:
 
 
 class BaseIncrementalNotSchemaChange:
-
     @pytest.fixture(scope="class")
     def project_config_update(self):
         return {"name": "incremental"}

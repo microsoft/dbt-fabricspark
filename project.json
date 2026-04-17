@@ -1,0 +1,51 @@
+{
+   "name": "dbt-fabricspark",
+   "$schema": "./node_modules/nx/schemas/project-schema.json",
+   "targets": {
+      "clean": {
+         "executor": "nx:run-commands",
+         "options": {
+            "commands": [
+               { "command": "bash tools/scripts/run.sh clean", "forwardAllArgs": false }
+            ],
+            "parallel": false
+         }
+      },
+      "lint": {
+         "executor": "nx:run-commands",
+         "options": {
+            "commands": [
+               { "command": "bash tools/scripts/run.sh lint", "forwardAllArgs": false }
+            ],
+            "parallel": false
+         }
+      },
+      "build": {
+         "executor": "nx:run-commands",
+         "options": {
+            "commands": [
+               { "command": "bash tools/scripts/run.sh build", "forwardAllArgs": false }
+            ],
+            "parallel": false
+         }
+      },
+      "test": {
+         "executor": "nx:run-commands",
+         "options": {
+            "commands": [
+               { "command": "bash tools/scripts/run.sh test", "forwardAllArgs": false }
+            ],
+            "parallel": false
+         }
+      },
+      "publish": {
+         "executor": "nx:run-commands",
+         "options": {
+            "commands": [
+               { "command": "bash tools/scripts/run.sh publish", "forwardAllArgs": false }
+            ],
+            "parallel": false
+         }
+      }
+   }
+}

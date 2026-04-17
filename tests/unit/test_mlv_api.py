@@ -79,7 +79,9 @@ class TestRequestWithRetry:
         rate_limit_resp = MagicMock()
         rate_limit_resp.status_code = 429
         rate_limit_resp.headers = {"Retry-After": "1"}
-        rate_limit_resp.json.return_value = {"error": {"code": "TooManyRequests", "message": "slow down"}}
+        rate_limit_resp.json.return_value = {
+            "error": {"code": "TooManyRequests", "message": "slow down"}
+        }
         rate_limit_resp.text = "slow down"
 
         ok_resp = MagicMock()
@@ -273,9 +275,7 @@ class TestListSchedules:
     def test_returns_schedules(self, mock_request, mock_headers, mock_credentials):
         mock_headers.return_value = {"Authorization": "Bearer token"}
         mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "value": [{"id": "sched-1", "enabled": True}]
-        }
+        mock_response.json.return_value = {"value": [{"id": "sched-1", "enabled": True}]}
         mock_request.return_value = mock_response
 
         result = list_schedules(mock_credentials)
@@ -387,9 +387,7 @@ class TestCreateOrUpdateSchedule:
         config = {"enabled": True, "configuration": {"type": "Cron", "interval": 30}}
         result = create_or_update_schedule(mock_credentials, config)
 
-        mock_update.assert_called_once_with(
-            mock_credentials, "sched-existing", config, None
-        )
+        mock_update.assert_called_once_with(mock_credentials, "sched-existing", config, None)
         assert result["id"] == "sched-existing"
 
     @patch("dbt.adapters.fabricspark.mlv_api.create_schedule")
@@ -429,9 +427,7 @@ class TestResolveLakehouseId:
     def test_case_insensitive(self, mock_request, mock_headers, mock_credentials):
         mock_headers.return_value = {"Authorization": "Bearer token"}
         mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "value": [{"id": "lh-gold-id", "displayName": "Gold"}]
-        }
+        mock_response.json.return_value = {"value": [{"id": "lh-gold-id", "displayName": "Gold"}]}
         mock_request.return_value = mock_response
 
         result = resolve_lakehouse_id(mock_credentials, "gold")
@@ -455,9 +451,7 @@ class TestResolveLakehouseId:
     def test_uses_cache(self, mock_request, mock_headers, mock_credentials):
         mock_headers.return_value = {"Authorization": "Bearer token"}
         mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "value": [{"id": "lh-gold-id", "displayName": "gold"}]
-        }
+        mock_response.json.return_value = {"value": [{"id": "lh-gold-id", "displayName": "gold"}]}
         mock_request.return_value = mock_response
 
         # First call populates cache

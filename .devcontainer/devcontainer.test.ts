@@ -5,11 +5,15 @@ import { load } from 'js-yaml';
 
 const workspaceRoot = execSync('git rev-parse --show-toplevel').toString().trim();
 const devcontainerJsonPath = join(workspaceRoot, '.devcontainer', 'devcontainer.json');
-const ciWorkflowPath = join(workspaceRoot, '.github', 'workflows', 'ci.yml');
 
 const devcontainerConfig = JSON.parse(readFileSync(devcontainerJsonPath, 'utf-8'));
 const devcontainerImage: string = devcontainerConfig.image;
 if (!devcontainerImage) throw new Error('Could not read image from devcontainer.json');
+
+const workflowImageChecks: { file: string; jobKey: string }[] = [
+  { file: '.github/workflows/ci.yml',       jobKey: 'linux' },
+  { file: '.github/workflows/release.yml',  jobKey: 'release-version' },
+];
 
 describe('Devcontainer Tests', () => {
   const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').split('.')[0];
@@ -48,12 +52,15 @@ describe('Devcontainer Tests', () => {
     expect(containerId).toBeTruthy();
   });
 
-  test('devcontainer.json and ci.yml use the same container image', () => {
-    const ciWorkflow = load(readFileSync(ciWorkflowPath, 'utf-8')) as any;
-    const ciImage = ciWorkflow.jobs.linux.container.image;
-    expect(ciImage).toBeDefined();
-    expect(devcontainerImage).toBe(ciImage);
-  });
+  test.each(workflowImageChecks)(
+    'devcontainer.json and $file use the same container image',
+    ({ file, jobKey }) => {
+      const workflow = load(readFileSync(join(workspaceRoot, file), 'utf-8')) as any;
+      const image = workflow.jobs[jobKey]?.container?.image;
+      expect(image).toBeDefined();
+      expect(devcontainerImage).toBe(image);
+    },
+  );
 
   test('Verify base image tools', () => {
     const output = execSync(

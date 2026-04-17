@@ -1,8 +1,9 @@
 import { spawnSync } from 'child_process';
 import { Command, OptionValues } from 'commander';
 import { writeFileSync, readFileSync } from 'fs';
+import { globSync } from 'glob';
 import yaml from 'js-yaml';
-import { registry, name, devcontainerFile, pipelineFile } from './const'
+import { registry, name, devcontainerFile, pipelineFile, workflowsDir } from './const'
 
 const program: Command = new Command()
 program
@@ -23,6 +24,9 @@ updateDevcontainerConfigFile(fullImageName, imageTag, opts.file);
 
 console.log(`Updating pipeline config file: ${opts.pipeline}`);
 updatePipelineConfigFile(fullImageName, imageTag, opts.pipeline);
+
+console.log(`Updating workflow files in: ${workflowsDir}`);
+updateWorkflowFiles(fullImageName, imageTag, workflowsDir);
 
 if (checkIfImageExists(fullImageName, imageTag)) {
     console.log(`Image ${fullImageName}:${imageTag} already exists in ACR. Skipping push...`);
@@ -145,4 +149,30 @@ function updateDockerComposeTestFile(imageName: string, imageTag: string) {
     );
     
     writeFileSync(composeFile, content);
+}
+
+/**
+ * Recursively finds workflow YAML files that reference the given container
+ * image and updates them to use the new tag.
+ * Uses regex replacement to preserve GitHub Actions YAML formatting.
+ * @param imageName The full image name (e.g. registry/repo)
+ * @param imageTag The new image tag
+ * @param dir The directory to search for workflow files
+ */
+function updateWorkflowFiles(imageName: string, imageTag: string, dir: string) {
+    const files = globSync(`${dir}/**/*.{yml,yaml}`);
+    const escapedName = imageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`(image:\\s*)${escapedName}:[^\\s]+`, 'g');
+
+    for (const file of files) {
+        const content = readFileSync(file, 'utf8');
+        if (!pattern.test(content)) {
+            continue;
+        }
+        // Reset lastIndex after test() since the regex is global
+        pattern.lastIndex = 0;
+        const updated = content.replace(pattern, `$1${imageName}:${imageTag}`);
+        writeFileSync(file, updated);
+        console.log(`  Updated: ${file}`);
+    }
 }

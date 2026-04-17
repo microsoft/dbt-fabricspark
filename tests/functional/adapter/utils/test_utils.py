@@ -91,8 +91,13 @@ class TestCurrentTimestamp(BaseCurrentTimestampNaive):
         relation = relation_from_name(project.adapter, "current_ts")
         result = project.run_sql(f"select current_ts_column from {relation}", fetch="one")
         sql_timestamp = result[0] if result is not None else None
-        # Parse the string into a datetime object
-        return datetime.fromisoformat(sql_timestamp) if sql_timestamp else None
+        if not sql_timestamp:
+            return None
+        # Python 3.10 fromisoformat() doesn't support the 'Z' suffix
+        if isinstance(sql_timestamp, str):
+            sql_timestamp = sql_timestamp.replace("Z", "+00:00")
+            return datetime.fromisoformat(sql_timestamp)
+        return sql_timestamp
 
     def test_current_timestamp_matches_utc(self, current_timestamp):
         sql_timestamp = current_timestamp

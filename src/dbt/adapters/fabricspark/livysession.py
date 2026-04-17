@@ -39,6 +39,10 @@ _session_lock = threading.Lock()
 # Global lock to ensure thread-safe token refresh
 _token_lock = threading.Lock()
 
+# Process-level cache for lakehouse properties (avoids repeated API calls per connection open)
+_lakehouse_props_cache: dict[tuple[str, str, str], dict] = {}
+_lakehouse_props_lock = threading.Lock()
+
 
 def read_session_id_from_file(file_path: str) -> Optional[str]:
     """Read session ID from file if it exists and contains a valid ID.
@@ -257,6 +261,33 @@ def get_headers(credentials: FabricSparkCredentials, tokenPrint: bool = False) -
     return headers
 
 
+def _parse_retry_after(response: requests.Response) -> float:
+    """Extract wait time from Retry-After header or 429 response body.
+
+    Falls back to 0 if no hint is found.
+    """
+    header = response.headers.get("Retry-After", "")
+    if header:
+        try:
+            return float(header)
+        except ValueError:
+            pass
+    # Fabric 429 body sometimes includes a retry-after timestamp in the message
+    try:
+        body = response.json()
+        msg = body.get("message", "")
+        # Fabric 429 body includes a timestamp like "...until: 4/17/2026 12:22:35 PM (UTC)"
+        if "until:" in msg:
+            ts_str = msg.split("until:")[1].strip().rstrip(")")
+            ts_str = ts_str.replace("(UTC", "").strip()
+            target = dt.datetime.strptime(ts_str, "%m/%d/%Y %I:%M:%S %p")
+            delta = (target - dt.datetime.utcnow()).total_seconds()
+            return max(delta, 0)
+    except Exception:
+        pass
+    return 0
+
+
 def get_lakehouse_properties(credentials: FabricSparkCredentials) -> dict:
     """Fetch lakehouse properties from the Fabric REST API.
 
@@ -264,22 +295,68 @@ def get_lakehouse_properties(credentials: FabricSparkCredentials) -> dict:
     the ``properties`` dict from the response. The presence of ``defaultSchema``
     in the returned dict indicates a schema-enabled lakehouse.
 
+    Results are cached per process so parallel calls don't stampede
+    the API on every connection open.
+
     Returns an empty dict for local mode (no Fabric API available).
     """
     if credentials.is_local_mode:
         return {}
 
+    cache_key = (credentials.endpoint, credentials.workspaceid, credentials.lakehouseid)
+
+    with _lakehouse_props_lock:
+        if cache_key in _lakehouse_props_cache:
+            logger.debug("Lakehouse properties served from cache")
+            return _lakehouse_props_cache[cache_key]
+
     headers = get_headers(credentials)
     url = f"{credentials.endpoint}/workspaces/{credentials.workspaceid}/lakehouses/{credentials.lakehouseid}"
-    try:
-        response = requests.get(url, headers=headers, timeout=30)
-        response.raise_for_status()
-        properties = response.json().get("properties", {})
-        logger.debug(f"Lakehouse properties: {properties}")
-        return properties
-    except Exception as e:
-        logger.warning(f"Failed to fetch lakehouse properties, defaulting to empty: {e}")
-        return {}
+
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
+            if response.status_code == 429:
+                retry_after = _parse_retry_after(response)
+                wait = max(retry_after, 2**attempt * 2)  # at least 2, 4, 8, 16, 32s
+                logger.debug(
+                    f"Lakehouse properties API returned 429, "
+                    f"retrying in {wait:.0f}s (attempt {attempt + 1}/{max_retries})"
+                )
+                time.sleep(wait)
+                continue
+            response.raise_for_status()
+            properties = response.json().get("properties", {})
+            logger.debug(f"Lakehouse properties: {properties}")
+
+            with _lakehouse_props_lock:
+                _lakehouse_props_cache[cache_key] = properties
+
+            return properties
+        except requests.exceptions.HTTPError:
+            if attempt < max_retries - 1:
+                wait = 2**attempt * 2
+                logger.debug(
+                    f"Lakehouse properties API failed, "
+                    f"retrying in {wait}s (attempt {attempt + 1}/{max_retries})"
+                )
+                time.sleep(wait)
+                continue
+            logger.warning(
+                f"Failed to fetch lakehouse properties after {max_retries} attempts, "
+                f"defaulting to empty"
+            )
+            return {}
+        except Exception as e:
+            logger.warning(f"Failed to fetch lakehouse properties, defaulting to empty: {e}")
+            return {}
+
+    logger.warning(
+        f"Failed to fetch lakehouse properties after {max_retries} retries (429), "
+        f"defaulting to empty"
+    )
+    return {}
 
 
 class LivySession:
@@ -681,12 +758,12 @@ class LivyCursor:
             LivySessionManager.connect(self.credential)
             self.session_id = self.livy_session.session_id
 
-        # Submit code with retry for transient 5xx errors
+        # Submit code with retry for transient 5xx and 429 (rate-limit) errors
         data = {"code": code, "kind": "sql"}
         url = self.connect_url + "/sessions/" + self.session_id + "/statements"
         logger.debug(f"Submitted: {data} {url}")
 
-        max_retries = 3
+        max_retries = 5
         for attempt in range(max_retries):
             res = requests.post(
                 url,
@@ -694,10 +771,19 @@ class LivyCursor:
                 headers=get_headers(self.credential, False),
                 timeout=self.credential.http_timeout,
             )
+            if res.status_code == 429:
+                retry_after = _parse_retry_after(res)
+                wait_time = max(retry_after, 2**attempt * 5)
+                logger.debug(
+                    f"Livy statement submit got HTTP 429, "
+                    f"retrying in {wait_time:.0f}s (attempt {attempt + 1}/{max_retries})"
+                )
+                time.sleep(wait_time)
+                continue
             if res.status_code < 500:
                 break
             if attempt < max_retries - 1:
-                wait_time = 2**attempt * 5  # 5s, 10s
+                wait_time = 2**attempt * 5  # 5s, 10s, 20s, 40s
                 logger.debug(
                     f"Livy statement submit got HTTP {res.status_code}, "
                     f"retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})"
@@ -731,7 +817,7 @@ class LivyCursor:
         url = self.connect_url + "/sessions/" + self.session_id + "/statements/" + statement_id
         deadline = time.time() + self.credential.statement_timeout
         consecutive_failures = 0
-        max_poll_retries = 3
+        max_poll_retries = 30
         while True:
             if time.time() > deadline:
                 raise DbtDatabaseError(
@@ -743,10 +829,25 @@ class LivyCursor:
                 headers=get_headers(self.credential, False),
                 timeout=self.credential.http_timeout,
             )
+            if poll_res.status_code == 429:
+                consecutive_failures += 1
+                retry_after = _parse_retry_after(poll_res)
+                wait_time = max(retry_after, 2 ** (consecutive_failures - 1) * 5)
+                logger.debug(
+                    f"Livy statement poll got HTTP 429, "
+                    f"retrying in {wait_time:.0f}s (attempt {consecutive_failures}/{max_poll_retries})"
+                )
+                time.sleep(wait_time)
+                if consecutive_failures > max_poll_retries:
+                    raise DbtRuntimeError(
+                        f"Livy statement poll failed after {max_poll_retries} retries "
+                        f"(HTTP 429): {poll_res.text}"
+                    )
+                continue
             if poll_res.status_code >= 500:
                 consecutive_failures += 1
                 if consecutive_failures <= max_poll_retries:
-                    wait_time = 2 ** (consecutive_failures - 1) * 5  # 5s, 10s, 20s
+                    wait_time = 2 ** (consecutive_failures - 1) * 5  # 5s, 10s, 20s, ...
                     logger.debug(
                         f"Livy statement poll got HTTP {poll_res.status_code}, "
                         f"retrying in {wait_time}s (attempt {consecutive_failures}/{max_poll_retries})"

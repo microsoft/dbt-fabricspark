@@ -201,6 +201,16 @@ def cmd_run_tests() -> None:
     else:
         os.environ["SCHEMA_NAME"] = lakehouse_name
 
+    # Non-schema lakehouses have a single namespace (Fabric blocks CREATE DATABASE),
+    # so parallel xdist workers cause table-name collisions. Run sequentially.
+    # Schema-enabled lakehouses get per-class schemas for full parallel isolation.
+    # Use loadscope so ordered test methods within a class stay on the same worker
+    # (e.g. TestMaterializedLakeView's test_01 … test_09 depend on execution order).
+    if args.schema_mode == "no_schema":
+        parallelism_args = ["-n", "1"]
+    else:
+        parallelism_args = ["-n", "auto", "--dist=loadscope"]
+
     pytest_args = [
         "tests/functional",
         "-v",
@@ -208,10 +218,8 @@ def cmd_run_tests() -> None:
         "-x",
         f"--schema-mode={args.schema_mode}",
         "--profile=az_cli",
-        "-n",
-        "auto",
-        "--dist=load",
-        "--fail-fast-sentinel=logs/test-runs/fail-fast-sentinel.json",
+        *parallelism_args,
+        f"--fail-fast-sentinel=logs/test-runs/fail-fast-sentinel-{args.schema_mode}.json",
     ]
 
     if session_file:

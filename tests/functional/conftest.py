@@ -171,6 +171,9 @@ def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update, 
     Overrides root conftest's ``dbt_profile_data`` to:
     1. Use ``is_schema_enabled`` directly — no Fabric API call needed.
     2. Deep-copy the session-scoped target to prevent cross-class mutation.
+    3. Schema-enabled lakehouses use ``unique_schema`` for test isolation.
+    4. Non-schema lakehouses use the lakehouse name (single namespace);
+       tests run sequentially to avoid table-name collisions.
     """
     target = copy.deepcopy(dbt_profile_target)
 

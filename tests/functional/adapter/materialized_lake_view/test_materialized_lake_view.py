@@ -200,10 +200,22 @@ class TestMaterializedLakeView:
         assert len(results) == 1
         assert results[0].status == "success"
 
+    def _fq_schema(self, project) -> str:
+        """Return the fully-qualified schema for raw SQL queries.
+
+        In three-part naming mode (schema-enabled), this is ``database.schema``.
+        In two-part naming mode, this is just ``schema``.
+        """
+        db = project.database
+        schema = project.test_schema
+        if db:
+            return f"{db}.{schema}"
+        return schema
+
     def test_04_mlv_on_demand_has_data(self, project):
         """The on-demand MLV should contain the expected rows."""
         result = project.run_sql(
-            f"select count(*) from {project.test_schema}.mlv_on_demand",
+            f"select count(*) from {self._fq_schema(project)}.mlv_on_demand",
             fetch="one",
         )
         assert int(result[0]) == 3
@@ -211,7 +223,7 @@ class TestMaterializedLakeView:
     def test_05_mlv_on_demand_has_computed_column(self, project):
         """Verify the tier column is computed correctly."""
         result = project.run_sql(
-            f"select tier from {project.test_schema}.mlv_on_demand where name = 'alice'",
+            f"select tier from {self._fq_schema(project)}.mlv_on_demand where name = 'alice'",
             fetch="one",
         )
         assert result[0] == "low"  # alice has amount=100
@@ -229,7 +241,7 @@ class TestMaterializedLakeView:
     def test_07_mlv_scheduled_has_data(self, project):
         """The scheduled MLV should have aggregated data."""
         result = project.run_sql(
-            f"select count(*) from {project.test_schema}.mlv_scheduled",
+            f"select count(*) from {self._fq_schema(project)}.mlv_scheduled",
             fetch="one",
         )
         assert int(result[0]) == 3  # 3 distinct names

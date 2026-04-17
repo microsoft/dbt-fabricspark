@@ -9,8 +9,13 @@ groups:
     Strategy: sequential
     Mode: failfast
 
+  - Group: Warmup-Sessions
+    Strategy: parallel
+    Mode: failfast
+
   - Group: Integration-Tests
     Strategy: parallel
+    Mode: failfast
 
   - Group: Post-Test-Cleanup
     Strategy: sequential
@@ -31,6 +36,16 @@ tasks:
     Name: Provision with_schema lakehouse
     Group: Provision-Infra
     TimeoutInMinutes: 5
+
+  - Command: uv run python -m tests.functional.orchestrator create-session --schema-mode no_schema
+    Name: Create Livy session (no_schema)
+    Group: Warmup-Sessions
+    TimeoutInMinutes: 15
+
+  - Command: uv run python -m tests.functional.orchestrator create-session --schema-mode with_schema
+    Name: Create Livy session (with_schema)
+    Group: Warmup-Sessions
+    TimeoutInMinutes: 15
 
   - Command: uv run python -m tests.functional.orchestrator run-tests --schema-mode no_schema
     Name: Functional tests (no_schema)

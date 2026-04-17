@@ -83,6 +83,97 @@ def cmd_provision() -> None:
     logger.info("Written to %s", SHARED_ENV_FILE)
 
 
+def cmd_create_session() -> None:
+    """
+    Pre-create a Livy session for a lakehouse and write its ID to a file.
+    """
+    import json
+
+    import requests
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--schema-mode", required=True, choices=("no_schema", "with_schema"))
+    args = parser.parse_args(sys.argv[2:])
+
+    _load_shared_env()
+
+    prefix = args.schema_mode.upper()
+    lakehouse_id = os.environ.get(f"{prefix}_LAKEHOUSE_ID")
+    lakehouse_name = os.environ.get(f"{prefix}_LAKEHOUSE_NAME")
+    workspace_id = os.environ.get("WORKSPACE_ID")
+    api_endpoint = os.environ.get("LIVY_ENDPOINT", "https://api.fabric.microsoft.com/v1")
+
+    if not all([lakehouse_id, lakehouse_name, workspace_id]):
+        logger.error("Missing lakehouse or workspace details for %s", args.schema_mode)
+        sys.exit(1)
+
+    token_str = os.environ.get("FABRIC_INTEGRATION_TESTS_TOKEN")
+    if not token_str:
+        from azure.identity import AzureCliCredential
+
+        token_str = (
+            AzureCliCredential(process_timeout=30)
+            .get_token("https://analysis.windows.net/powerbi/api/.default")
+            .token
+        )
+
+    livy_url = (
+        f"{api_endpoint}/workspaces/{workspace_id}"
+        f"/lakehouses/{lakehouse_id}/livyapi/versions/2023-12-01"
+    )
+
+    spark_config = {
+        "name": f"dbt-test-{lakehouse_name}",
+        "conf": {
+            "spark.livy.session.idle.timeout": "60m",
+        },
+        "tags": {"project": f"dbt-test-{lakehouse_name}"},
+    }
+
+    headers = {"Authorization": f"Bearer {token_str}", "Content-Type": "application/json"}
+
+    logger.info("Creating Livy session for %s at %s...", lakehouse_name, livy_url)
+    resp = requests.post(
+        f"{livy_url}/sessions",
+        data=json.dumps(spark_config),
+        headers=headers,
+        timeout=120,
+    )
+    resp.raise_for_status()
+    session_id = str(resp.json()["id"])
+    logger.info("Livy session initiated: %s (waiting for idle...)", session_id)
+
+    deadline = time.monotonic() + 600
+    while time.monotonic() < deadline:
+        time.sleep(10)
+        status_resp = requests.get(
+            f"{livy_url}/sessions/{session_id}",
+            headers=headers,
+            timeout=30,
+        )
+        if status_resp.ok:
+            data = status_resp.json()
+            top_state = data.get("state", "")
+            livy_state = data.get("livyInfo", {}).get("currentState", "")
+            logger.info("  Session %s: top=%s livy=%s", session_id, top_state, livy_state)
+            if livy_state == "idle":
+                break
+            if livy_state in ("dead", "error", "killed") or top_state in ("dead", "error"):
+                logger.error("Session failed to start: %s", data)
+                sys.exit(1)
+    else:
+        logger.error("Session did not become idle within 10 minutes")
+        sys.exit(1)
+
+    session_file = f"logs/test-runs/livy-session-{args.schema_mode}.txt"
+    os.makedirs(os.path.dirname(session_file), exist_ok=True)
+    with open(session_file, "w") as f:
+        f.write(session_id)
+
+    _append_shared_env(f"{prefix}_SESSION_FILE", os.path.abspath(session_file))
+    logger.info("Session %s ready, written to %s", session_id, session_file)
+
+
 def cmd_run_tests() -> None:
     """Run pytest for a specific schema mode, loading lakehouse details from shared env."""
     import pytest
@@ -97,6 +188,7 @@ def cmd_run_tests() -> None:
     prefix = args.schema_mode.upper()
     lakehouse_id = os.environ.get(f"{prefix}_LAKEHOUSE_ID")
     lakehouse_name = os.environ.get(f"{prefix}_LAKEHOUSE_NAME")
+    session_file = os.environ.get(f"{prefix}_SESSION_FILE", "")
 
     if not lakehouse_id or not lakehouse_name:
         logger.error("Lakehouse details not found in shared env for %s", args.schema_mode)
@@ -113,10 +205,18 @@ def cmd_run_tests() -> None:
         "tests/functional",
         "-v",
         "--tb=short",
+        "-x",
         f"--schema-mode={args.schema_mode}",
         "--profile=az_cli",
-        *args.extra_args,
+        "-n",
+        "auto",
+        "--dist=load",
     ]
+
+    if session_file:
+        pytest_args.append(f"--session-id-file={session_file}")
+
+    pytest_args.extend(args.extra_args)
 
     logger.info("pytest.main(%s)", pytest_args)
     exit_code = pytest.main(pytest_args)
@@ -126,6 +226,7 @@ def cmd_run_tests() -> None:
 COMMANDS = {
     "nuke": cmd_nuke,
     "provision": cmd_provision,
+    "create-session": cmd_create_session,
     "run-tests": cmd_run_tests,
 }
 

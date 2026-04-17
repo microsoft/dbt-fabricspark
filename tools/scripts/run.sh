@@ -22,11 +22,13 @@ declare -A TARGETS=(
     ["lint"]="ruff check + format --check"
     ["fix"]="ruff auto-fix + format"
     ["build"]="Build wheel to dist/ + twine check"
-    ["test"]="pytest unit tests"
+    ["test"]="pytest unit + functional tests"
+    ["test:unit"]="pytest unit tests"
+    ["test:functional"]="pytest functional tests (requires Fabric credentials)"
     ["publish"]="twine check + uv publish (no-op if UV_PUBLISH_TOKEN unset)"
     ["all"]="Run clean, lint, build, test, publish in sequence"
 )
-TARGET_ORDER=("venv" "clean" "lint" "fix" "build" "test" "publish")
+TARGET_ORDER=("venv" "clean" "lint" "fix" "build" "test" "test:unit" "test:functional" "publish")
 ALL_ORDER=("clean" "lint" "build" "test" "publish")
 
 print_usage() {
@@ -66,7 +68,7 @@ run_venv()  { create_venv; }
 
 run_clean() {
     cd "${PROJECT_DIR}"
-    rm -rf dist/ build/ .pytest_cache .ruff_cache
+    rm -rf dist/ build/ .pytest_cache .ruff_cache logs
     find . -type d -name '*.egg-info' -not -path './.venv/*' -not -path './node_modules/*' -exec rm -rf {} + 2>/dev/null || true
     find . -type d -name '__pycache__' -not -path './.venv/*' -not -path './node_modules/*' -exec rm -rf {} + 2>/dev/null || true
     echo "  Cleaned build artifacts."
@@ -97,9 +99,23 @@ run_build() {
 }
 
 run_test() {
+    run_test_unit
+    run_test_functional
+}
+
+run_test_unit() {
     ensure_venv
     cd "${PROJECT_DIR}"
     uv run pytest tests/unit -vv
+}
+
+run_test_functional() {
+    ensure_venv
+    cd "${PROJECT_DIR}"
+
+    echo "  Running functional tests via scheduler"
+    uv run python -m tests.functional.scheduler.app \
+        -c tests/functional/test_config.yaml
 }
 
 run_publish() {
@@ -125,9 +141,10 @@ case "$TARGET" in
     "all")
         for t in "${ALL_ORDER[@]}"; do
             echo ""; echo "── ${t} ──"
-            "run_${t}"
+            FUNC_NAME="run_${t//:/_}"
+            "$FUNC_NAME"
         done
         echo ""; echo "=== All targets completed. ==="
         ;;
-    *) "run_${TARGET}" ;;
+    *) FUNC_NAME="run_${TARGET//:/_}"; "$FUNC_NAME" ;;
 esac

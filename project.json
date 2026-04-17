@@ -31,9 +31,26 @@
       },
       "test": {
          "executor": "nx:run-commands",
+         "dependsOn": ["test:unit", "test:functional"],
+         "options": {
+            "commands": [],
+            "parallel": false
+         }
+      },
+      "test:unit": {
+         "executor": "nx:run-commands",
          "options": {
             "commands": [
-               { "command": "bash tools/scripts/run.sh test", "forwardAllArgs": false }
+               { "command": "bash tools/scripts/run.sh test:unit", "forwardAllArgs": false }
+            ],
+            "parallel": false
+         }
+      },
+      "test:functional": {
+         "executor": "nx:run-commands",
+         "options": {
+            "commands": [
+               { "command": "bash tools/scripts/run.sh test:functional", "forwardAllArgs": false }
             ],
             "parallel": false
          }

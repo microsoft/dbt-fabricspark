@@ -1,6 +1,14 @@
 # Grabs VS Code's devcontainer base image for Ubuntu
 FROM mcr.microsoft.com/vscode/devcontainers/base:dev-ubuntu-22.04
 
+# Use Azure mirror, it's faster
+RUN sed -i 's|/archive.ubuntu.com|/azure.archive.ubuntu.com|g' /etc/apt/sources.list
+RUN echo "Acquire::Retries \"25\";" > /etc/apt/apt.conf.d/80-retries \
+    && echo 'Acquire::Queue-Mode "access";' >> /etc/apt/apt.conf.d/80-retries \
+    && echo 'Acquire::http::Pipeline-Depth "10";' >> /etc/apt/apt.conf.d/80-retries \
+    && echo 'Acquire::Languages "none";' > /etc/apt/apt.conf.d/90-no-translations \
+    && echo 'APT::Install-Recommends "false";' > /etc/apt/apt.conf.d/90-no-recommends
+
 # Copy library scripts to execute
 COPY overlay/*.sh /tmp/overlay/
 
@@ -9,3 +17,4 @@ COPY config/defaults /opt/spark-devcontainer/config/defaults
 
 # Install necessary packages
 RUN /tmp/overlay/install-packages.sh
+RUN /tmp/overlay/install-python-tooling.sh

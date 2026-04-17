@@ -14,9 +14,9 @@ env:
 jobs:
   linux:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 360
     container:
-      image: dbtfabric.azurecr.io/devcontainer/spark:b296e609fa851da70c93b4f7b29e56c64a742cb26c193935e17afddcca151fca
+      image: dbtfabric.azurecr.io/devcontainer/spark:c30058bab7d446a30b78be86804639114f58edb0242a79c5e1400af912052265
       options: >-
         --cap-add=SYS_ADMIN
         --device=/dev/fuse
@@ -31,7 +31,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
-      
+
       - name: "🔒 Configure container permissions and PATH"
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"

@@ -29,7 +29,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     timeout-minutes: 120
     container:
-      image: dbtfabric.azurecr.io/devcontainer/spark:b296e609fa851da70c93b4f7b29e56c64a742cb26c193935e17afddcca151fca
+      image: dbtfabric.azurecr.io/devcontainer/spark:c30058bab7d446a30b78be86804639114f58edb0242a79c5e1400af912052265
       options: >-
         --cap-add=SYS_ADMIN
         --device=/dev/fuse

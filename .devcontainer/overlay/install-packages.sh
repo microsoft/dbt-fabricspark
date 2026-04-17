@@ -38,7 +38,6 @@ wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${
 chmod +x /usr/local/bin/yq
 
 curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="${INSTALL_PATH}" sh
 
 echo "Installing Apache Spark '$SPARK_VERSION' (for local 'spark-submit', identical to Fabric runtime)"
 wget https://archive.apache.org/dist/spark/spark-$SPARK_VERSION/spark-$SPARK_VERSION-bin-hadoop3.tgz &&

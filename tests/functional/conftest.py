@@ -1,12 +1,37 @@
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import os
+import time
+from pathlib import Path
+from typing import Optional
 
 import pytest
 
 logger = logging.getLogger("functional_conftest")
+
+_fail_fast_sentinel: Optional[Path] = None
+
+
+def _write_fail_sentinel(nodeid: str) -> None:
+    """Write the fail-fast sentinel file (exclusive create, first writer wins)."""
+    if _fail_fast_sentinel is None or _fail_fast_sentinel.exists():
+        return
+    try:
+        _fail_fast_sentinel.parent.mkdir(parents=True, exist_ok=True)
+        with open(_fail_fast_sentinel, "x") as f:
+            json.dump(
+                {
+                    "test": nodeid,
+                    "worker": os.environ.get("PYTEST_XDIST_WORKER", "controller"),
+                    "timestamp": time.time(),
+                },
+                f,
+            )
+    except FileExistsError:
+        pass
 
 
 def pytest_addoption(parser):
@@ -23,6 +48,42 @@ def pytest_addoption(parser):
         default=None,
         help="Path to shared Livy session ID file for session reuse across xdist workers",
     )
+    parser.addoption(
+        "--fail-fast-sentinel",
+        action="store",
+        default=None,
+        help="Path to shared fail-fast sentinel file for cross-session abort on first failure",
+    )
+
+
+def pytest_configure(config):
+    global _fail_fast_sentinel
+    sentinel = config.getoption("--fail-fast-sentinel", default=None)
+    if sentinel:
+        _fail_fast_sentinel = Path(sentinel).resolve()
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item):
+    """Abort test session if a prior test has failed (cross-worker, cross-session)."""
+    if _fail_fast_sentinel is not None and _fail_fast_sentinel.exists():
+        try:
+            info = _fail_fast_sentinel.read_text()
+        except OSError:
+            info = "(unable to read sentinel)"
+        pytest.exit(f"fail-fast: aborting — a prior test failed.\n{info}", returncode=1)
+
+
+def pytest_runtest_logreport(report):
+    """Write fail-fast sentinel on first test failure or setup error."""
+    if report.failed and report.when != "teardown":
+        _write_fail_sentinel(report.nodeid)
+
+
+def pytest_collectreport(report):
+    """Write fail-fast sentinel on collection errors (e.g. import failures)."""
+    if report.failed:
+        _write_fail_sentinel(report.nodeid)
 
 
 @pytest.fixture(scope="session")

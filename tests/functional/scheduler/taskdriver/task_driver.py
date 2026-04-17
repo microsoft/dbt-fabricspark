@@ -48,6 +48,7 @@ class TaskDriver:
         #
         self.failedTaskEvent = None
         self.failedTaskLog = None
+        self.childPids = None
 
     def __call__(self):
         """
@@ -117,6 +118,9 @@ class TaskDriver:
                     stderr=log,
                 )
 
+        if self.childPids is not None:
+            self.childPids[self.taskId] = self.process.pid
+
     def _waitForStatus(self):
         """
         Wait for the spawned shell script to finished.
@@ -177,10 +181,11 @@ class TaskDriver:
                 print("Error: ", e)
                 pass
 
-    def setSyncVariable(self, failedTaskEvent, failedTaskLog):
+    def setSyncVariable(self, failedTaskEvent, failedTaskLog, childPids=None):
         """
         Set the sync variables for the task
         """
 
         self.failedTaskEvent = failedTaskEvent
         self.failedTaskLog = failedTaskLog
+        self.childPids = childPids

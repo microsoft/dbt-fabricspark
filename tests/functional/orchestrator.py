@@ -211,6 +211,7 @@ def cmd_run_tests() -> None:
         "-n",
         "auto",
         "--dist=load",
+        "--fail-fast-sentinel=logs/test-runs/fail-fast-sentinel.json",
     ]
 
     if session_file:

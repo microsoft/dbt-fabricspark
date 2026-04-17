@@ -3,6 +3,8 @@
 
 import multiprocessing
 
+import psutil
+
 from tests.functional.scheduler.taskdriver.task_driver_factory import TaskDriverFactory
 
 from ..common.constants import (
@@ -19,6 +21,23 @@ class ParallelScheduler(BaseTaskScheduler):
     """
     Schedule tasks in parallel with given mode
     """
+
+    def _killChildProcessTrees(self):
+        """
+        Kill child process trees spawned by task drivers to prevent orphans.
+        """
+        for task_id, pid in self.childPids.items():
+            try:
+                parent = psutil.Process(pid)
+                children = parent.children(recursive=True)
+                for child in children:
+                    try:
+                        child.kill()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+                parent.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
 
     def _taskCallback(self, result):
         """
@@ -40,6 +59,7 @@ class ParallelScheduler(BaseTaskScheduler):
             # if failfast was set, we kill all processes within the same process group
             #
             if self.mode == FAILFAST:
+                self._killChildProcessTrees()
                 self.processPool.terminate()
 
     def __call__(self, tasks: dict):
@@ -61,6 +81,10 @@ class ParallelScheduler(BaseTaskScheduler):
         #
         self.failedTaskLog = processManager.list()
 
+        # Shared dict for child process PIDs — used to kill orphans on failfast
+        #
+        self.childPids = processManager.dict()
+
         # The conflict tasks cannot parallelly run with some existed tasks and would be saved to sequentially schedule at the end.
         #
         conflictTasks = []
@@ -68,7 +92,7 @@ class ParallelScheduler(BaseTaskScheduler):
         for task in tasks:
             task["Strategy"] = PARALLEL_STRATEGY
             driver = TaskDriverFactory.createTaskDriver(task, self.mode)
-            driver.setSyncVariable(self.failedTaskEvent, self.failedTaskLog)
+            driver.setSyncVariable(self.failedTaskEvent, self.failedTaskLog, self.childPids)
             self.processPool.apply_async(driver, args=(), callback=self._taskCallback)
 
         self.processPool.close()

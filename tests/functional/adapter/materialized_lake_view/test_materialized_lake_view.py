@@ -31,6 +31,30 @@ def _schema_enabled_configured() -> bool:
     return bool(schema and lakehouse and schema != lakehouse)
 
 
+skip_no_schema = pytest.mark.skipif(
+    not _schema_enabled_configured(),
+    reason="Schema-enabled lakehouse not configured (SCHEMA_NAME == LAKEHOUSE_NAME or not set)",
+)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _fq_schema(project) -> str:
+    """Return the fully-qualified schema for raw SQL queries.
+
+    In three-part naming mode (schema-enabled), this is ``database.schema``.
+    In two-part naming mode, this is just ``schema``.
+    """
+    db = project.database
+    schema = project.test_schema
+    if db:
+        return f"{db}.{schema}"
+    return schema
+
+
 # ---------------------------------------------------------------------------
 # Seed data — simple Delta source tables
 # ---------------------------------------------------------------------------
@@ -143,25 +167,107 @@ select id, name from {{ ref('non_delta_view') }}
 
 
 # ===========================================================================
-# Test class — Schema-enabled lakehouse MLV tests
+# Happy-path test classes — split for xdist parallel distribution
 # ===========================================================================
 
 
-@pytest.mark.skipif(
-    not _schema_enabled_configured(),
-    reason="Schema-enabled lakehouse not configured (SCHEMA_NAME == LAKEHOUSE_NAME or not set)",
-)
-class TestMaterializedLakeView:
-    """End-to-end MLV tests on a schema-enabled lakehouse.
-
-    Test execution order matters — seed/source must exist before MLV models.
-    Tests are numbered to enforce order with pytest's default alphabetical
-    sorting.
-    """
+@skip_no_schema
+class TestMLVOnDemand:
+    """On-demand MLV: creation, data verification, computed columns, idempotency."""
 
     @pytest.fixture(scope="class")
     def project_config_update(self):
-        return {"name": "mlv_functional_test"}
+        return {"name": "mlv_on_demand_test"}
+
+    @pytest.fixture(scope="class")
+    def seeds(self):
+        return {"mlv_seed.csv": _seeds_csv}
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {
+            "mlv_source_table.sql": _source_table_sql,
+            "mlv_on_demand.sql": _mlv_on_demand_sql,
+        }
+
+    @pytest.fixture(scope="class", autouse=True)
+    def setup_mlv(self, project):
+        """Seed data, create source table, and create on-demand MLV."""
+        results = run_dbt(["seed"])
+        assert len(results) == 1
+        results = run_dbt(["run", "--select", "mlv_source_table"])
+        assert len(results) == 1 and results[0].status == "success"
+        results = run_dbt(["run", "--select", "mlv_on_demand"])
+        assert len(results) == 1 and results[0].status == "success"
+
+    def test_on_demand_has_data(self, project):
+        """The on-demand MLV should contain the expected rows."""
+        result = project.run_sql(
+            f"select count(*) from {_fq_schema(project)}.mlv_on_demand",
+            fetch="one",
+        )
+        assert int(result[0]) == 3
+
+    def test_on_demand_has_computed_column(self, project):
+        """Verify the tier column is computed correctly."""
+        result = project.run_sql(
+            f"select tier from {_fq_schema(project)}.mlv_on_demand where name = 'alice'",
+            fetch="one",
+        )
+        assert result[0] == "low"  # alice has amount=100
+
+    def test_rerun_is_idempotent(self, project):
+        """Running the same MLV again should succeed (CREATE OR REPLACE)."""
+        results = run_dbt(["run", "--select", "mlv_on_demand"])
+        assert len(results) == 1
+        assert results[0].status == "success"
+
+
+@skip_no_schema
+class TestMLVScheduled:
+    """Scheduled MLV: creation and data verification."""
+
+    @pytest.fixture(scope="class")
+    def project_config_update(self):
+        return {"name": "mlv_scheduled_test"}
+
+    @pytest.fixture(scope="class")
+    def seeds(self):
+        return {"mlv_seed.csv": _seeds_csv}
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {
+            "mlv_source_table.sql": _source_table_sql,
+            "mlv_scheduled.sql": _mlv_scheduled_sql,
+        }
+
+    @pytest.fixture(scope="class", autouse=True)
+    def setup_mlv(self, project):
+        """Seed data, create source table, and create scheduled MLV."""
+        results = run_dbt(["seed"])
+        assert len(results) == 1
+        results = run_dbt(["run", "--select", "mlv_source_table"])
+        assert len(results) == 1 and results[0].status == "success"
+        results = run_dbt(["run", "--select", "mlv_scheduled"])
+        assert len(results) == 1 and results[0].status == "success"
+
+    def test_scheduled_has_data(self, project):
+        """The scheduled MLV should have aggregated data."""
+        result = project.run_sql(
+            f"select count(*) from {_fq_schema(project)}.mlv_scheduled",
+            fetch="one",
+        )
+        assert int(result[0]) == 3  # 3 distinct names
+
+
+@skip_no_schema
+class TestMLVFullBuild:
+    """Full dbt build including all MLV models."""
+
+    @pytest.fixture(scope="class")
+    def project_config_update(self):
+        return {"name": "mlv_full_build_test"}
 
     @pytest.fixture(scope="class")
     def seeds(self):
@@ -175,92 +281,7 @@ class TestMaterializedLakeView:
             "mlv_scheduled.sql": _mlv_scheduled_sql,
         }
 
-    # ------------------------------------------------------------------
-    # 1. Setup: seed + source table
-    # ------------------------------------------------------------------
-
-    def test_01_seed_data(self, project):
-        """Seed the base data into the lakehouse."""
-        results = run_dbt(["seed"])
-        assert len(results) == 1
-
-    def test_02_create_source_table(self, project):
-        """Create the Delta source table the MLVs depend on."""
-        results = run_dbt(["run", "--select", "mlv_source_table"])
-        assert len(results) == 1
-        assert results[0].status == "success"
-
-    # ------------------------------------------------------------------
-    # 2. MLV creation — on-demand
-    # ------------------------------------------------------------------
-
-    def test_03_create_mlv_on_demand(self, project):
-        """Create an MLV with on-demand refresh and verify it succeeds."""
-        results = run_dbt(["run", "--select", "mlv_on_demand"])
-        assert len(results) == 1
-        assert results[0].status == "success"
-
-    def _fq_schema(self, project) -> str:
-        """Return the fully-qualified schema for raw SQL queries.
-
-        In three-part naming mode (schema-enabled), this is ``database.schema``.
-        In two-part naming mode, this is just ``schema``.
-        """
-        db = project.database
-        schema = project.test_schema
-        if db:
-            return f"{db}.{schema}"
-        return schema
-
-    def test_04_mlv_on_demand_has_data(self, project):
-        """The on-demand MLV should contain the expected rows."""
-        result = project.run_sql(
-            f"select count(*) from {self._fq_schema(project)}.mlv_on_demand",
-            fetch="one",
-        )
-        assert int(result[0]) == 3
-
-    def test_05_mlv_on_demand_has_computed_column(self, project):
-        """Verify the tier column is computed correctly."""
-        result = project.run_sql(
-            f"select tier from {self._fq_schema(project)}.mlv_on_demand where name = 'alice'",
-            fetch="one",
-        )
-        assert result[0] == "low"  # alice has amount=100
-
-    # ------------------------------------------------------------------
-    # 3. MLV creation — scheduled
-    # ------------------------------------------------------------------
-
-    def test_06_create_mlv_scheduled(self, project):
-        """Create an MLV with a daily schedule and verify it succeeds."""
-        results = run_dbt(["run", "--select", "mlv_scheduled"])
-        assert len(results) == 1
-        assert results[0].status == "success"
-
-    def test_07_mlv_scheduled_has_data(self, project):
-        """The scheduled MLV should have aggregated data."""
-        result = project.run_sql(
-            f"select count(*) from {self._fq_schema(project)}.mlv_scheduled",
-            fetch="one",
-        )
-        assert int(result[0]) == 3  # 3 distinct names
-
-    # ------------------------------------------------------------------
-    # 4. MLV re-run (CREATE OR REPLACE — idempotent)
-    # ------------------------------------------------------------------
-
-    def test_08_rerun_mlv_is_idempotent(self, project):
-        """Running the same MLV again should succeed (CREATE OR REPLACE)."""
-        results = run_dbt(["run", "--select", "mlv_on_demand"])
-        assert len(results) == 1
-        assert results[0].status == "success"
-
-    # ------------------------------------------------------------------
-    # 5. Full build (seed + all models + tests)
-    # ------------------------------------------------------------------
-
-    def test_09_full_build(self, project):
+    def test_full_build(self, project):
         """dbt build should succeed for the entire project including MLVs."""
         results = run_dbt(["build"])
         for r in results:
@@ -274,10 +295,7 @@ class TestMaterializedLakeView:
 # ===========================================================================
 
 
-@pytest.mark.skipif(
-    not _schema_enabled_configured(),
-    reason="Schema-enabled lakehouse not configured",
-)
+@skip_no_schema
 class TestMLVMissingRefreshConfig:
     """MLV model without mlv_on_demand or mlv_schedule should fail."""
 
@@ -305,10 +323,7 @@ class TestMLVMissingRefreshConfig:
         assert results[0].status == "error"
 
 
-@pytest.mark.skipif(
-    not _schema_enabled_configured(),
-    reason="Schema-enabled lakehouse not configured",
-)
+@skip_no_schema
 class TestMLVNonDeltaSourceValidation:
     """MLV model referencing a non-Delta view should fail delta validation."""
 

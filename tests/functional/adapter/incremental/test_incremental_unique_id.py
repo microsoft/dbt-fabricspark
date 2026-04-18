@@ -554,7 +554,9 @@ class BaseIncrementalUniqueKey:
         assert "thisisnotacolumn" in exc.lower()
 
 
-class TestUniqueKeySpark(BaseIncrementalUniqueKey):
+class UniqueKeySparkBase(BaseIncrementalUniqueKey):
+    """Shared configuration for Spark unique-key tests."""
+
     @pytest.fixture(scope="class")
     def project_config_update(self):
         return {
@@ -563,3 +565,23 @@ class TestUniqueKeySpark(BaseIncrementalUniqueKey):
                 "+incremental_strategy": "merge",
             }
         }
+
+
+class TestUniqueKeySparkStr(UniqueKeySparkBase):
+    """String-based unique key tests."""
+
+    test__empty_unique_key_list = None
+    test__unary_unique_key_list = None
+    test__duplicated_unary_unique_key_list = None
+    test__trinary_unique_key_list = None
+    test__trinary_unique_key_list_no_update = None
+    test__bad_unique_key_list = None
+
+
+class TestUniqueKeySparkList(UniqueKeySparkBase):
+    """List-based unique key tests."""
+
+    test__no_unique_keys = None
+    test__empty_str_unique_key = None
+    test__one_unique_key = None
+    test__bad_unique_key = None

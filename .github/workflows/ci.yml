@@ -48,6 +48,11 @@ jobs:
           tenant-id: ${{ secrets.TENANT_ID }}
           allow-no-subscriptions: true
 
+      - name: "📝 Write test.env"
+        run: |
+          echo "WORKSPACE_ID=${{ secrets.WORKSPACE_ID }}" > "$GITHUB_WORKSPACE/test.env"
+          echo "LIVY_ENDPOINT=${FABRIC_API}" >> "$GITHUB_WORKSPACE/test.env"
+
       - name: "⚙️ Post create commands"
         run: /tmp/overlay/post-create-commands.sh
 

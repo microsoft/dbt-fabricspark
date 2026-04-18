@@ -89,7 +89,7 @@ _mlv_scheduled_sql = """
         "enabled": true,
         "configuration": {
             "startDateTime": "2026-04-10T00:00:00",
-            "endDateTime": "2027-04-10T00:00:00",
+            "endDateTime": "2099-04-10T00:00:00",
             "localTimeZoneId": "Central Standard Time",
             "type": "Daily",
             "times": ["06:00"]

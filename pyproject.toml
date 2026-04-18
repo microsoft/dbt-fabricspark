@@ -49,6 +49,7 @@ dev = [
     "pytest-dotenv~=0.5.2",
     "flaky~=3.7",
     "pytest-xdist~=3.5",
+    "pytest-json-report~=1.5",
     #"dbt-tests-adapter @ git+https://github.com/dbt-labs/dbt-adapters.git@v1.10.0#egg=dbt-tests-adapter&subdirectory=dbt-tests-adapter",
     "dbt-tests-adapter",
     # Linting & formatting
@@ -87,6 +88,11 @@ filterwarnings = [
 ]
 env_files = ["test.env"]
 testpaths = ["tests/unit"]
+addopts = [
+    "--json-report",
+    "--json-report-file=logs/test-runs/report.json",
+    "--json-report-omit=collectors",
+]
 
 [tool.ruff]
 # Target Python versions

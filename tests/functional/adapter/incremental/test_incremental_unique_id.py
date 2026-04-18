@@ -567,9 +567,11 @@ class UniqueKeySparkBase(BaseIncrementalUniqueKey):
         }
 
 
-class TestUniqueKeySparkStr(UniqueKeySparkBase):
-    """String-based unique key tests."""
+class TestUniqueKeySparkStrA(UniqueKeySparkBase):
+    """String unique keys — no-key and empty-string scenarios."""
 
+    test__one_unique_key = None
+    test__bad_unique_key = None
     test__empty_unique_key_list = None
     test__unary_unique_key_list = None
     test__duplicated_unary_unique_key_list = None
@@ -578,10 +580,38 @@ class TestUniqueKeySparkStr(UniqueKeySparkBase):
     test__bad_unique_key_list = None
 
 
-class TestUniqueKeySparkList(UniqueKeySparkBase):
-    """List-based unique key tests."""
+class TestUniqueKeySparkStrB(UniqueKeySparkBase):
+    """String unique keys — single-key and bad-key scenarios."""
+
+    test__no_unique_keys = None
+    test__empty_str_unique_key = None
+    test__empty_unique_key_list = None
+    test__unary_unique_key_list = None
+    test__duplicated_unary_unique_key_list = None
+    test__trinary_unique_key_list = None
+    test__trinary_unique_key_list_no_update = None
+    test__bad_unique_key_list = None
+
+
+class TestUniqueKeySparkListA(UniqueKeySparkBase):
+    """List unique keys — empty, unary, and duplicated-unary scenarios."""
 
     test__no_unique_keys = None
     test__empty_str_unique_key = None
     test__one_unique_key = None
     test__bad_unique_key = None
+    test__trinary_unique_key_list = None
+    test__trinary_unique_key_list_no_update = None
+    test__bad_unique_key_list = None
+
+
+class TestUniqueKeySparkListB(UniqueKeySparkBase):
+    """List unique keys — trinary and bad-list scenarios."""
+
+    test__no_unique_keys = None
+    test__empty_str_unique_key = None
+    test__one_unique_key = None
+    test__bad_unique_key = None
+    test__empty_unique_key_list = None
+    test__unary_unique_key_list = None
+    test__duplicated_unary_unique_key_list = None

@@ -5,6 +5,22 @@ import pytest
 
 pytest_plugins = ["dbt.tests.fixtures.project"]
 
+_test_phase_starts: dict[str, float] = {}
+
+
+def pytest_json_runtest_metadata(item, call):
+    nodeid = item.nodeid
+    if call.when == "setup":
+        _test_phase_starts[nodeid] = call.start
+    if call.when == "teardown":
+        start = _test_phase_starts.pop(nodeid, call.start)
+        return {
+            "start": start,
+            "stop": call.stop,
+            "worker": os.environ.get("PYTEST_XDIST_WORKER", "main"),
+        }
+    return {}
+
 
 def pytest_addoption(parser):
     parser.addoption("--profile", action="store", default="az_cli", type=str)

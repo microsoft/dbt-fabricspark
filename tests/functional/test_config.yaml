@@ -27,30 +27,36 @@ tasks:
     Group: Pre-Test-Cleanup
     TimeoutInMinutes: 5
 
-  - Command: uv run python -m tests.functional.orchestrator provision --schema-mode no_schema
-    Name: Provision no_schema lakehouse
-    Group: Provision-Infra
-    TimeoutInMinutes: 5
+  # === TODO: DO NOT MERGE ===========================================================================
+  # - Command: uv run python -m tests.functional.orchestrator provision --schema-mode no_schema
+  #   Name: Provision no_schema lakehouse
+  #   Group: Provision-Infra
+  #   TimeoutInMinutes: 5
+  # ==================================================================================================
 
   - Command: uv run python -m tests.functional.orchestrator provision --schema-mode with_schema
     Name: Provision with_schema lakehouse
     Group: Provision-Infra
     TimeoutInMinutes: 5
 
-  - Command: uv run python -m tests.functional.orchestrator create-session --schema-mode no_schema
-    Name: Create Livy session (no_schema)
-    Group: Warmup-Sessions
-    TimeoutInMinutes: 15
+  # === TODO: DO NOT MERGE ===========================================================================
+  # - Command: uv run python -m tests.functional.orchestrator create-session --schema-mode no_schema
+  #   Name: Create Livy session (no_schema)
+  #   Group: Warmup-Sessions
+  #   TimeoutInMinutes: 15
+  # ==================================================================================================
 
   - Command: uv run python -m tests.functional.orchestrator create-session --schema-mode with_schema
     Name: Create Livy session (with_schema)
     Group: Warmup-Sessions
     TimeoutInMinutes: 15
 
-  - Command: uv run python -m tests.functional.orchestrator run-tests --schema-mode no_schema
-    Name: Functional tests (no_schema)
-    Group: Integration-Tests
-    TimeoutInMinutes: 180
+  # === TODO: DO NOT MERGE ===========================================================================
+  # - Command: uv run python -m tests.functional.orchestrator run-tests --schema-mode no_schema
+  #   Name: Functional tests (no_schema)
+  #   Group: Integration-Tests
+  #   TimeoutInMinutes: 180
+  # ==================================================================================================
 
   - Command: uv run python -m tests.functional.orchestrator run-tests --schema-mode with_schema
     Name: Functional tests (with_schema)

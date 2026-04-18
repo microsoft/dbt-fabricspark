@@ -84,7 +84,7 @@ run_lint() {
 run_fix() {
     ensure_venv
     cd "${PROJECT_DIR}"
-    uv run ruff check --fix src/ tests/
+    uv run ruff check --fix --unsafe-fixes src/ tests/
     uv run ruff format src/ tests/
 }
 

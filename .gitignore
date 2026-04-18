@@ -321,6 +321,8 @@ test.env
 logs/**/*
 !logs/test-runs/
 !logs/test-runs/README.md
+logs/test-runs/report.json
+logs/test-runs/report.md
 
 # Node
 node_modules/

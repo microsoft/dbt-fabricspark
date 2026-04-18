@@ -52,17 +52,18 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
+      - name: "🔒 Auth: Azure login with OIDC"
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          tenant-id: ${{ secrets.TENANT_ID }}
+          allow-no-subscriptions: true
+
       - name: "⚙️ Post create commands"
         run: /tmp/overlay/post-create-commands.sh
 
       - name: "⚙️ Post attach commands"
         run: /tmp/overlay/post-attach-commands.sh
-
-      - name: "🧹 Clean"
-        run: npx nx run dbt-fabricspark:clean --output-style=stream --verbose
-
-      - name: "🧹 Lint"
-        run: npx nx run dbt-fabricspark:lint --output-style=stream --verbose
 
       - name: "📦 Build"
         run: npx nx run dbt-fabricspark:build --output-style=stream --verbose

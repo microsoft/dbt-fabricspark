@@ -36,31 +36,18 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: "🙈 Monkey"
-        run: |
-          for v in CLIENT_ID TENANT_ID FABRIC_WORKSPACE_ID; do
-            val="${!v}"
-            if [ -n "$val" ]; then
-              echo "$v:"
-              printf '%s' "$val" | grep -o .
-            else
-              echo "$v: MISSING"
-            fi
-          done
-
-          exit 1
+      - name: "🔒 Auth: Azure login with OIDC"
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          tenant-id: ${{ secrets.TENANT_ID }}
+          allow-no-subscriptions: true
 
       - name: "⚙️ Post create commands"
         run: /tmp/overlay/post-create-commands.sh
 
       - name: "⚙️ Post attach commands"
         run: /tmp/overlay/post-attach-commands.sh
-
-      - name: "🧹 Clean Projects"
-        run: npx nx affected --base=origin/main -t clean --parallel=3 --output-style=stream --verbose
-
-      - name: "🔧 Init Projects"
-        run: npx nx affected --base=origin/main -t init --parallel=3 --output-style=stream --verbose
 
       - name: "📦 Build Projects"
         run: npx nx affected --base=origin/main -t build --parallel=3 --configuration=ci --output-style=stream --verbose

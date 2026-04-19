@@ -21,7 +21,6 @@ from dbt.tests.adapter.basic.files import (
 )
 from dbt.tests.util import relation_from_name, run_dbt, update_rows
 
-
 _SNAPSHOT_SQL_BY_NAME = {
     "cc_all_snapshot": cc_all_snapshot_sql,
     "cc_date_snapshot": cc_date_snapshot_sql,

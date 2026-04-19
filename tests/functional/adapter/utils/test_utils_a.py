@@ -1,4 +1,3 @@
-import pytest
 
 from dbt.tests.adapter.utils.test_any_value import BaseAnyValue
 from dbt.tests.adapter.utils.test_array_append import BaseArrayAppend

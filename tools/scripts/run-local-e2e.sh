@@ -10,7 +10,7 @@ set -euo pipefail
 TARGET="${1:-local-local}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ADAPTER_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-JAFFLE_SHOP_SRC="${ADAPTER_DIR}/.temp/git/spark-sandbox/projects/spark-dbt/dbt-jaffle-shop"
+JAFFLE_SHOP_SRC="${ADAPTER_DIR}/tests/fixtures/dbt-jaffle-shop"
 WORK_DIR="$(mktemp -d)"
 VENV_DIR="${WORK_DIR}/.venv-e2e"
 JAFFLE_SHOP_DIR="${WORK_DIR}/dbt-jaffle-shop"

@@ -1,0 +1,16 @@
+version: 2
+
+sources:
+  - name: jaffle_shop_seed
+    description: "Seed data for the Jaffle Shop project (loaded via dbt seed)"
+    schema: dbt_jaffle_shop_seed
+    tables:
+      - name: raw_customers
+        description: "Raw customer data (seeded from seeds/raw_customers.csv)"
+        identifier: raw_customers
+      - name: raw_orders
+        description: "Raw order data (seeded from seeds/raw_orders.csv)"
+        identifier: raw_orders
+      - name: raw_payments
+        description: "Raw payment data (seeded from seeds/raw_payments.csv)"
+        identifier: raw_payments

@@ -1,0 +1,38 @@
+name: "jaffle_shop"
+
+config-version: 2
+version: "0.1"
+
+profile: "jaffle_shop"
+
+flags:
+  partial_parse: true
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+analysis-paths: ["analysis"]
+macro-paths: ["macros"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_modules"
+  - "logs"
+
+require-dbt-version: [">=1.0.0", "<2.0.0"]
+
+seeds:
+  jaffle_shop:
+    +database: dbt_jaffle_shop_seed
+    +schema: dbt_jaffle_shop_seed
+    +docs:
+      show: false
+
+models:
+  jaffle_shop:
+    materialized: table
+    file_format: delta
+    location_root: "none"
+    staging:
+      materialized: view

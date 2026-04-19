@@ -163,6 +163,9 @@ class FabricSparkConnectionManager(SQLConnectionManager):
         # Set the adapter-wide naming mode: all relations render uniformly as
         # either two-part (schema.table) or three-part (lakehouse.schema.table).
         FabricSparkRelation._schemas_enabled = creds.lakehouse_schemas_enabled
+        FabricSparkRelation._identifier_prefix = (
+            creds.identifier_prefix if not creds.lakehouse_schemas_enabled else ""
+        )
 
         for i in range(1 + creds.connect_retries):
             try:

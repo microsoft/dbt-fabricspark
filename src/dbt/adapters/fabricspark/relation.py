@@ -37,6 +37,7 @@ class FabricSparkRelation(BaseRelation):
     # Macros can still override per-relation via .include(database=false, schema=false)
     # for temporary views which require unqualified identifiers.
     _schemas_enabled: ClassVar[bool] = False
+    _identifier_prefix: ClassVar[str] = ""
 
     quote_policy: Policy = field(default_factory=lambda: FabricSparkQuotePolicy())
     include_policy: Policy = field(
@@ -50,6 +51,23 @@ class FabricSparkRelation(BaseRelation):
     is_delta: Optional[bool] = None
     # TODO: make this a dict everywhere
     information: Optional[str] = None
+
+    @classmethod
+    def create(cls, database=None, schema=None, identifier=None, **kwargs):
+        skip_prefix = kwargs.pop("_skip_prefix", False)
+        prefix = cls._identifier_prefix
+        if prefix and identifier and not skip_prefix:
+            # Never prefix CTE identifiers — ephemeral models are inlined as
+            # WITH clauses and must keep their dbt-generated __dbt__cte__ name.
+            rel_type = kwargs.get("type")
+            is_cte = (rel_type == RelationType.CTE) or (
+                isinstance(identifier, str) and "__dbt__cte__" in identifier
+            )
+            if not is_cte and not identifier.startswith(prefix):
+                identifier = f"{prefix}{identifier}"
+        return super().create(
+            database=database, schema=schema, identifier=identifier, **kwargs
+        )
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "FabricSparkRelation":

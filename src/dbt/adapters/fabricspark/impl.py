@@ -348,7 +348,13 @@ class FabricSparkAdapter(SQLAdapter):
                 type=rel_type,
                 information=information,
                 is_delta=is_delta,
+                _skip_prefix=True,
             )
+            # In no_schema mode, filter to only relations matching the active
+            # identifier prefix - which presents a similar API as schema.
+            active_prefix = self.Relation._identifier_prefix
+            if active_prefix and relation.identifier and not relation.identifier.startswith(active_prefix):
+                continue
             relations.append(relation)
 
         return relations
@@ -356,6 +362,30 @@ class FabricSparkAdapter(SQLAdapter):
     def list_relations_without_caching(self, schema_relation: BaseRelation) -> List[BaseRelation]:
         """Distinct Spark compute engines may not support the same SQL featureset. Thus, we must
         try different methods to fetch relation information."""
+
+        # In no_schema mode, use a prefix-specific LIKE pattern so Spark only
+        # returns tables belonging to that prefix.
+        prefix = self.Relation._identifier_prefix
+        if prefix:
+            schema_clause = schema_relation.schema
+            if schema_relation.include_policy.database and schema_relation.database:
+                schema_clause = f"{schema_relation.database}.{schema_clause}"
+            sql = f"show table extended in {schema_clause} like '{prefix}*'"
+            try:
+                _, result = self.execute(sql, auto_begin=False, fetch=True)
+                return self._build_spark_relation_list(
+                    row_list=result,
+                    relation_info_func=self._get_relation_information,
+                    schema_relation=schema_relation,
+                )
+            except DbtRuntimeError as e:
+                errmsg = getattr(e, "msg", "")
+                if f"Database '{schema_relation}' not found" in errmsg:
+                    return []
+                logger.debug(
+                    f"Error while retrieving information about {schema_relation}: {errmsg}"
+                )
+                return []
 
         kwargs = {"schema_relation": schema_relation}
 
@@ -398,6 +428,13 @@ class FabricSparkAdapter(SQLAdapter):
     def get_relation(self, database: str, schema: str, identifier: str) -> Optional[BaseRelation]:
         if not self.Relation.get_default_include_policy().database:
             database = None  # type: ignore
+
+        # Apply identifier prefix for cache lookup in no_schema mode.
+        # Macros pass the model alias (un-prefixed) but the cache stores
+        # relations with their physical (prefixed) identifiers.
+        prefix = self.Relation._identifier_prefix
+        if prefix and identifier and not identifier.startswith(prefix):
+            identifier = f"{prefix}{identifier}"
 
         return super().get_relation(database, schema, identifier)
 
@@ -442,19 +479,28 @@ class FabricSparkAdapter(SQLAdapter):
 
     def get_columns_in_relation(self, relation: BaseRelation) -> List[FabricSparkColumn]:
         columns = []
-        try:
-            rows: AttrDict = self.execute_macro(
-                GET_COLUMNS_IN_RELATION_RAW_MACRO_NAME, kwargs={"relation": relation}
-            )
-            columns = self.parse_describe_extended(relation, rows)
-        except DbtRuntimeError as e:
-            # spark would throw error when table doesn't exist, where other
-            # CDW would just return and empty list, normalizing the behavior here
-            errmsg = getattr(e, "msg", "")
-            found_msgs = (msg in errmsg for msg in TABLE_OR_VIEW_NOT_FOUND_MESSAGES)
-            if any(found_msgs):
-                pass
-            else:
+        # Retry once on transient errors — Fabric Livy sessions can
+        # occasionally return errors under concurrent load.
+        for attempt in range(2):
+            try:
+                rows: AttrDict = self.execute_macro(
+                    GET_COLUMNS_IN_RELATION_RAW_MACRO_NAME, kwargs={"relation": relation}
+                )
+                columns = self.parse_describe_extended(relation, rows)
+                break
+            except DbtRuntimeError as e:
+                # spark would throw error when table doesn't exist, where other
+                # CDW would just return and empty list, normalizing the behavior here
+                errmsg = getattr(e, "msg", "")
+                found_msgs = (msg in errmsg for msg in TABLE_OR_VIEW_NOT_FOUND_MESSAGES)
+                if any(found_msgs):
+                    break
+                if attempt == 0:
+                    import time as _time
+
+                    logger.debug(f"Retrying get_columns_in_relation for {relation}: {errmsg}")
+                    _time.sleep(2)
+                    continue
                 raise e
         return columns
 
@@ -503,6 +549,12 @@ class FabricSparkAdapter(SQLAdapter):
         # Not using parsing to extract schema and other properties using describe table extended command
         columns = self.parse_describe_extended(relation, raw_rows)
 
+        # In no_schema mode, strip the identifier prefix from table_name
+        # so dbt-core can match catalog rows to manifest nodes.  Manifest
+        # nodes use node.alias (un-prefixed model name) as the key, while
+        # the physical relation identifier carries the prefix.
+        prefix = self.Relation._identifier_prefix
+
         for column in columns:
             # convert SparkColumns into catalog dicts
             as_dict = column.to_column_dict()
@@ -511,7 +563,31 @@ class FabricSparkAdapter(SQLAdapter):
             # Must match the database value from generate_database_name (target.lakehouse)
             # so dbt-core can join catalog rows to manifest nodes via CatalogKey.
             as_dict["table_database"] = relation.database or self.config.credentials.lakehouse
+            if prefix and as_dict.get("table_name", "").startswith(prefix):
+                as_dict["table_name"] = as_dict["table_name"][len(prefix):]
             yield as_dict
+
+    def get_filtered_catalog(
+        self,
+        relation_configs,
+        used_schemas,
+        relations=None,
+    ):
+        """Override to bypass relation-level filtering in no_schema mode.
+
+        When ``_identifier_prefix`` is active, ``_get_columns_for_catalog``
+        strips the prefix from ``table_name`` so dbt-core can match catalog
+        rows to manifest nodes (which use the un-prefixed model alias).
+        However, the base implementation's relation-map filter uses prefixed
+        identifiers from ``Relation.create_from`` — causing a mismatch.
+
+        Bypassing the per-relation filter is safe because
+        ``list_relations_without_caching`` already filters by prefix, so the
+        catalog only contains the current test class's tables.
+        """
+        if self.Relation._identifier_prefix:
+            return self.get_catalog(relation_configs, used_schemas)
+        return super().get_filtered_catalog(relation_configs, used_schemas, relations)
 
     def get_catalog(
         self,

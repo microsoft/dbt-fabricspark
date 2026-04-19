@@ -55,6 +55,16 @@ def _fq_schema(project) -> str:
     return schema
 
 
+def _fq_table(project, table_name: str) -> str:
+    """Return a fully-qualified table reference for raw SQL queries.
+
+    Applies the identifier prefix (if any) so that raw SQL queries work in
+    both ``with_schema`` and ``no_schema`` modes.
+    """
+    prefix = project.adapter.config.credentials.identifier_prefix or ""
+    return f"{_fq_schema(project)}.{prefix}{table_name}"
+
+
 # ---------------------------------------------------------------------------
 # Seed data — simple Delta source tables
 # ---------------------------------------------------------------------------
@@ -203,7 +213,7 @@ class TestMLVOnDemand:
     def test_on_demand_has_data(self, project):
         """The on-demand MLV should contain the expected rows."""
         result = project.run_sql(
-            f"select count(*) from {_fq_schema(project)}.mlv_on_demand",
+            f"select count(*) from {_fq_table(project, 'mlv_on_demand')}",
             fetch="one",
         )
         assert int(result[0]) == 3
@@ -211,7 +221,7 @@ class TestMLVOnDemand:
     def test_on_demand_has_computed_column(self, project):
         """Verify the tier column is computed correctly."""
         result = project.run_sql(
-            f"select tier from {_fq_schema(project)}.mlv_on_demand where name = 'alice'",
+            f"select tier from {_fq_table(project, 'mlv_on_demand')} where name = 'alice'",
             fetch="one",
         )
         assert result[0] == "low"  # alice has amount=100
@@ -255,7 +265,7 @@ class TestMLVScheduled:
     def test_scheduled_has_data(self, project):
         """The scheduled MLV should have aggregated data."""
         result = project.run_sql(
-            f"select count(*) from {_fq_schema(project)}.mlv_scheduled",
+            f"select count(*) from {_fq_table(project, 'mlv_scheduled')}",
             fetch="one",
         )
         assert int(result[0]) == 3  # 3 distinct names

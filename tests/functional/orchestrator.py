@@ -155,7 +155,7 @@ def cmd_create_session() -> None:
         sid = str(resp.json()["id"])
         logger.info("[shard %d] Livy session initiated: %s (waiting for idle...)", idx, sid)
 
-        deadline = time.monotonic() + 600
+        deadline = time.monotonic() + 900
         while time.monotonic() < deadline:
             time.sleep(10)
             status_resp = requests.get(
@@ -174,7 +174,7 @@ def cmd_create_session() -> None:
                     return sid
                 if livy_state in ("dead", "error", "killed") or top_state in ("dead", "error"):
                     raise RuntimeError(f"[shard {idx}] Session failed to start: {data}")
-        raise TimeoutError(f"[shard {idx}] Session did not become idle within 10 minutes")
+        raise TimeoutError(f"[shard {idx}] Session did not become idle within 15 minutes")
 
     count = max(1, args.count)
     os.makedirs("logs/test-runs", exist_ok=True)
@@ -242,15 +242,7 @@ def cmd_run_tests() -> None:
     else:
         os.environ["SCHEMA_NAME"] = lakehouse_name
 
-    # Non-schema lakehouses have a single namespace (Fabric blocks CREATE DATABASE),
-    # so parallel xdist workers cause table-name collisions. Run sequentially.
-    # Schema-enabled lakehouses get per-class schemas for full parallel isolation.
-    # Use loadscope so ordered test methods within a class stay on the same worker
-    # (e.g. TestMaterializedLakeView's test_01 … test_09 depend on execution order).
-    if args.schema_mode == "no_schema":
-        parallelism_args = ["-n", "1"]
-    else:
-        parallelism_args = ["-n", "auto", "--dist=loadscope"]
+    parallelism_args = ["-n", "auto", "--dist=loadscope"]
 
     pytest_args = [
         "tests/functional",

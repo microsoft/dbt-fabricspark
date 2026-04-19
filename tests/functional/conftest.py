@@ -10,6 +10,8 @@ from typing import Optional
 
 import pytest
 
+from tests.functional.no_schema_groups import group_token_for
+
 logger = logging.getLogger("functional_conftest")
 
 _fail_fast_sentinel: Optional[Path] = None
@@ -200,22 +202,34 @@ def dbt_profile_target(request, workspace_id, api_endpoint, schema_mode):
 
 
 @pytest.fixture(scope="class")
-def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update, is_schema_enabled):
+def dbt_profile_data(request, unique_schema, dbt_profile_target, profiles_config_update, is_schema_enabled):
     """Build profile data with per-class schema isolation.
 
     Overrides root conftest's ``dbt_profile_data`` to:
     1. Use ``is_schema_enabled`` directly — no Fabric API call needed.
     2. Deep-copy the session-scoped target to prevent cross-class mutation.
     3. Schema-enabled lakehouses use ``unique_schema`` for test isolation.
-    4. Non-schema lakehouses use the lakehouse name (single namespace);
-       tests run sequentially to avoid table-name collisions.
+    4. Non-schema lakehouses use identifier prefixes for parallel isolation;
+       each class gets a unique prefix derived from ``unique_schema``.
     """
     target = copy.deepcopy(dbt_profile_target)
 
     if is_schema_enabled:
         target["schema"] = unique_schema
+        target["identifier_prefix"] = ""
     else:
         target["schema"] = target.get("lakehouse")
+        class_nodeid = f"{request.cls.__module__}::{request.cls.__qualname__}"
+        token = group_token_for(class_nodeid, unique_schema)
+        target["identifier_prefix"] = f"{token}_"
+
+    # Set the adapter-wide prefix ClassVar immediately so it is available
+    # during dbt parsing (before connections.open sets it).  Without this,
+    # manifest nodes get un-prefixed identifiers while physical tables are
+    # prefixed, causing catalog and cache mismatches.
+    from dbt.adapters.fabricspark.relation import FabricSparkRelation
+
+    FabricSparkRelation._identifier_prefix = target["identifier_prefix"]
 
     profile = {
         "test": {
@@ -229,3 +243,64 @@ def dbt_profile_data(unique_schema, dbt_profile_target, profiles_config_update, 
     if profiles_config_update:
         profile.update(profiles_config_update)
     return profile
+
+
+@pytest.fixture(scope="class", autouse=True)
+def _prefix_aware_run_sql(project, is_schema_enabled, dbt_profile_data):
+    """Monkey-patch ``project.run_sql`` to apply the identifier prefix.
+
+    Upstream dbt test fixtures use ``run_sql`` / ``run_sql_file`` with SQL
+    templates like ``INSERT INTO {schema}.seed ...``.  After formatting,
+    ``{schema}`` becomes the lakehouse name, but the actual table was created
+    with the identifier prefix (e.g. ``prefix_seed``).
+
+    This fixture intercepts ``run_sql`` to rewrite ``schema.table`` references
+    to ``schema.prefix_table`` when in ``no_schema`` mode.  The patch is a
+    no-op in ``with_schema`` mode.
+    """
+    if is_schema_enabled:
+        yield
+        return
+
+    target = dbt_profile_data["test"]["outputs"]["default"]
+    prefix = target.get("identifier_prefix", "")
+    schema_name = target.get("schema", "")
+    if not prefix or not schema_name:
+        yield
+        return
+
+    import re
+
+    escaped_schema = re.escape(schema_name)
+    _table_ref_re = re.compile(rf"({escaped_schema})\.(`?)(\w+)")
+
+    def _rewrite_sql(sql: str) -> str:
+        """Add identifier prefix to ``schema.table`` references in raw SQL."""
+        def _replacer(m):
+            s, bt, table = m.group(1), m.group(2), m.group(3)
+            if table.startswith(prefix):
+                return m.group(0)  # already prefixed
+            return f"{s}.{bt}{prefix}{table}"
+
+        return _table_ref_re.sub(_replacer, sql)
+
+    original_run_sql = project.run_sql
+
+    def _patched_run_sql(sql, fetch=None):
+        # Pre-format the SQL (same transform that run_sql_with_adapter does)
+        creds = project.adapter.config.credentials
+        try:
+            sql = sql.format(
+                schema=creds.schema,
+                database=project.adapter.quote(creds.database) if creds.database else "",
+            )
+        except (KeyError, IndexError, ValueError):
+            pass
+        # Apply identifier prefix to table references
+        sql = _rewrite_sql(sql)
+        # Delegate to original — the format call inside is a no-op now
+        return original_run_sql(sql, fetch=fetch)
+
+    project.run_sql = _patched_run_sql
+    yield
+    project.run_sql = original_run_sql

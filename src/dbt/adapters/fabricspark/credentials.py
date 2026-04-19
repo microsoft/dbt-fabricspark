@@ -56,6 +56,7 @@ class FabricSparkCredentials(Credentials):
     # Auto-detected at connection time via Fabric REST API; not user-configurable.
     # init=False ensures this is never populated from profile YAML.
     lakehouse_schemas_enabled: bool = field(default=False, init=False)
+    identifier_prefix: Optional[str] = ""
     accessToken: Optional[str] = None
     spark_config: Dict[str, Any] = field(default_factory=dict)
     environmentId: Optional[str] = None

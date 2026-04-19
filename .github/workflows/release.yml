@@ -1,16 +1,4 @@
-# **what?**
-# Release workflow provides the following steps:
-# - checkout the tagged commit;
-# - run clean / lint / build / test via nx inside the devcontainer image;
-# - publish to PyPI via the nx publish target (no-op if UV_PUBLISH_TOKEN is unset).
-#
-# **why?**
-# Ensure an automated and tested release process that mirrors the dev container.
-#
-# **when?**
-# When a GitHub Release is created with a v* tag.
-
-name: Release new version to PyPI
+name: Test and release new version to PyPI
 
 on:
   release:
@@ -24,7 +12,7 @@ permissions:
 
 jobs:
   release-version:
-    name: Release new version
+    name: Test and release new version
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     timeout-minutes: 120

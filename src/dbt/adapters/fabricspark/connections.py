@@ -316,7 +316,7 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                 "Materialized Lake Views require Fabric Runtime 1.3+. "
                 "Local mode (Docker Spark) does not support MLV."
             )
-            logger.warning(f"MLV prerequisite not met: {cls.mlv_prereq_error}")
+            logger.debug(f"MLV prerequisite not met: {cls.mlv_prereq_error}")
             return
 
         # 2. Spark version

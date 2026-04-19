@@ -1,0 +1,27 @@
+name: metastore
+
+services:
+  mssql:
+    container_name: metastore-mssql-1
+    image: mcr.microsoft.com/mssql/server:2025-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Hive@Pass123"
+      MSSQL_PID: "Developer"
+    healthcheck:
+      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "Hive@Pass123" -C -Q "SELECT 1" || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: always
+    stop_signal: SIGKILL
+    stop_grace_period: 0s
+    ports:
+      - "11434:1433"
+    networks:
+      - metastore-network
+
+networks:
+  metastore-network:
+    name: metastore-network

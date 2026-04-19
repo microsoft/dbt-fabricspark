@@ -18,6 +18,8 @@ logs/
 .env
 test.env
 
+# Warehouse
+warehouse/
 
 # Django stuff
 *.log

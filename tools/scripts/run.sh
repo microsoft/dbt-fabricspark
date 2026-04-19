@@ -25,10 +25,11 @@ declare -A TARGETS=(
     ["test"]="pytest unit + functional tests"
     ["test:unit"]="pytest unit tests"
     ["test:functional"]="pytest functional tests (requires Fabric credentials)"
+    ["test:local-e2e"]="dbt CLI end-to-end against local Livy (devcontainer)"
     ["publish"]="twine check + uv publish (no-op if UV_PUBLISH_TOKEN unset)"
     ["all"]="Run clean, lint, build, test, publish in sequence"
 )
-TARGET_ORDER=("venv" "clean" "lint" "fix" "build" "test" "test:unit" "test:functional" "publish")
+TARGET_ORDER=("venv" "clean" "lint" "fix" "build" "test" "test:unit" "test:functional" "test:local-e2e" "publish")
 ALL_ORDER=("clean" "lint" "build" "test" "publish")
 
 print_usage() {
@@ -68,6 +69,7 @@ run_venv()  { create_venv; }
 
 run_clean() {
     cd "${PROJECT_DIR}"
+    bash -c "source '${SCRIPT_DIR}/run-livy.sh' && stop_livy" || true
     rm -rf dist/ build/ .pytest_cache .ruff_cache logs
     find . -type d -name '*.egg-info' -not -path './.venv/*' -not -path './node_modules/*' -exec rm -rf {} + 2>/dev/null || true
     find . -type d -name '__pycache__' -not -path './.venv/*' -not -path './node_modules/*' -exec rm -rf {} + 2>/dev/null || true
@@ -109,6 +111,11 @@ run_test_unit() {
     uv run pytest tests/unit -vv
 }
 
+run_test_local_e2e() {
+    cd "${PROJECT_DIR}"
+    bash "${SCRIPT_DIR}/run-local-e2e.sh"
+}
+
 run_test_functional() {
     ensure_venv
     cd "${PROJECT_DIR}"
@@ -146,5 +153,5 @@ case "$TARGET" in
         done
         echo ""; echo "=== All targets completed. ==="
         ;;
-    *) FUNC_NAME="run_${TARGET//:/_}"; "$FUNC_NAME" ;;
+    *) FUNC_NAME="run_${TARGET//:/_}"; FUNC_NAME="${FUNC_NAME//-/_}"; "$FUNC_NAME" ;;
 esac

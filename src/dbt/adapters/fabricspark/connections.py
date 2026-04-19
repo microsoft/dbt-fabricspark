@@ -271,6 +271,14 @@ class FabricSparkConnectionManager(SQLConnectionManager):
         if FabricSparkConnectionManager.spark_version:
             return FabricSparkConnectionManager.spark_version
 
+        # Fast path: honor a pre-populated DBT_SPARK_VERSION (set by the test
+        # orchestrator or CI). This avoids a 10–20 s probe round-trip per process.
+        env_version = os.environ.get("DBT_SPARK_VERSION")
+        if env_version:
+            FabricSparkConnectionManager.spark_version = env_version
+            logger.debug(f"Using pre-populated Spark version: {env_version}")
+            return
+
         try:
             sql = "SELECT split(version(), ' ')[0] as version"
             cursor = connection.handle.cursor()

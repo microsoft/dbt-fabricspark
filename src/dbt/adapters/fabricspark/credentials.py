@@ -68,7 +68,7 @@ class FabricSparkCredentials(Credentials):
     session_start_timeout: int = 600  # max seconds to wait for session start (10 min)
     statement_timeout: int = 3600  # max seconds to wait for a statement result (1 hour)
     poll_wait: int = 10  # seconds between polls for session start
-    poll_statement_wait: int = 5  # seconds between polls for statement result
+    poll_statement_wait: float = 0.5  # seconds between polls for statement result
 
     def __repr__(self) -> str:
         """Mask sensitive fields in repr to prevent credential leakage in logs/tracebacks."""

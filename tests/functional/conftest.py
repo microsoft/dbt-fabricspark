@@ -49,6 +49,16 @@ def pytest_addoption(parser):
         help="Path to shared Livy session ID file for session reuse across xdist workers",
     )
     parser.addoption(
+        "--session-id-files",
+        action="store",
+        default=None,
+        help=(
+            "Path to a file listing multiple Livy session-ID files (one per line). "
+            "xdist workers shard across the listed sessions by worker index so "
+            "server-side Spark work is parallelised beyond one session's capacity."
+        ),
+    )
+    parser.addoption(
         "--fail-fast-sentinel",
         action="store",
         default=None,
@@ -65,13 +75,20 @@ def pytest_configure(config):
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item):
-    """Abort test session if a prior test has failed (cross-worker, cross-session)."""
+    """Abort test session if a prior test has failed (cross-worker, cross-session).
+
+    Uses ``pytest.skip`` rather than ``pytest.exit`` so the worker cleanly
+    skips remaining items. Calling ``pytest.exit`` mid-test trips xdist's
+    ``assert not crashitem`` in ``dsession.worker_workerfinished`` (xdist>=3).
+    Skipping is cooperative with xdist and still stops the suite effectively
+    because every subsequent item short-circuits at setup.
+    """
     if _fail_fast_sentinel is not None and _fail_fast_sentinel.exists():
         try:
             info = _fail_fast_sentinel.read_text()
         except OSError:
             info = "(unable to read sentinel)"
-        pytest.exit(f"fail-fast: aborting — a prior test failed.\n{info}", returncode=1)
+        pytest.skip(f"fail-fast: aborting — a prior test failed.\n{info}")
 
 
 def pytest_runtest_logreport(report):
@@ -126,6 +143,24 @@ def dbt_profile_target(request, workspace_id, api_endpoint, schema_mode):
 
     profile_type = request.config.getoption("--profile", default="az_cli")
     session_id_file = request.config.getoption("--session-id-file", default=None)
+    session_id_files = request.config.getoption("--session-id-files", default=None)
+
+    # If multiple session files are provided, shard xdist workers across them.
+    # ``loadscope`` keeps all tests of a class on one worker, so each class is
+    # pinned to a single Livy session deterministically.
+    if session_id_files:
+        try:
+            with open(session_id_files) as _f:
+                shard_paths = [ln.strip() for ln in _f if ln.strip()]
+        except OSError:
+            shard_paths = []
+        if shard_paths:
+            worker = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
+            try:
+                worker_idx = int(worker.removeprefix("gw"))
+            except ValueError:
+                worker_idx = 0
+            session_id_file = shard_paths[worker_idx % len(shard_paths)]
 
     base = {
         "type": "fabricspark",

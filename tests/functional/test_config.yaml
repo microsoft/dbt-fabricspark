@@ -46,7 +46,7 @@ tasks:
   #   TimeoutInMinutes: 15
   # ==================================================================================================
 
-  - Command: uv run python -m tests.functional.orchestrator create-session --schema-mode with_schema
+  - Command: uv run python -m tests.functional.orchestrator create-session --schema-mode with_schema --count 4
     Name: Create Livy session (with_schema)
     Group: Warmup-Sessions
     TimeoutInMinutes: 15

@@ -1,3 +1,4 @@
+import os
 import re
 from concurrent.futures import Future
 from dataclasses import dataclass
@@ -266,22 +267,36 @@ class FabricSparkAdapter(SQLAdapter):
     def _get_relation_information(self, row: "agate.Row") -> RelationInfo:
         """relation info was fetched with SHOW TABLES EXTENDED"""
         try:
-            _schema, name, _, information = row
+            _schema, name, is_temporary, information = row
         except ValueError:
             raise DbtRuntimeError(
                 f'Invalid value from "show tables extended ...", got {len(row)} values, expected 4'
             )
+
+        # ``show table extended`` returns session-scoped temporary views alongside
+        # real relations. When multiple xdist workers share a single Livy session
+        # (tests are sharded across N sessions by worker index), temp views
+        # created by one worker's test leak into every other worker's listing
+        # for the same session. Surface them as a sentinel that the caller
+        # filters out; otherwise ``docs generate`` and other catalog lookups try
+        # to describe relations that don't exist in the requested schema.
+        if is_temporary:
+            return None  # type: ignore[return-value]
 
         return _schema, name, information
 
     def _get_relation_information_using_describe(self, row: "agate.Row") -> RelationInfo:
         """Relation info fetched using SHOW TABLES and an auxiliary DESCRIBE statement"""
         try:
-            _schema, name, _ = row
+            _schema, name, is_temporary = row
         except ValueError:
             raise DbtRuntimeError(
                 f'Invalid value from "show tables ...", got {len(row)} values, expected 3'
             )
+
+        # Skip session-scoped temp views — see _get_relation_information.
+        if is_temporary:
+            return None  # type: ignore[return-value]
 
         table_name = f"{_schema}.{name}"
         try:
@@ -309,7 +324,11 @@ class FabricSparkAdapter(SQLAdapter):
         """Aggregate relations with format metadata included."""
         relations = []
         for row in row_list:
-            _schema, name, information = relation_info_func(row)
+            info = relation_info_func(row)
+            if info is None:
+                # Session-scoped temp views (see _get_relation_information) — skip.
+                continue
+            _schema, name, information = info
 
             rel_type: RelationType = (
                 RelationType.MaterializedView
@@ -617,6 +636,8 @@ class FabricSparkAdapter(SQLAdapter):
 
     def debug_query(self) -> None:
         """Override for DebugTask method"""
+        if os.environ.get("FABRIC_SKIP_DEBUG_QUERY"):
+            return
         self.execute("select 1 as id")
 
     @classmethod

@@ -85,14 +85,26 @@ def cmd_provision() -> None:
 
 def cmd_create_session() -> None:
     """
-    Pre-create a Livy session for a lakehouse and write its ID to a file.
+    Pre-create N Livy sessions for a lakehouse and write each ID to its own file.
+
+    Multiple sessions let xdist workers shard across independent Spark clusters
+    so server-side statement execution is parallelised beyond a single session's
+    capacity. Each worker deterministically picks one session by worker index,
+    so ``loadscope`` still pins a class's tests to a single session.
     """
     import json
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     import requests
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--schema-mode", required=True, choices=("no_schema", "with_schema"))
+    parser.add_argument(
+        "--count",
+        type=int,
+        default=int(os.environ.get("LIVY_SESSION_COUNT", "2")),
+        help="Number of Livy sessions to create (default: 2, overridable via LIVY_SESSION_COUNT).",
+    )
     args = parser.parse_args(sys.argv[2:])
 
     _load_shared_env()
@@ -122,56 +134,84 @@ def cmd_create_session() -> None:
         f"/lakehouses/{lakehouse_id}/livyapi/versions/2023-12-01"
     )
 
-    spark_config = {
-        "name": f"dbt-test-{lakehouse_name}",
-        "conf": {
-            "spark.livy.session.idle.timeout": "60m",
-        },
-        "tags": {"project": f"dbt-test-{lakehouse_name}"},
-    }
-
     headers = {"Authorization": f"Bearer {token_str}", "Content-Type": "application/json"}
 
-    logger.info("Creating Livy session for %s at %s...", lakehouse_name, livy_url)
-    resp = requests.post(
-        f"{livy_url}/sessions",
-        data=json.dumps(spark_config),
-        headers=headers,
-        timeout=120,
-    )
-    resp.raise_for_status()
-    session_id = str(resp.json()["id"])
-    logger.info("Livy session initiated: %s (waiting for idle...)", session_id)
-
-    deadline = time.monotonic() + 600
-    while time.monotonic() < deadline:
-        time.sleep(10)
-        status_resp = requests.get(
-            f"{livy_url}/sessions/{session_id}",
-            headers=headers,
-            timeout=30,
+    def _create_one(idx: int) -> str:
+        spark_config = {
+            "name": f"dbt-test-{lakehouse_name}-{idx}",
+            "conf": {"spark.livy.session.idle.timeout": "60m"},
+            "tags": {"project": f"dbt-test-{lakehouse_name}", "shard": str(idx)},
+        }
+        logger.info(
+            "[shard %d] Creating Livy session for %s at %s...", idx, lakehouse_name, livy_url
         )
-        if status_resp.ok:
-            data = status_resp.json()
-            top_state = data.get("state", "")
-            livy_state = data.get("livyInfo", {}).get("currentState", "")
-            logger.info("  Session %s: top=%s livy=%s", session_id, top_state, livy_state)
-            if livy_state == "idle":
-                break
-            if livy_state in ("dead", "error", "killed") or top_state in ("dead", "error"):
-                logger.error("Session failed to start: %s", data)
+        resp = requests.post(
+            f"{livy_url}/sessions",
+            data=json.dumps(spark_config),
+            headers=headers,
+            timeout=120,
+        )
+        resp.raise_for_status()
+        sid = str(resp.json()["id"])
+        logger.info("[shard %d] Livy session initiated: %s (waiting for idle...)", idx, sid)
+
+        deadline = time.monotonic() + 600
+        while time.monotonic() < deadline:
+            time.sleep(10)
+            status_resp = requests.get(
+                f"{livy_url}/sessions/{sid}",
+                headers=headers,
+                timeout=30,
+            )
+            if status_resp.ok:
+                data = status_resp.json()
+                top_state = data.get("state", "")
+                livy_state = data.get("livyInfo", {}).get("currentState", "")
+                logger.info(
+                    "[shard %d] Session %s: top=%s livy=%s", idx, sid, top_state, livy_state
+                )
+                if livy_state == "idle":
+                    return sid
+                if livy_state in ("dead", "error", "killed") or top_state in ("dead", "error"):
+                    raise RuntimeError(f"[shard {idx}] Session failed to start: {data}")
+        raise TimeoutError(f"[shard {idx}] Session did not become idle within 10 minutes")
+
+    count = max(1, args.count)
+    os.makedirs("logs/test-runs", exist_ok=True)
+    session_ids: list[str] = [""] * count
+    with ThreadPoolExecutor(max_workers=count) as pool:
+        futures = {pool.submit(_create_one, i): i for i in range(count)}
+        for fut in as_completed(futures):
+            idx = futures[fut]
+            try:
+                session_ids[idx] = fut.result()
+            except Exception as exc:
+                logger.error("Session creation for shard %d failed: %s", idx, exc)
                 sys.exit(1)
-    else:
-        logger.error("Session did not become idle within 10 minutes")
-        sys.exit(1)
 
-    session_file = f"logs/test-runs/livy-session-{args.schema_mode}.txt"
-    os.makedirs(os.path.dirname(session_file), exist_ok=True)
-    with open(session_file, "w") as f:
-        f.write(session_id)
+    # Write per-shard files and a combined list. The combined file drives xdist
+    # worker sharding (conftest.py picks one line by worker index).
+    shard_files: list[str] = []
+    for i, sid in enumerate(session_ids):
+        path = f"logs/test-runs/livy-session-{args.schema_mode}.{i}.txt"
+        with open(path, "w") as f:
+            f.write(sid)
+        shard_files.append(os.path.abspath(path))
 
-    _append_shared_env(f"{prefix}_SESSION_FILE", os.path.abspath(session_file))
-    logger.info("Session %s ready, written to %s", session_id, session_file)
+    # Legacy single-file path (first shard) — kept so anything that reads the
+    # old `_SESSION_FILE` env var still gets a valid session id.
+    legacy = f"logs/test-runs/livy-session-{args.schema_mode}.txt"
+    with open(legacy, "w") as f:
+        f.write(session_ids[0])
+
+    combined = f"logs/test-runs/livy-sessions-{args.schema_mode}.txt"
+    with open(combined, "w") as f:
+        f.write("\n".join(shard_files) + "\n")
+
+    _append_shared_env(f"{prefix}_SESSION_FILE", os.path.abspath(legacy))
+    _append_shared_env(f"{prefix}_SESSION_FILES", os.path.abspath(combined))
+    logger.info("Created %d Livy session(s): %s", count, session_ids)
+    logger.info("Combined shard list written to %s", combined)
 
 
 def cmd_run_tests() -> None:
@@ -189,6 +229,7 @@ def cmd_run_tests() -> None:
     lakehouse_id = os.environ.get(f"{prefix}_LAKEHOUSE_ID")
     lakehouse_name = os.environ.get(f"{prefix}_LAKEHOUSE_NAME")
     session_file = os.environ.get(f"{prefix}_SESSION_FILE", "")
+    session_files_list = os.environ.get(f"{prefix}_SESSION_FILES", "")
 
     if not lakehouse_id or not lakehouse_name:
         logger.error("Lakehouse details not found in shared env for %s", args.schema_mode)
@@ -213,19 +254,23 @@ def cmd_run_tests() -> None:
 
     pytest_args = [
         "tests/functional",
-        "-v",
         "--tb=short",
-        "-x",
+        "--maxfail=3",
         f"--schema-mode={args.schema_mode}",
         "--profile=az_cli",
         *parallelism_args,
         f"--fail-fast-sentinel=logs/test-runs/fail-fast-sentinel-{args.schema_mode}.json",
     ]
 
-    if session_file:
+    if session_files_list:
+        pytest_args.append(f"--session-id-files={session_files_list}")
+    elif session_file:
         pytest_args.append(f"--session-id-file={session_file}")
 
     pytest_args.extend(args.extra_args)
+
+    os.environ.setdefault("FABRIC_SKIP_DEBUG_QUERY", "1")
+    os.environ.setdefault("DBT_SPARK_VERSION", "3.5")
 
     logger.info("pytest.main(%s)", pytest_args)
     exit_code = pytest.main(pytest_args)

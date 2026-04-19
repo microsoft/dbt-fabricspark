@@ -764,16 +764,36 @@ class LivyCursor:
         logger.debug(f"Submitted: {data} {url}")
 
         max_retries = 5
+        res = None
         for attempt in range(max_retries):
-            res = requests.post(
-                url,
-                data=json.dumps(data),
-                headers=get_headers(self.credential, False),
-                timeout=self.credential.http_timeout,
-            )
+            try:
+                res = requests.post(
+                    url,
+                    data=json.dumps(data),
+                    headers=get_headers(self.credential, False),
+                    timeout=self.credential.http_timeout,
+                )
+            except (
+                requests.exceptions.SSLError,
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.ChunkedEncodingError,
+            ) as exc:
+                if attempt >= max_retries - 1:
+                    raise DbtRuntimeError(
+                        f"Livy statement submit failed after {max_retries} retries: {exc}"
+                    )
+                wait_time = 2**attempt * 1
+                logger.debug(
+                    f"Livy statement submit got transient network error "
+                    f"({type(exc).__name__}: {exc}), retrying in {wait_time}s "
+                    f"(attempt {attempt + 1}/{max_retries})"
+                )
+                time.sleep(wait_time)
+                continue
             if res.status_code == 429:
                 retry_after = _parse_retry_after(res)
-                wait_time = max(retry_after, 2**attempt * 5)
+                wait_time = max(retry_after, 2**attempt * 1)
                 logger.debug(
                     f"Livy statement submit got HTTP 429, "
                     f"retrying in {wait_time:.0f}s (attempt {attempt + 1}/{max_retries})"
@@ -783,7 +803,7 @@ class LivyCursor:
             if res.status_code < 500:
                 break
             if attempt < max_retries - 1:
-                wait_time = 2**attempt * 5  # 5s, 10s, 20s, 40s
+                wait_time = 2**attempt * 1  # 1s, 2s, 4s, 8s
                 logger.debug(
                     f"Livy statement submit got HTTP {res.status_code}, "
                     f"retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})"
@@ -818,21 +838,53 @@ class LivyCursor:
         deadline = time.time() + self.credential.statement_timeout
         consecutive_failures = 0
         max_poll_retries = 30
+        # Adaptive polling: start small so quick statements don't sit idle, grow
+        # to a cap so slow statements don't hammer the server. Initial value is
+        # intentionally not *too* small — Fabric Livy sometimes returns 404 for a
+        # just-submitted statement id that has not yet registered on the server
+        # (handled by the 404 retry block below).
+        _poll_interval = 0.3
+        _poll_interval_cap = max(self.credential.poll_statement_wait * 3, 1.5)
+        # 404 can appear transiently right after submit before the statement id
+        # is registered; retry a few times with short backoff before giving up.
+        not_found_retries = 0
+        max_not_found_retries = 10
         while True:
             if time.time() > deadline:
                 raise DbtDatabaseError(
                     f"Timeout ({self.credential.statement_timeout}s) waiting for statement "
                     f"{statement_id} to complete. Increase `statement_timeout` in profiles.yml."
                 )
-            poll_res = requests.get(
-                url,
-                headers=get_headers(self.credential, False),
-                timeout=self.credential.http_timeout,
-            )
+            try:
+                poll_res = requests.get(
+                    url,
+                    headers=get_headers(self.credential, False),
+                    timeout=self.credential.http_timeout,
+                )
+            except (
+                requests.exceptions.SSLError,
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.ChunkedEncodingError,
+            ) as exc:
+                consecutive_failures += 1
+                if consecutive_failures > max_poll_retries:
+                    raise DbtRuntimeError(
+                        f"Livy statement poll failed after {max_poll_retries} retries "
+                        f"({type(exc).__name__}: {exc})"
+                    )
+                wait_time = min(2 ** (consecutive_failures - 1), 30)
+                logger.debug(
+                    f"Livy statement poll got transient network error "
+                    f"({type(exc).__name__}: {exc}), retrying in {wait_time}s "
+                    f"(attempt {consecutive_failures}/{max_poll_retries})"
+                )
+                time.sleep(wait_time)
+                continue
             if poll_res.status_code == 429:
                 consecutive_failures += 1
                 retry_after = _parse_retry_after(poll_res)
-                wait_time = max(retry_after, 2 ** (consecutive_failures - 1) * 5)
+                wait_time = max(retry_after, 2 ** (consecutive_failures - 1) * 1)
                 logger.debug(
                     f"Livy statement poll got HTTP 429, "
                     f"retrying in {wait_time:.0f}s (attempt {consecutive_failures}/{max_poll_retries})"
@@ -847,7 +899,7 @@ class LivyCursor:
             if poll_res.status_code >= 500:
                 consecutive_failures += 1
                 if consecutive_failures <= max_poll_retries:
-                    wait_time = 2 ** (consecutive_failures - 1) * 5  # 5s, 10s, 20s, ...
+                    wait_time = 2 ** (consecutive_failures - 1) * 1  # 1s, 2s, 4s, ...
                     logger.debug(
                         f"Livy statement poll got HTTP {poll_res.status_code}, "
                         f"retrying in {wait_time}s (attempt {consecutive_failures}/{max_poll_retries})"
@@ -858,6 +910,16 @@ class LivyCursor:
                     f"Livy statement poll failed after {max_poll_retries} retries "
                     f"(HTTP {poll_res.status_code}): {poll_res.text}"
                 )
+            if poll_res.status_code == 404 and not_found_retries < max_not_found_retries:
+                # Statement id not yet visible on the server; back off briefly and retry.
+                not_found_retries += 1
+                wait_time = min(0.2 * (1.5 ** (not_found_retries - 1)), 2.0)
+                logger.debug(
+                    f"Livy statement poll got HTTP 404, retrying in {wait_time:.2f}s "
+                    f"(not-found attempt {not_found_retries}/{max_not_found_retries})"
+                )
+                time.sleep(wait_time)
+                continue
             if poll_res.status_code >= 400:
                 raise DbtRuntimeError(
                     f"Livy statement poll failed (HTTP {poll_res.status_code}): {poll_res.text}"
@@ -876,7 +938,8 @@ class LivyCursor:
                 raise DbtDatabaseError(
                     f"Statement {statement_id} failed with state '{res['state']}': {error_msg}"
                 )
-            time.sleep(self.credential.poll_statement_wait)
+            time.sleep(_poll_interval)
+            _poll_interval = min(_poll_interval * 1.5, _poll_interval_cap)
 
     def execute(self, sql: str, *parameters: Any) -> None:
         """

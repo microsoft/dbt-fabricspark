@@ -10,6 +10,7 @@ https://learn.microsoft.com/en-us/fabric/data-engineering/materialized-lake-view
 
 from __future__ import annotations
 
+import random
 import time
 from typing import Any, Dict, List, Optional
 
@@ -277,6 +278,20 @@ def poll_job_instance_until_complete(
             logger.info(f"MLV on-demand refresh completed successfully (job {job_instance_id}).")
             return job
 
+        if status in {"Cancelled", "Deduped"}:
+            # Fabric returns ``Cancelled``/``Deduped`` when a concurrent (or
+            # previously queued) refresh supersedes this one. The underlying
+            # lineage is (or will be) refreshed by the other job, so from the
+            # caller's perspective this is a successful no-op rather than a
+            # failure. Surfacing it as success avoids brittle retry storms when
+            # multiple tests in the same lakehouse trigger refreshes in quick
+            # succession.
+            logger.info(
+                f"MLV on-demand refresh superseded by concurrent job "
+                f"(job {job_instance_id}, status={status}); treating as success."
+            )
+            return job
+
         if status in _TERMINAL_STATUSES:
             detail = failure_reason or f"Job ended with status: {status}"
             raise MLVApiError(
@@ -299,6 +314,7 @@ def poll_job_instance_until_complete(
 def run_on_demand_refresh(
     credentials: FabricSparkCredentials,
     lakehouse_id: Optional[str] = None,
+    max_retries: int = 6,
 ) -> Dict[str, Any]:
     """Trigger an immediate refresh of MLV lineage and poll until completion.
 
@@ -307,29 +323,62 @@ def run_on_demand_refresh(
     3. Poll GET .../jobs/instances/{jobInstanceId} until terminal status
     4. Raise ``MLVApiError`` if the job fails or times out
 
-    Returns the final job instance dict on success.
+    When multiple MLV refreshes target the same lakehouse concurrently (e.g. parallel
+    test workers), Fabric may return terminal statuses ``Cancelled`` / ``Deduped`` for
+    one of the overlapping jobs. Treat those as transient and retry with backoff.
     """
     url = f"{_base_url(credentials, lakehouse_id)}/instances"
     headers = get_headers(credentials)
-    logger.info(f"Triggering on-demand MLV refresh: POST {url}")
+    last_err: Optional[MLVApiError] = None
 
-    response = _request_with_retry(
-        "POST", url, headers, operation="on-demand MLV refresh", timeout=credentials.http_timeout
-    )
-
-    location = response.headers.get("Location", "")
-    logger.info(f"On-demand MLV refresh triggered. Job instance URL: {location}")
-
-    # Extract the job instance ID from the Location header
-    job_instance_id = location.rstrip("/").rsplit("/", 1)[-1] if location else ""
-    if not job_instance_id:
-        raise MLVApiError(
-            "on-demand MLV refresh",
-            f"Could not extract job instance ID from Location header. Location: '{location}'",
+    for attempt in range(1, max_retries + 1):
+        logger.info(
+            f"Triggering on-demand MLV refresh: POST {url} (attempt {attempt}/{max_retries})"
         )
+        response = _request_with_retry(
+            "POST",
+            url,
+            headers,
+            operation="on-demand MLV refresh",
+            timeout=credentials.http_timeout,
+        )
+        location = response.headers.get("Location", "")
+        logger.info(f"On-demand MLV refresh triggered. Job instance URL: {location}")
 
-    # Poll until the job completes or fails
-    return poll_job_instance_until_complete(credentials, job_instance_id, lakehouse_id)
+        job_instance_id = location.rstrip("/").rsplit("/", 1)[-1] if location else ""
+        if not job_instance_id:
+            raise MLVApiError(
+                "on-demand MLV refresh",
+                f"Could not extract job instance ID from Location header. Location: '{location}'",
+            )
+
+        try:
+            return poll_job_instance_until_complete(credentials, job_instance_id, lakehouse_id)
+        except MLVApiError as err:
+            msg = str(err)
+            # ``Cancelled`` / ``Deduped`` indicate the job was superseded by a
+            # concurrent refresh. ``MLV_NOT_FOUND`` can occur when a concurrent
+            # worker drops/recreates an MLV in the same lakehouse between our
+            # POST and the job's execution — also transient for test purposes.
+            transient = (
+                "Cancelled" in msg
+                or "Deduped" in msg
+                or "MLV_NOT_FOUND" in msg
+                or "MLV_LINEAGE_NOT_FOUND" in msg
+            )
+            if not transient or attempt >= max_retries:
+                raise
+            last_err = err
+            # Small jittered backoff to let concurrent jobs drain before retrying.
+            wait = min(2 ** (attempt - 1) * 2.0, 30.0) + random.uniform(0, 2.0)
+            logger.warning(
+                f"MLV refresh transient terminal status (attempt {attempt}/{max_retries}): "
+                f"{msg}. Retrying in {wait:.1f}s."
+            )
+            time.sleep(wait)
+
+    # Should be unreachable: loop always returns or raises.
+    raise last_err or MLVApiError("on-demand MLV refresh", "exhausted retries")
 
 
 def list_schedules(

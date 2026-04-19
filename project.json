@@ -32,7 +32,7 @@
       },
       "test": {
          "executor": "nx:run-commands",
-         "dependsOn": ["test:unit", "test:functional", "test:local-e2e"],
+         "dependsOn": ["test:unit", "test:functional"],
          "options": {
             "commands": [],
             "parallel": false

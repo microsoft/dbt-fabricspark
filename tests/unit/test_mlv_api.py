@@ -213,10 +213,23 @@ class TestPollJobInstanceUntilComplete:
 
     @patch("dbt.adapters.fabricspark.mlv_api.time.sleep")
     @patch("dbt.adapters.fabricspark.mlv_api.get_job_instance")
-    def test_raises_on_cancelled(self, mock_get, mock_sleep, mock_credentials):
-        mock_get.return_value = {"status": "Cancelled", "failureReason": None}
-        with pytest.raises(MLVApiError, match="Cancelled"):
-            poll_job_instance_until_complete(mock_credentials, "job-1")
+    def test_treats_cancelled_as_success(self, mock_get, mock_sleep, mock_credentials):
+        """``Cancelled``/``Deduped`` indicate the refresh was superseded by a
+        concurrent job — the lineage is (or will be) refreshed by that job, so
+        we surface this as a successful no-op rather than raising.
+        """
+        job = {"status": "Cancelled", "failureReason": None}
+        mock_get.return_value = job
+        result = poll_job_instance_until_complete(mock_credentials, "job-1")
+        assert result == job
+
+    @patch("dbt.adapters.fabricspark.mlv_api.time.sleep")
+    @patch("dbt.adapters.fabricspark.mlv_api.get_job_instance")
+    def test_treats_deduped_as_success(self, mock_get, mock_sleep, mock_credentials):
+        job = {"status": "Deduped", "failureReason": None}
+        mock_get.return_value = job
+        result = poll_job_instance_until_complete(mock_credentials, "job-1")
+        assert result == job
 
     @patch("dbt.adapters.fabricspark.mlv_api.time.sleep")
     @patch("dbt.adapters.fabricspark.mlv_api.get_job_instance")

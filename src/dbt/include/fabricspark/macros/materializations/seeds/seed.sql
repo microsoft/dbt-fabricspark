@@ -151,6 +151,12 @@
   {#-- Ensure the database/schema exists before creating the seed table --#}
   {% do ensure_database_exists(model['schema'], database=model.get('database')) %}
 
+  {#-- Drop any stale catalog entry first. This handles DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE
+       errors where a table exists in the catalog but its Delta log is missing. --#}
+  {% call statement('drop_stale_seed', auto_begin=False) -%}
+    drop table if exists {{ this.render() }}
+  {%- endcall %}
+
   {% set sql %}
     create or replace table {{ this.render() }} (
         {%- for col_name in agate_table.column_names -%}

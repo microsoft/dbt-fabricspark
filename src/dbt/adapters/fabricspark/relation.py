@@ -65,9 +65,7 @@ class FabricSparkRelation(BaseRelation):
             )
             if not is_cte and not identifier.startswith(prefix):
                 identifier = f"{prefix}{identifier}"
-        return super().create(
-            database=database, schema=schema, identifier=identifier, **kwargs
-        )
+        return super().create(database=database, schema=schema, identifier=identifier, **kwargs)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "FabricSparkRelation":

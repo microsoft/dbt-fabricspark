@@ -202,7 +202,9 @@ def dbt_profile_target(request, workspace_id, api_endpoint, schema_mode):
 
 
 @pytest.fixture(scope="class")
-def dbt_profile_data(request, unique_schema, dbt_profile_target, profiles_config_update, is_schema_enabled):
+def dbt_profile_data(
+    request, unique_schema, dbt_profile_target, profiles_config_update, is_schema_enabled
+):
     """Build profile data with per-class schema isolation.
 
     Overrides root conftest's ``dbt_profile_data`` to:
@@ -276,6 +278,7 @@ def _prefix_aware_run_sql(project, is_schema_enabled, dbt_profile_data):
 
     def _rewrite_sql(sql: str) -> str:
         """Add identifier prefix to ``schema.table`` references in raw SQL."""
+
         def _replacer(m):
             s, bt, table = m.group(1), m.group(2), m.group(3)
             if table.startswith(prefix):

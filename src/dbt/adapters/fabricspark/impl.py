@@ -353,7 +353,11 @@ class FabricSparkAdapter(SQLAdapter):
             # In no_schema mode, filter to only relations matching the active
             # identifier prefix - which presents a similar API as schema.
             active_prefix = self.Relation._identifier_prefix
-            if active_prefix and relation.identifier and not relation.identifier.startswith(active_prefix):
+            if (
+                active_prefix
+                and relation.identifier
+                and not relation.identifier.startswith(active_prefix)
+            ):
                 continue
             relations.append(relation)
 
@@ -564,7 +568,7 @@ class FabricSparkAdapter(SQLAdapter):
             # so dbt-core can join catalog rows to manifest nodes via CatalogKey.
             as_dict["table_database"] = relation.database or self.config.credentials.lakehouse
             if prefix and as_dict.get("table_name", "").startswith(prefix):
-                as_dict["table_name"] = as_dict["table_name"][len(prefix):]
+                as_dict["table_name"] = as_dict["table_name"][len(prefix) :]
             yield as_dict
 
     def get_filtered_catalog(

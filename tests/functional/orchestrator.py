@@ -161,7 +161,7 @@ def cmd_create_session() -> None:
             status_resp = requests.get(
                 f"{livy_url}/sessions/{sid}",
                 headers=headers,
-                timeout=30,
+                timeout=120,
             )
             if status_resp.ok:
                 data = status_resp.json()

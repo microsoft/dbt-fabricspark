@@ -109,7 +109,7 @@ class FabricClient:
         *,
         json: Optional[dict[str, Any]] = None,
         expected_status: tuple[int, ...] = (200, 201),
-        timeout: int = 30,
+        timeout: int = 120,
     ) -> requests.Response:
         url = self._url(path)
         logger.info("%s %s", method.upper(), url)

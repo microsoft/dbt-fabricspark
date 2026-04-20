@@ -167,7 +167,10 @@ def cmd_create_session() -> None:
         }
         logger.info(
             "[shard %d] Creating Livy session for %s at %s (attempt %d)...",
-            idx, lakehouse_name, livy_url, attempt,
+            idx,
+            lakehouse_name,
+            livy_url,
+            attempt,
         )
         resp = requests.post(
             f"{livy_url}/sessions",

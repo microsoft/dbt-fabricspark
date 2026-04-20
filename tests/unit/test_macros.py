@@ -2,7 +2,7 @@ import re
 import unittest
 from unittest import mock
 
-from jinja2 import Environment, FileSystemLoader, BaseLoader
+from jinja2 import BaseLoader, Environment, FileSystemLoader
 
 
 @unittest.skip("Skipping temporarily - macros require full dbt context")

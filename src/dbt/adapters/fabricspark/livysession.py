@@ -835,7 +835,13 @@ class LivyCursor:
         json_res = res_obj.json()
         statement_id = repr(json_res["id"])
         url = self.connect_url + "/sessions/" + self.session_id + "/statements/" + statement_id
-        deadline = time.time() + self.credential.statement_timeout
+        # statement_timeout == 0 means no timeout (poll indefinitely), matching
+        # the pre-1.9.5 behavior where long-running models were never interrupted.
+        deadline = (
+            (time.time() + self.credential.statement_timeout)
+            if self.credential.statement_timeout > 0
+            else None
+        )
         consecutive_failures = 0
         max_poll_retries = 30
         # Adaptive polling: start small so quick statements don't sit idle, grow
@@ -851,7 +857,7 @@ class LivyCursor:
         not_found_retries = 0
         max_not_found_retries = 20
         while True:
-            if time.time() > deadline:
+            if deadline is not None and time.time() > deadline:
                 raise DbtDatabaseError(
                     f"Timeout ({self.credential.statement_timeout}s) waiting for statement "
                     f"{statement_id} to complete. Increase `statement_timeout` in profiles.yml."

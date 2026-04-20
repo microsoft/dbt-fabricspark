@@ -1,7 +1,8 @@
 import pytest
-from dbt_common.exceptions import DbtRuntimeError
+from dbt_common.exceptions import DbtDatabaseError, DbtRuntimeError
 
 from dbt.adapters.fabricspark import FabricSparkCredentials
+from dbt.adapters.fabricspark.connections import _is_retryable_error
 
 
 def test_credentials_fabric_mode_defaults_schema_to_lakehouse() -> None:
@@ -253,3 +254,42 @@ def test_apply_lakehouse_properties_overrides_mismatched_schema() -> None:
     )
     credentials.apply_lakehouse_properties({"oneLakeTablesPath": "..."})
     assert credentials.schema == "my_lakehouse"
+
+
+# --- Tests for _is_retryable_error and statement_timeout defaults ---
+
+
+def test_default_statement_timeout_is_4_hours() -> None:
+    """Default statement_timeout should be 14400s (4 hours), not 3600s."""
+    credentials = FabricSparkCredentials(
+        method="livy",
+        livy_mode="local",
+        spark_config={"name": "test-session"},
+    )
+    assert credentials.statement_timeout == 14400
+
+
+def test_statement_timeout_error_is_not_retryable() -> None:
+    """Client-side statement polling timeouts must NOT be retried.
+
+    Retrying re-submits the SQL while the original statement may still be
+    running on the Spark cluster, causing overlapping statements.
+    """
+    exc = DbtDatabaseError(
+        "Timeout (14400s) waiting for statement 42 to complete. "
+        "Increase `statement_timeout` in profiles.yml."
+    )
+    assert _is_retryable_error(exc) == ""
+
+
+def test_transient_timeout_is_still_retryable() -> None:
+    """Generic 'timeout' errors (e.g. HTTP timeouts) should still be retried."""
+    exc = DbtDatabaseError("Connection timeout while reaching the server")
+    assert _is_retryable_error(exc) != ""
+
+
+def test_other_retryable_keywords_still_work() -> None:
+    """Sanity check that other retryable keywords are unaffected."""
+    for keyword in ["throttling", "service busy", "rate limit", "unavailable"]:
+        exc = Exception(f"The server returned: {keyword}")
+        assert _is_retryable_error(exc) != "", f"Expected '{keyword}' to be retryable"

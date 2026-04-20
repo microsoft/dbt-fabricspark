@@ -67,7 +67,9 @@ class FabricSparkCredentials(Credentials):
     # Livy session stability settings
     http_timeout: int = 120  # seconds for each HTTP request to Fabric API
     session_start_timeout: int = 600  # max seconds to wait for session start (10 min)
-    statement_timeout: int = 3600  # max seconds to wait for a statement result (1 hour)
+    statement_timeout: int = (
+        43200  # max seconds to wait for a statement result (12 hours); 0 = no timeout
+    )
     poll_wait: int = 10  # seconds between polls for session start
     poll_statement_wait: float = 0.5  # seconds between polls for statement result
 

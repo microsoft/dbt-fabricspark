@@ -456,6 +456,13 @@ class FabricSparkConnectionManager(SQLConnectionManager):
 
 def _is_retryable_error(exc: Exception) -> str:
     message = str(exc).lower()
+
+    # Client-side statement polling timeouts should NOT be retried — retrying
+    # re-submits the SQL while the original statement may still be running on
+    # the Spark cluster, causing overlapping statements that exhaust resources.
+    if "increase `statement_timeout` in profiles.yml" in message:
+        return ""
+
     retryable_keywords = [
         "pending",
         "temporary",

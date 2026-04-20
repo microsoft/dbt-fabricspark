@@ -259,14 +259,14 @@ def test_apply_lakehouse_properties_overrides_mismatched_schema() -> None:
 # --- Tests for _is_retryable_error and statement_timeout defaults ---
 
 
-def test_default_statement_timeout_is_4_hours() -> None:
-    """Default statement_timeout should be 14400s (4 hours), not 3600s."""
+def test_default_statement_timeout_is_12_hours() -> None:
+    """Default statement_timeout should be 43200s (12 hours)."""
     credentials = FabricSparkCredentials(
         method="livy",
         livy_mode="local",
         spark_config={"name": "test-session"},
     )
-    assert credentials.statement_timeout == 14400
+    assert credentials.statement_timeout == 43200
 
 
 def test_statement_timeout_error_is_not_retryable() -> None:
@@ -276,7 +276,7 @@ def test_statement_timeout_error_is_not_retryable() -> None:
     running on the Spark cluster, causing overlapping statements.
     """
     exc = DbtDatabaseError(
-        "Timeout (14400s) waiting for statement 42 to complete. "
+        "Timeout (43200s) waiting for statement 42 to complete. "
         "Increase `statement_timeout` in profiles.yml."
     )
     assert _is_retryable_error(exc) == ""

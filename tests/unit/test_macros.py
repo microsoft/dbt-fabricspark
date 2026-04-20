@@ -2,7 +2,7 @@ import re
 import unittest
 from unittest import mock
 
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, BaseLoader
 
 
 @unittest.skip("Skipping temporarily - macros require full dbt context")
@@ -170,3 +170,85 @@ class TestSparkMacros(unittest.TestCase):
             sql,
             "create or replace table my_table using delta partitioned by (partition_1,partition_2) clustered by (cluster_1,cluster_2) into 1 buckets location '/mnt/root/my_table' comment 'Description Test' as select 1",
         )
+
+
+class TestEnsureDatabaseExists(unittest.TestCase):
+    """Test the database-qualification logic inside ensure_database_exists.
+
+    The macro lives in schema.sql and has two responsibilities:
+    1. Qualify a bare schema_name with a database prefix ONLY when schemas
+       are enabled (not in local mode where schema_name IS the database).
+    2. Emit ``create database if not exists <name>`` in local / schema-enabled
+       modes, or ``select 1`` otherwise.
+
+    These tests render a minimal Jinja2 template that mirrors the
+    qualification logic so we can validate the SQL output without needing
+    a full dbt context.
+    """
+
+    # Simplified Jinja template that mirrors the qualification logic
+    # from fabricspark__ensure_database_exists.
+    # The database prefix is only applied when schemas_enabled is true,
+    # NOT in local mode (where schema_name IS the database).
+    TEMPLATE_SRC = """\
+{%- if schemas_enabled or local_mode -%}
+  {%- if database is not none and '.' not in schema_name and schemas_enabled -%}
+    {%- set schema_name = database ~ '.' ~ schema_name -%}
+  {%- endif -%}
+  create database if not exists {{ schema_name }}
+{%- else -%}
+  select 1
+{%- endif -%}"""
+
+    def setUp(self):
+        env = Environment(loader=BaseLoader())
+        self.template = env.from_string(self.TEMPLATE_SRC)
+
+    def _render(self, schema_name, database=None, schemas_enabled=False, local_mode=False):
+        return self.template.render(
+            schema_name=schema_name,
+            database=database,
+            schemas_enabled=schemas_enabled,
+            local_mode=local_mode,
+        ).strip()
+
+    # --- Local mode (no schema, database == schema) ---
+
+    def test_local_mode_same_db_and_schema(self):
+        """Local mode with database == schema_name should NOT concatenate."""
+        result = self._render("insights", database="insights", local_mode=True)
+        self.assertEqual(result, "create database if not exists insights")
+
+    def test_local_mode_no_database(self):
+        """Local mode with no database arg should use schema_name as-is."""
+        result = self._render("insights", database=None, local_mode=True)
+        self.assertEqual(result, "create database if not exists insights")
+
+    # --- Fabric no-schema mode ---
+
+    def test_fabric_no_schema(self):
+        """Non-schema Fabric mode emits select 1 (no-op)."""
+        result = self._render("bronze", database="bronze", schemas_enabled=False, local_mode=False)
+        self.assertEqual(result, "select 1")
+
+    # --- Fabric schema-enabled mode ---
+
+    def test_schema_enabled_different_db(self):
+        """Schema-enabled mode should qualify bare schema with database."""
+        result = self._render("dbo", database="bronze", schemas_enabled=True)
+        self.assertEqual(result, "create database if not exists bronze.dbo")
+
+    def test_schema_enabled_same_db_and_schema(self):
+        """Schema-enabled with db==schema is valid (schema named same as db)."""
+        result = self._render("bronze", database="bronze", schemas_enabled=True)
+        self.assertEqual(result, "create database if not exists bronze.bronze")
+
+    def test_schema_enabled_already_qualified(self):
+        """Already-qualified schema_name (contains dot) should not be re-prefixed."""
+        result = self._render("bronze.dbo", database="bronze", schemas_enabled=True)
+        self.assertEqual(result, "create database if not exists bronze.dbo")
+
+    def test_schema_enabled_no_database(self):
+        """Schema-enabled with no database arg should use schema_name as-is."""
+        result = self._render("myschema", database=None, schemas_enabled=True)
+        self.assertEqual(result, "create database if not exists myschema")

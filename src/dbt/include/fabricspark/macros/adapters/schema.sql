@@ -29,7 +29,7 @@
      database explicitly via the optional second argument. --#}
 {% macro fabricspark__ensure_database_exists(schema_name, database=none) -%}
   {% if adapter.is_lakehouse_schemas_enabled() or adapter.is_local_mode() %}
-    {%- if database is not none and '.' not in schema_name %}
+    {%- if database is not none and '.' not in schema_name and adapter.is_lakehouse_schemas_enabled() %}
       {%- set schema_name = database ~ '.' ~ schema_name -%}
     {%- endif -%}
     {%- call statement('ensure_database_exists') -%}

@@ -846,9 +846,10 @@ class LivyCursor:
         _poll_interval = 0.3
         _poll_interval_cap = max(self.credential.poll_statement_wait * 3, 1.5)
         # 404 can appear transiently right after submit before the statement id
-        # is registered; retry a few times with short backoff before giving up.
+        # is registered, or when the Fabric Livy service briefly loses track of
+        # the session/statement. Retry with exponential backoff before giving up.
         not_found_retries = 0
-        max_not_found_retries = 10
+        max_not_found_retries = 20
         while True:
             if time.time() > deadline:
                 raise DbtDatabaseError(
@@ -913,7 +914,7 @@ class LivyCursor:
             if poll_res.status_code == 404 and not_found_retries < max_not_found_retries:
                 # Statement id not yet visible on the server; back off briefly and retry.
                 not_found_retries += 1
-                wait_time = min(0.2 * (1.5 ** (not_found_retries - 1)), 2.0)
+                wait_time = min(0.3 * (2.0 ** (not_found_retries - 1)), 5.0)
                 logger.debug(
                     f"Livy statement poll got HTTP 404, retrying in {wait_time:.2f}s "
                     f"(not-found attempt {not_found_retries}/{max_not_found_retries})"

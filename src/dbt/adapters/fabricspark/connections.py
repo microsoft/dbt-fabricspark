@@ -346,7 +346,7 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                 "Materialized Lake Views require a schema-enabled lakehouse. "
                 "The target lakehouse does not have schemas enabled."
             )
-            logger.warning(f"MLV prerequisite not met: {cls.mlv_prereq_error}")
+            logger.debug(f"MLV prerequisite not met: {cls.mlv_prereq_error}")
             return
 
         # All checks passed

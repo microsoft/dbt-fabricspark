@@ -136,14 +136,38 @@ def cmd_create_session() -> None:
 
     headers = {"Authorization": f"Bearer {token_str}", "Content-Type": "application/json"}
 
+    MAX_RETRIES = 3
+    POLL_TIMEOUT = 600  # 10 min per attempt before considering it stale
+    POLL_INTERVAL = 10
+
     def _create_one(idx: int) -> str:
+        last_err: Exception | None = None
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                return _try_create_session(idx, attempt)
+            except (RuntimeError, TimeoutError, requests.RequestException) as exc:
+                last_err = exc
+                logger.warning(
+                    "[shard %d] Attempt %d/%d failed: %s", idx, attempt, MAX_RETRIES, exc
+                )
+                if attempt < MAX_RETRIES:
+                    backoff = 10 * attempt
+                    logger.info("[shard %d] Retrying in %ds...", idx, backoff)
+                    time.sleep(backoff)
+        raise RuntimeError(
+            f"[shard {idx}] All {MAX_RETRIES} attempts to create a Livy session failed. "
+            f"Last error: {last_err}"
+        )
+
+    def _try_create_session(idx: int, attempt: int) -> str:
         spark_config = {
             "name": f"dbt-test-{lakehouse_name}-{idx}",
             "conf": {"spark.livy.session.idle.timeout": "60m"},
             "tags": {"project": f"dbt-test-{lakehouse_name}", "shard": str(idx)},
         }
         logger.info(
-            "[shard %d] Creating Livy session for %s at %s...", idx, lakehouse_name, livy_url
+            "[shard %d] Creating Livy session for %s at %s (attempt %d)...",
+            idx, lakehouse_name, livy_url, attempt,
         )
         resp = requests.post(
             f"{livy_url}/sessions",
@@ -155,9 +179,9 @@ def cmd_create_session() -> None:
         sid = str(resp.json()["id"])
         logger.info("[shard %d] Livy session initiated: %s (waiting for idle...)", idx, sid)
 
-        deadline = time.monotonic() + 900
+        deadline = time.monotonic() + POLL_TIMEOUT
         while time.monotonic() < deadline:
-            time.sleep(10)
+            time.sleep(POLL_INTERVAL)
             status_resp = requests.get(
                 f"{livy_url}/sessions/{sid}",
                 headers=headers,
@@ -174,7 +198,10 @@ def cmd_create_session() -> None:
                     return sid
                 if livy_state in ("dead", "error", "killed") or top_state in ("dead", "error"):
                     raise RuntimeError(f"[shard {idx}] Session failed to start: {data}")
-        raise TimeoutError(f"[shard {idx}] Session did not become idle within 15 minutes")
+        raise TimeoutError(
+            f"[shard {idx}] Session {sid} did not become idle within "
+            f"{POLL_TIMEOUT}s (attempt {attempt})"
+        )
 
     count = max(1, args.count)
     os.makedirs("logs/test-runs", exist_ok=True)

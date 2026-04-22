@@ -1,5 +1,8 @@
 # Contributing
 
+[![Deep-dive Walkthrough](https://rakirahman.blob.core.windows.net/public/images/Misc/dbt-fabricspark-contrib.png)](https://rakirahman.blob.core.windows.net/public/videos/dbt-fabricspark-local-development-deep-dive.mp4)
+
+
 ## How to use, on a Linux machine
 
 1. Windows pre-reqs
@@ -61,4 +64,12 @@
 
    ```bash
    gh auth login
+   ```
+
+1. Create a `test.env` file with your personal Fabric workspace ID - you need `Contributor`:
+
+   ```bash
+   GIT_ROOT=$(git rev-parse --show-toplevel)
+   read -p "Enter your Fabric workspace ID where you have Contributor or Admin: " workspace_id
+   echo "WORKSPACE_ID=${workspace_id}" > "${GIT_ROOT}/test.env"
    ```

@@ -15,7 +15,7 @@ _VALID_RELATION_TYPES = {t.value for t in RelationType}
 
 @dataclass
 class FabricSparkQuotePolicy(Policy):
-    database: bool = False
+    database: bool = True
     schema: bool = False
     identifier: bool = False
 

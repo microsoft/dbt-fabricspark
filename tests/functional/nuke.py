@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
+import time
 from typing import Any
 
 logger = logging.getLogger("nuke")
@@ -9,6 +12,46 @@ _ITEM_TYPES = [
     "lakehouses",
     "environments",
 ]
+
+# Matches the naming pattern: dbt_{branchhash}_{timestamp}_{rest}
+_NAME_PATTERN = re.compile(r"^dbt_([a-f0-9]+)_(\d+)_")
+
+# Items older than this (in seconds) are considered stale and always deleted.
+STALE_THRESHOLD_SECONDS = 24 * 60 * 60  # 24 hours
+
+
+def branch_hash(branch: str) -> str:
+    """Return an 8-character deterministic hash for a branch name."""
+    return hashlib.sha256(branch.encode()).hexdigest()[:8]
+
+
+def _should_delete(item_name: str, current_hash: str, now: float) -> bool:
+    """Decide whether a workspace item should be deleted.
+
+    An item is deleted when **any** of these conditions are true:
+
+    1. Its name matches the ``dbt_{hash}_{ts}_…`` pattern **and** the hash
+       matches *current_hash* (same branch → always clean up).
+    2. Its name matches the pattern **and** the embedded unix timestamp is
+       older than ``STALE_THRESHOLD_SECONDS`` (stale infra from any branch).
+
+    Items that do **not** match the naming pattern are left untouched so that
+    manually-created resources are never accidentally removed.
+    """
+    m = _NAME_PATTERN.match(item_name)
+    if not m:
+        return False
+
+    item_hash = m.group(1)
+    item_ts = int(m.group(2))
+
+    if item_hash == current_hash:
+        return True
+
+    if (now - item_ts) > STALE_THRESHOLD_SECONDS:
+        return True
+
+    return False
 
 
 def nuke_workspace_task(shared_state: dict[str, Any]) -> None:
@@ -36,15 +79,25 @@ def nuke_workspace_task(shared_state: dict[str, Any]) -> None:
         api_endpoint=api_endpoint,
         token_provider=provider,
     )
-    nuke_workspace(client)
+
+    branch = os.environ.get("GITHUB_HEAD_REF") or os.environ.get("GITHUB_REF_NAME", "unknown")
+    nuke_workspace(client, branch_hash(branch))
 
 
-def nuke_workspace(client: Any) -> None:
-    """Delete ALL lakehouses and environments in the workspace.
+def nuke_workspace(client: Any, current_hash: str) -> None:
+    """Delete lakehouses and environments that belong to this branch or are stale.
 
-    This is a brute-force cleanup — it deletes everything it can find.
-    Only use on dedicated test workspaces.
+    Items whose ``displayName`` matches the ``dbt_{hash}_{ts}_…`` convention
+    are deleted when:
+
+    * The *hash* segment equals *current_hash* (same branch).
+    * The *ts* segment is more than 24 hours old (stale).
+
+    Items that do not match the naming convention are **never** deleted, so
+    manually-created or unrelated resources are safe.
     """
+    now = time.time()
+
     for item_type in _ITEM_TYPES:
         try:
             resp = client._request(
@@ -53,11 +106,21 @@ def nuke_workspace(client: Any) -> None:
                 expected_status=(200,),
             )
             items = resp.json().get("value", [])
-            logger.info("Found %d %s to delete", len(items), item_type)
+            logger.info("Found %d %s in workspace", len(items), item_type)
 
             for item in items:
                 item_id = item["id"]
                 item_name = item.get("displayName", "<unknown>")
+
+                if not _should_delete(item_name, current_hash, now):
+                    logger.info(
+                        "Skipping %s: %s (%s) — not matching branch or stale threshold",
+                        item_type,
+                        item_name,
+                        item_id,
+                    )
+                    continue
+
                 logger.info("Deleting %s: %s (%s)", item_type, item_name, item_id)
                 try:
                     client._request(

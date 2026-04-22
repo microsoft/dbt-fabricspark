@@ -156,7 +156,9 @@ class TestSparkAdapter(unittest.TestCase):
         input_cols = [Row(keys=["col_name", "data_type"], values=r) for r in plain_rows]
 
         config = self._get_target_livy(self.project_cfg)
-        rows = FabricSparkAdapter(config, self.mp_context).parse_describe_extended(relation, input_cols)
+        rows = FabricSparkAdapter(config, self.mp_context).parse_describe_extended(
+            relation, input_cols
+        )
         self.assertEqual(len(rows), 4)
         self.assertEqual(
             rows[0].to_column_dict(omit_none=False),
@@ -245,7 +247,9 @@ class TestSparkAdapter(unittest.TestCase):
         input_cols = [Row(keys=["col_name", "data_type"], values=r) for r in plain_rows]
 
         config = self._get_target_livy(self.project_cfg)
-        rows = FabricSparkAdapter(config, self.mp_context).parse_describe_extended(relation, input_cols)
+        rows = FabricSparkAdapter(config, self.mp_context).parse_describe_extended(
+            relation, input_cols
+        )
 
         self.assertEqual(rows[0].to_column_dict().get("table_owner"), "1234")
 
@@ -281,7 +285,9 @@ class TestSparkAdapter(unittest.TestCase):
         input_cols = [Row(keys=["col_name", "data_type"], values=r) for r in plain_rows]
 
         config = self._get_target_livy(self.project_cfg)
-        rows = FabricSparkAdapter(config, self.mp_context).parse_describe_extended(relation, input_cols)
+        rows = FabricSparkAdapter(config, self.mp_context).parse_describe_extended(
+            relation, input_cols
+        )
         self.assertEqual(len(rows), 1)
         self.assertEqual(
             rows[0].to_column_dict(omit_none=False),
@@ -350,13 +356,9 @@ class TestSparkAdapter(unittest.TestCase):
         """Test that changing the ClassVar affects new relations, not existing ones."""
         FabricSparkRelation._schemas_enabled = False
         try:
-            rel_two = FabricSparkRelation.create(
-                database="lh", schema="lh", identifier="t1"
-            )
+            rel_two = FabricSparkRelation.create(database="lh", schema="lh", identifier="t1")
             FabricSparkRelation._schemas_enabled = True
-            rel_three = FabricSparkRelation.create(
-                database="lh", schema="dbo", identifier="t2"
-            )
+            rel_three = FabricSparkRelation.create(database="lh", schema="dbo", identifier="t2")
             # Existing relation retains its original policy
             assert str(rel_two) == "lh.t1"
             # New relation uses updated policy
@@ -424,7 +426,9 @@ class TestSparkAdapter(unittest.TestCase):
         )
 
         config = self._get_target_livy(self.project_cfg)
-        columns = FabricSparkAdapter(config, self.mp_context).parse_columns_from_information(relation)
+        columns = FabricSparkAdapter(config, self.mp_context).parse_columns_from_information(
+            relation
+        )
         self.assertEqual(len(columns), 4)
         self.assertEqual(
             columns[0].to_column_dict(omit_none=False),
@@ -509,7 +513,9 @@ class TestSparkAdapter(unittest.TestCase):
         )
 
         config = self._get_target_livy(self.project_cfg)
-        columns = FabricSparkAdapter(config, self.mp_context).parse_columns_from_information(relation)
+        columns = FabricSparkAdapter(config, self.mp_context).parse_columns_from_information(
+            relation
+        )
         self.assertEqual(len(columns), 4)
         self.assertEqual(
             columns[1].to_column_dict(omit_none=False),
@@ -575,7 +581,9 @@ class TestSparkAdapter(unittest.TestCase):
         )
 
         config = self._get_target_livy(self.project_cfg)
-        columns = FabricSparkAdapter(config, self.mp_context).parse_columns_from_information(relation)
+        columns = FabricSparkAdapter(config, self.mp_context).parse_columns_from_information(
+            relation
+        )
         self.assertEqual(len(columns), 4)
 
         self.assertEqual(

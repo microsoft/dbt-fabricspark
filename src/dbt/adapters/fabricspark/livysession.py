@@ -39,6 +39,10 @@ _session_lock = threading.Lock()
 # Global lock to ensure thread-safe token refresh
 _token_lock = threading.Lock()
 
+# Process-level cache for lakehouse properties (avoids repeated API calls per connection open)
+_lakehouse_props_cache: dict[tuple[str, str, str], dict] = {}
+_lakehouse_props_lock = threading.Lock()
+
 
 def read_session_id_from_file(file_path: str) -> Optional[str]:
     """Read session ID from file if it exists and contains a valid ID.
@@ -58,7 +62,7 @@ def read_session_id_from_file(file_path: str) -> Optional[str]:
             logger.debug(f"Session ID file does not exist: {file_path}")
             return None
 
-        with open(file_path, 'r') as f:
+        with open(file_path, "r") as f:
             session_id = f.read().strip()
             if session_id:
                 logger.debug(f"Read session ID from file: {session_id}")
@@ -91,7 +95,7 @@ def write_session_id_to_file(file_path: str, session_id: str) -> bool:
         if dir_path and not os.path.exists(dir_path):
             os.makedirs(dir_path, exist_ok=True)
 
-        with open(file_path, 'w') as f:
+        with open(file_path, "w") as f:
             f.write(session_id)
         logger.debug(f"Wrote session ID to file: {session_id} -> {file_path}")
         return True
@@ -206,7 +210,7 @@ def get_fabric_notebook_access_token(credentials: FabricSparkCredentials) -> Acc
 
     _ = credentials
     aad_token = notebookutils.credentials.getToken(FABRIC_NOTEBOOK_CREDENTIAL_SCOPE)
-    expires_on = json.loads(base64.b64decode(aad_token.split('.')[1] + '=='))['exp']
+    expires_on = json.loads(base64.b64decode(aad_token.split(".")[1] + "=="))["exp"]
 
     now = time.time()
     remaining_seconds = expires_on - now
@@ -240,7 +244,10 @@ def get_headers(credentials: FabricSparkCredentials, tokenPrint: bool = False) -
             elif credentials.authentication and credentials.authentication.lower() == "int_tests":
                 logger.info("Using int_tests auth")
                 accessToken = get_default_access_token(credentials)
-            elif credentials.authentication and credentials.authentication.lower() == "fabric_notebook":
+            elif (
+                credentials.authentication
+                and credentials.authentication.lower() == "fabric_notebook"
+            ):
                 logger.info("Using Fabric Notebook auth")
                 accessToken = get_fabric_notebook_access_token(credentials)
             else:
@@ -254,6 +261,33 @@ def get_headers(credentials: FabricSparkCredentials, tokenPrint: bool = False) -
     return headers
 
 
+def _parse_retry_after(response: requests.Response) -> float:
+    """Extract wait time from Retry-After header or 429 response body.
+
+    Falls back to 0 if no hint is found.
+    """
+    header = response.headers.get("Retry-After", "")
+    if header:
+        try:
+            return float(header)
+        except ValueError:
+            pass
+    # Fabric 429 body sometimes includes a retry-after timestamp in the message
+    try:
+        body = response.json()
+        msg = body.get("message", "")
+        # Fabric 429 body includes a timestamp like "...until: 4/17/2026 12:22:35 PM (UTC)"
+        if "until:" in msg:
+            ts_str = msg.split("until:")[1].strip().rstrip(")")
+            ts_str = ts_str.replace("(UTC", "").strip()
+            target = dt.datetime.strptime(ts_str, "%m/%d/%Y %I:%M:%S %p")
+            delta = (target - dt.datetime.utcnow()).total_seconds()
+            return max(delta, 0)
+    except Exception:
+        pass
+    return 0
+
+
 def get_lakehouse_properties(credentials: FabricSparkCredentials) -> dict:
     """Fetch lakehouse properties from the Fabric REST API.
 
@@ -261,22 +295,68 @@ def get_lakehouse_properties(credentials: FabricSparkCredentials) -> dict:
     the ``properties`` dict from the response. The presence of ``defaultSchema``
     in the returned dict indicates a schema-enabled lakehouse.
 
+    Results are cached per process so parallel calls don't stampede
+    the API on every connection open.
+
     Returns an empty dict for local mode (no Fabric API available).
     """
     if credentials.is_local_mode:
         return {}
 
+    cache_key = (credentials.endpoint, credentials.workspaceid, credentials.lakehouseid)
+
+    with _lakehouse_props_lock:
+        if cache_key in _lakehouse_props_cache:
+            logger.debug("Lakehouse properties served from cache")
+            return _lakehouse_props_cache[cache_key]
+
     headers = get_headers(credentials)
     url = f"{credentials.endpoint}/workspaces/{credentials.workspaceid}/lakehouses/{credentials.lakehouseid}"
-    try:
-        response = requests.get(url, headers=headers, timeout=30)
-        response.raise_for_status()
-        properties = response.json().get("properties", {})
-        logger.debug(f"Lakehouse properties: {properties}")
-        return properties
-    except Exception as e:
-        logger.warning(f"Failed to fetch lakehouse properties, defaulting to empty: {e}")
-        return {}
+
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
+            if response.status_code == 429:
+                retry_after = _parse_retry_after(response)
+                wait = max(retry_after, 2**attempt * 2)  # at least 2, 4, 8, 16, 32s
+                logger.debug(
+                    f"Lakehouse properties API returned 429, "
+                    f"retrying in {wait:.0f}s (attempt {attempt + 1}/{max_retries})"
+                )
+                time.sleep(wait)
+                continue
+            response.raise_for_status()
+            properties = response.json().get("properties", {})
+            logger.debug(f"Lakehouse properties: {properties}")
+
+            with _lakehouse_props_lock:
+                _lakehouse_props_cache[cache_key] = properties
+
+            return properties
+        except requests.exceptions.HTTPError:
+            if attempt < max_retries - 1:
+                wait = 2**attempt * 2
+                logger.debug(
+                    f"Lakehouse properties API failed, "
+                    f"retrying in {wait}s (attempt {attempt + 1}/{max_retries})"
+                )
+                time.sleep(wait)
+                continue
+            logger.warning(
+                f"Failed to fetch lakehouse properties after {max_retries} attempts, "
+                f"defaulting to empty"
+            )
+            return {}
+        except Exception as e:
+            logger.warning(f"Failed to fetch lakehouse properties, defaulting to empty: {e}")
+            return {}
+
+    logger.warning(
+        f"Failed to fetch lakehouse properties after {max_retries} retries (429), "
+        f"defaulting to empty"
+    )
+    return {}
 
 
 class LivySession:
@@ -372,8 +452,13 @@ class LivySession:
                     logger.info(f"Successfully reusing existing Livy session: {session_id}")
                     self.is_new_session_required = False
                     return True
-                elif current_state in ("starting", "not_started", "busy") or top_level_state in ("starting", "not_started"):
-                    logger.debug(f"Session {session_id} is {current_state} (top: {top_level_state}), waiting...")
+                elif current_state in ("starting", "not_started", "busy") or top_level_state in (
+                    "starting",
+                    "not_started",
+                ):
+                    logger.debug(
+                        f"Session {session_id} is {current_state} (top: {top_level_state}), waiting..."
+                    )
                     self._wait_for_existing_session(session_id)
                     logger.info(f"Successfully reusing existing Livy session: {session_id}")
                     self.is_new_session_required = False
@@ -419,11 +504,17 @@ class LivySession:
 
                 if livy_state == "idle":
                     return
-                elif livy_state in ("dead", "error", "killed") or top_level_state in ("dead", "error", "killed"):
+                elif livy_state in ("dead", "error", "killed") or top_level_state in (
+                    "dead",
+                    "error",
+                    "killed",
+                ):
                     raise FailedToConnectError(f"Session {session_id} died while waiting")
                 else:
                     # Session still starting or in transition
-                    logger.debug(f"Session {session_id} state: top={top_level_state}, livy={livy_state}, waiting...")
+                    logger.debug(
+                        f"Session {session_id} state: top={top_level_state}, livy={livy_state}, waiting..."
+                    )
 
             time.sleep(self.credential.poll_wait)
 
@@ -532,11 +623,12 @@ class LivySession:
                     raise FailedToConnectError("failed to connect")
                 else:
                     # Unknown state, keep waiting (could be transitioning)
-                    logger.debug(f"Session {self.session_id} in state: top={top_level_state}, livy={livy_state}, waiting...")
+                    logger.debug(
+                        f"Session {self.session_id} in state: top={top_level_state}, livy={livy_state}, waiting..."
+                    )
                     time.sleep(self.credential.poll_wait)
 
     def delete_session(self) -> None:
-
         try:
             # delete the session_id
             res = requests.delete(
@@ -619,7 +711,9 @@ class LivyCursor:
         return True
 
     @property
-    def description(self,) -> list[tuple[str, str, None, None, None, None, bool]]:
+    def description(
+        self,
+    ) -> list[tuple[str, str, None, None, None, None, bool]]:
         """
         Get the description.
 
@@ -664,23 +758,52 @@ class LivyCursor:
             LivySessionManager.connect(self.credential)
             self.session_id = self.livy_session.session_id
 
-        # Submit code with retry for transient 5xx errors
+        # Submit code with retry for transient 5xx and 429 (rate-limit) errors
         data = {"code": code, "kind": "sql"}
         url = self.connect_url + "/sessions/" + self.session_id + "/statements"
         logger.debug(f"Submitted: {data} {url}")
 
-        max_retries = 3
+        max_retries = 5
+        res = None
         for attempt in range(max_retries):
-            res = requests.post(
-                url,
-                data=json.dumps(data),
-                headers=get_headers(self.credential, False),
-                timeout=self.credential.http_timeout,
-            )
+            try:
+                res = requests.post(
+                    url,
+                    data=json.dumps(data),
+                    headers=get_headers(self.credential, False),
+                    timeout=self.credential.http_timeout,
+                )
+            except (
+                requests.exceptions.SSLError,
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.ChunkedEncodingError,
+            ) as exc:
+                if attempt >= max_retries - 1:
+                    raise DbtRuntimeError(
+                        f"Livy statement submit failed after {max_retries} retries: {exc}"
+                    )
+                wait_time = 2**attempt * 1
+                logger.debug(
+                    f"Livy statement submit got transient network error "
+                    f"({type(exc).__name__}: {exc}), retrying in {wait_time}s "
+                    f"(attempt {attempt + 1}/{max_retries})"
+                )
+                time.sleep(wait_time)
+                continue
+            if res.status_code == 429:
+                retry_after = _parse_retry_after(res)
+                wait_time = max(retry_after, 2**attempt * 1)
+                logger.debug(
+                    f"Livy statement submit got HTTP 429, "
+                    f"retrying in {wait_time:.0f}s (attempt {attempt + 1}/{max_retries})"
+                )
+                time.sleep(wait_time)
+                continue
             if res.status_code < 500:
                 break
             if attempt < max_retries - 1:
-                wait_time = 2 ** attempt * 5  # 5s, 10s
+                wait_time = 2**attempt * 1  # 1s, 2s, 4s, 8s
                 logger.debug(
                     f"Livy statement submit got HTTP {res.status_code}, "
                     f"retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})"
@@ -712,20 +835,78 @@ class LivyCursor:
         json_res = res_obj.json()
         statement_id = repr(json_res["id"])
         url = self.connect_url + "/sessions/" + self.session_id + "/statements/" + statement_id
-        deadline = time.time() + self.credential.statement_timeout
+        # statement_timeout == 0 means no timeout (poll indefinitely), matching
+        # the pre-1.9.5 behavior where long-running models were never interrupted.
+        deadline = (
+            (time.time() + self.credential.statement_timeout)
+            if self.credential.statement_timeout > 0
+            else None
+        )
         consecutive_failures = 0
-        max_poll_retries = 3
+        max_poll_retries = 30
+        # Adaptive polling: start small so quick statements don't sit idle, grow
+        # to a cap so slow statements don't hammer the server. Initial value is
+        # intentionally not *too* small — Fabric Livy sometimes returns 404 for a
+        # just-submitted statement id that has not yet registered on the server
+        # (handled by the 404 retry block below).
+        _poll_interval = 0.3
+        _poll_interval_cap = max(self.credential.poll_statement_wait * 3, 1.5)
+        # 404 can appear transiently right after submit before the statement id
+        # is registered, or when the Fabric Livy service briefly loses track of
+        # the session/statement. Retry with exponential backoff before giving up.
+        not_found_retries = 0
+        max_not_found_retries = 20
         while True:
-            if time.time() > deadline:
+            if deadline is not None and time.time() > deadline:
                 raise DbtDatabaseError(
                     f"Timeout ({self.credential.statement_timeout}s) waiting for statement "
                     f"{statement_id} to complete. Increase `statement_timeout` in profiles.yml."
                 )
-            poll_res = requests.get(url, headers=get_headers(self.credential, False), timeout=self.credential.http_timeout)
+            try:
+                poll_res = requests.get(
+                    url,
+                    headers=get_headers(self.credential, False),
+                    timeout=self.credential.http_timeout,
+                )
+            except (
+                requests.exceptions.SSLError,
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.ChunkedEncodingError,
+            ) as exc:
+                consecutive_failures += 1
+                if consecutive_failures > max_poll_retries:
+                    raise DbtRuntimeError(
+                        f"Livy statement poll failed after {max_poll_retries} retries "
+                        f"({type(exc).__name__}: {exc})"
+                    )
+                wait_time = min(2 ** (consecutive_failures - 1), 30)
+                logger.debug(
+                    f"Livy statement poll got transient network error "
+                    f"({type(exc).__name__}: {exc}), retrying in {wait_time}s "
+                    f"(attempt {consecutive_failures}/{max_poll_retries})"
+                )
+                time.sleep(wait_time)
+                continue
+            if poll_res.status_code == 429:
+                consecutive_failures += 1
+                retry_after = _parse_retry_after(poll_res)
+                wait_time = max(retry_after, 2 ** (consecutive_failures - 1) * 1)
+                logger.debug(
+                    f"Livy statement poll got HTTP 429, "
+                    f"retrying in {wait_time:.0f}s (attempt {consecutive_failures}/{max_poll_retries})"
+                )
+                time.sleep(wait_time)
+                if consecutive_failures > max_poll_retries:
+                    raise DbtRuntimeError(
+                        f"Livy statement poll failed after {max_poll_retries} retries "
+                        f"(HTTP 429): {poll_res.text}"
+                    )
+                continue
             if poll_res.status_code >= 500:
                 consecutive_failures += 1
                 if consecutive_failures <= max_poll_retries:
-                    wait_time = 2 ** (consecutive_failures - 1) * 5  # 5s, 10s, 20s
+                    wait_time = 2 ** (consecutive_failures - 1) * 1  # 1s, 2s, 4s, ...
                     logger.debug(
                         f"Livy statement poll got HTTP {poll_res.status_code}, "
                         f"retrying in {wait_time}s (attempt {consecutive_failures}/{max_poll_retries})"
@@ -736,6 +917,16 @@ class LivyCursor:
                     f"Livy statement poll failed after {max_poll_retries} retries "
                     f"(HTTP {poll_res.status_code}): {poll_res.text}"
                 )
+            if poll_res.status_code == 404 and not_found_retries < max_not_found_retries:
+                # Statement id not yet visible on the server; back off briefly and retry.
+                not_found_retries += 1
+                wait_time = min(0.3 * (2.0 ** (not_found_retries - 1)), 5.0)
+                logger.debug(
+                    f"Livy statement poll got HTTP 404, retrying in {wait_time:.2f}s "
+                    f"(not-found attempt {not_found_retries}/{max_not_found_retries})"
+                )
+                time.sleep(wait_time)
+                continue
             if poll_res.status_code >= 400:
                 raise DbtRuntimeError(
                     f"Livy statement poll failed (HTTP {poll_res.status_code}): {poll_res.text}"
@@ -754,7 +945,8 @@ class LivyCursor:
                 raise DbtDatabaseError(
                     f"Statement {statement_id} failed with state '{res['state']}': {error_msg}"
                 )
-            time.sleep(self.credential.poll_statement_wait)
+            time.sleep(_poll_interval)
+            _poll_interval = min(_poll_interval * 1.5, _poll_interval_cap)
 
     def execute(self, sql: str, *parameters: Any) -> None:
         """
@@ -859,6 +1051,7 @@ class LivyCursor:
 
         return row
 
+
 class LivyConnection:
     """
     Mock a pyodbc connection.
@@ -915,12 +1108,14 @@ class LivyConnection:
         self.close()
         return True
 
+
 def _atexit_cleanup() -> None:
     """Delete the Fabric Livy session on process exit.
 
     Local-mode sessions are kept alive for reuse across runs.
     """
     LivySessionManager.disconnect()
+
 
 atexit.register(_atexit_cleanup)
 
@@ -968,7 +1163,11 @@ class LivySessionManager:
         session = LivySessionManager.livy_global_session
 
         # 1. Fast path: reuse current in-memory session if it's valid and idle
-        if session is not None and session.is_valid_session() and not session.is_new_session_required:
+        if (
+            session is not None
+            and session.is_valid_session()
+            and not session.is_new_session_required
+        ):
             logger.debug(f"Reusing session: {session.session_id}")
             return
 
@@ -1014,9 +1213,7 @@ class LivySessionManager:
         """Connect in Fabric mode — always creates a new session."""
         session = LivySessionManager.livy_global_session
         needs_new_session = (
-            session is None
-            or not session.is_valid_session()
-            or session.is_new_session_required
+            session is None or not session.is_valid_session() or session.is_new_session_required
         )
 
         if not needs_new_session:
@@ -1038,7 +1235,11 @@ class LivySessionManager:
         session = LivySessionManager.livy_global_session
 
         # 1. Fast path: reuse current in-memory session if it's valid and idle
-        if session is not None and session.is_valid_session() and not session.is_new_session_required:
+        if (
+            session is not None
+            and session.is_valid_session()
+            and not session.is_new_session_required
+        ):
             logger.debug(f"Reusing Fabric session: {session.session_id}")
             return
 
@@ -1068,18 +1269,24 @@ class LivySessionManager:
 
         # Inject environmentId into spark_config if configured
         if credentials.environmentId:
-            spark_config = {**spark_config, "conf": {
-                **spark_config.get("conf", {}),
-                "spark.fabric.environment.id": credentials.environmentId,
-            }}
+            spark_config = {
+                **spark_config,
+                "conf": {
+                    **spark_config.get("conf", {}),
+                    "spark.fabric.environment.id": credentials.environmentId,
+                },
+            }
             logger.debug(f"Using Fabric Environment: {credentials.environmentId}")
 
         # Inject session idle timeout into spark_config
         if credentials.session_idle_timeout:
-            spark_config = {**spark_config, "conf": {
-                **spark_config.get("conf", {}),
-                "spark.livy.session.idle.timeout": credentials.session_idle_timeout,
-            }}
+            spark_config = {
+                **spark_config,
+                "conf": {
+                    **spark_config.get("conf", {}),
+                    "spark.livy.session.idle.timeout": credentials.session_idle_timeout,
+                },
+            }
             logger.debug(f"Session idle timeout: {credentials.session_idle_timeout}")
 
         LivySessionManager.livy_global_session.create_session(spark_config)
@@ -1103,7 +1310,9 @@ class LivySessionManager:
         """Create a new session and write the session ID to file (local mode only)."""
         LivySessionManager.livy_global_session.create_session(spark_config)
         LivySessionManager.livy_global_session.is_new_session_required = False
-        write_session_id_to_file(session_file_path, LivySessionManager.livy_global_session.session_id)
+        write_session_id_to_file(
+            session_file_path, LivySessionManager.livy_global_session.session_id
+        )
 
     @staticmethod
     def disconnect() -> None:
@@ -1125,7 +1334,9 @@ class LivySessionManager:
 
             if session.is_local_mode or session.credential.reuse_session:
                 # Local mode or Fabric reuse mode: keep the session alive
-                logger.debug(f"Disconnecting from session manager (session {session_id} kept alive for reuse)")
+                logger.debug(
+                    f"Disconnecting from session manager (session {session_id} kept alive for reuse)"
+                )
             else:
                 # Fabric mode: delete the session since it won't be reused
                 logger.debug(f"Deleting Fabric Livy session: {session_id}")
@@ -1133,6 +1344,7 @@ class LivySessionManager:
 
             # Reset the local reference in both cases
             LivySessionManager.livy_global_session = None
+
 
 class LivySessionConnectionWrapper(object):
     """Connection wrapper for the livy sessoin connection method."""

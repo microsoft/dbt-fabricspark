@@ -1,169 +1,72 @@
-# **what?**
-# Runs code quality checks, unit tests, and verifies python build on
-# all code commited to the repository. This workflow should not
-# require any secrets since it runs for PRs from forked repos.
-# By default, secrets are not passed to workflows running from
-# a forked repo.
-
-# **why?**
-# Ensure code for dbt meets a certain quality standard.
-
-# **when?**
-# This will run for all PRs, when code is pushed to a release
-# branch, and when manually triggered.
-
-name: Tests and Code Checks
+name: Continuous Integration
 
 on:
   pull_request:
+  workflow_dispatch:
+
+env:
+  IS_GH_ACTION: "1"
+  CLIENT_ID: ${{ secrets.APP_ID }}
+  TENANT_ID: ${{ secrets.TENANT_ID }}
+  FABRIC_WORKSPACE_ID: ${{ secrets.WORKSPACE_ID }}
+  FABRIC_API: "https://msitapi.fabric.microsoft.com/v1"
 
 permissions:
-  contents: read   # Required to access repository files
-  packages: read   # Grant explicit read access to packages
-
-# will cancel previous workflows triggered by the same event and for the same ref for PRs or same SHA otherwise
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ contains(github.event_name, 'pull_request') && github.event.pull_request.head.ref || github.sha }}
-  cancel-in-progress: true
-
-defaults:
-  run:
-    shell: bash
+  contents: read
+  packages: read
+  id-token: write
 
 jobs:
-  code-quality:
-    name: code-quality
-
+  linux:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 360
+    container:
+      image: dbtfabric.azurecr.io/devcontainer/spark:c30058bab7d446a30b78be86804639114f58edb0242a79c5e1400af912052265
+      options: >-
+        --cap-add=SYS_ADMIN
+        --device=/dev/fuse
+        --security-opt=apparmor:unconfined
+        --add-host=host.docker.internal:host-gateway
+
+    defaults:
+      run:
+        shell: bash
 
     steps:
-      - name: Check out the repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          persist-credentials: false
+          fetch-depth: 0
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Set up Python
-        run: uv python install 3.11
-
-      - name: Install dependencies
-        run: uv sync
-
-      - name: Run ruff check
-        run: uv run ruff check .
-
-  unit:
-    name: unit test / python ${{ matrix.python-version }}
-
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
-
-    env:
-      PYTEST_ADDOPTS: "-v --color=yes"
-
-    steps:
-      - name: Check out the repository
-        uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
-
-      - name: Install dependencies
-        run: uv sync
-
-      - name: Run unit tests
-        run: uv run pytest tests/unit
-
-  build:
-    name: build packages
-
-    runs-on: ubuntu-latest
-
-    outputs:
-      is_alpha: ${{ steps.check-is-alpha.outputs.is_alpha }}
-
-    steps:
-      - name: Check out the repository
-        uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Set up Python
-        run: uv python install 3.11
-
-      - name: Build distributions
-        run: uv build
-
-      - name: Show distributions
-        run: ls -lh dist/
-
-      - name: Install twine and check distributions
+      - name: "🔒 Configure container permissions and PATH"
         run: |
-          uv tool install twine
-          twine check dist/*
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Check if this is an alpha version
-        id: check-is-alpha
-        run: |
-          export is_alpha=0
-          if [[ "$(ls -lh dist/)" == *"a1"* ]]; then export is_alpha=1; fi
-          echo "is_alpha=$is_alpha" >> $GITHUB_OUTPUT
-
-      - uses: actions/upload-artifact@v4
+      - name: "🔒 Auth: Azure login with OIDC"
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5
         with:
-          name: dist
-          path: dist/
+          client-id: ${{ secrets.APP_ID }}
+          tenant-id: ${{ secrets.TENANT_ID }}
+          allow-no-subscriptions: true
 
-  test-build:
-    name: verify packages / python ${{ matrix.python-version }} / ${{ matrix.os }}
-
-    if: needs.build.outputs.is_alpha == 0
-
-    needs: build
-
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
-
-    steps:
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
-
-      - name: Show distributions
-        run: ls -lh dist/
-
-      - name: Install wheel distributions
+      - name: "📝 Write test.env"
         run: |
-          find ./dist/*.whl -maxdepth 1 -type f | xargs python -m pip install --force-reinstall --find-links=dist/
-      - name: Check wheel distributions
-        run: |
-          dbt --version
-      - name: Install source distributions
-        run: |
-          find ./dist/*.gz -maxdepth 1 -type f | xargs python -m pip install --force-reinstall --find-links=dist/
-      - name: Check source distributions
-        run: |
-          dbt --version
+          echo "WORKSPACE_ID=${{ secrets.WORKSPACE_ID }}" > "$GITHUB_WORKSPACE/test.env"
+          echo "LIVY_ENDPOINT=${FABRIC_API}" >> "$GITHUB_WORKSPACE/test.env"
+
+      - name: "⚙️ Post create commands"
+        run: /tmp/overlay/post-create-commands.sh
+
+      - name: "⚙️ Post attach commands"
+        run: /tmp/overlay/post-attach-commands.sh
+
+      - name: "📦 Build Projects"
+        run: npx nx affected --base=origin/main -t build --parallel=3 --configuration=ci --output-style=stream --verbose
+
+      - name: "🧹 Lint Projects"
+        run: npx nx affected --base=origin/main -t lint --parallel=3 --configuration=ci --verbose --output-style=stream --verbose
+
+      - name: "🧪 Test Projects"
+        run: npx nx affected --base=origin/main -t test --configuration=ci --verbose --output-style=stream --verbose
+
+      - name: "📁 Verify No Untracked Files"
+        run: npm run fail-on-untracked-files

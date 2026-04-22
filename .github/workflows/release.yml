@@ -1,21 +1,9 @@
-# **what?**
-# Release workflow provides the following steps:
-# - checkout the tagged commit;
-# - run unit tests;
-# - build the package;
-# - publish to PyPI;
-#
-# **why?**
-# Ensure an automated and tested release process
-#
-# **when?**
-# When a GitHub Release is created with a v* tag.
-
-name: Release new version to PyPI
+name: Test and release new version to PyPI
 
 on:
   release:
     types: [created]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -24,26 +12,57 @@ permissions:
 
 jobs:
   release-version:
-    name: Release new version
+    name: Test and release new version
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 120
+    container:
+      image: dbtfabric.azurecr.io/devcontainer/spark:c30058bab7d446a30b78be86804639114f58edb0242a79c5e1400af912052265
+      options: >-
+        --cap-add=SYS_ADMIN
+        --device=/dev/fuse
+        --security-opt=apparmor:unconfined
+        --add-host=host.docker.internal:host-gateway
+
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          python-version: '3.11'
+          fetch-depth: 0
 
-      - name: Run unit tests
-        run: uv run pytest tests/unit -q
+      - name: "🔒 Configure container permissions and PATH"
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Build package
-        run: uv build
+      - name: "🔒 Auth: Azure login with OIDC"
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          tenant-id: ${{ secrets.TENANT_ID }}
+          allow-no-subscriptions: true
 
-      - name: Publish to PyPI
-        run: uv publish
-        env:
-          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+      - name: "📝 Write test.env"
+        run: |
+          echo "WORKSPACE_ID=${{ secrets.WORKSPACE_ID }}" > "$GITHUB_WORKSPACE/test.env"
+          echo "LIVY_ENDPOINT=https://msitapi.fabric.microsoft.com/v1" >> "$GITHUB_WORKSPACE/test.env"
+
+      - name: "⚙️ Post create commands"
+        run: /tmp/overlay/post-create-commands.sh
+
+      - name: "⚙️ Post attach commands"
+        run: /tmp/overlay/post-attach-commands.sh
+
+      - name: "📦 Build"
+        run: npx nx run dbt-fabricspark:build --output-style=stream --verbose
+
+      - name: "🧪 Test"
+        run: npx nx run dbt-fabricspark:test --output-style=stream --verbose
+
+      - name: "🚀 Publish"
+        run: npx nx run dbt-fabricspark:publish --output-style=stream --verbose

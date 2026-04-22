@@ -1,0 +1,6 @@
+export const devcontainerFile = '.devcontainer/devcontainer.json'
+export const devcontainerHashFile = '.devcontainer/.devcontainer-hash.txt'
+export const name = 'devcontainer/spark'
+export const pipelineFile = '.github/workflows/templates/container.template.yaml'
+export const registry = 'dbtfabric.azurecr.io'
+export const workflowsDir = '.github/workflows'

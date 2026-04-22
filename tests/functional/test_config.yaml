@@ -1,0 +1,63 @@
+mode: waitall
+
+groups:
+  - Group: Pre-Test-Cleanup
+    Strategy: sequential
+    Mode: failfast
+
+  - Group: Provision-Infra
+    Strategy: sequential
+    Mode: failfast
+
+  - Group: Warmup-Sessions
+    Strategy: parallel
+    Mode: failfast
+
+  - Group: Integration-Tests
+    Strategy: parallel
+    Mode: failfast
+
+  - Group: Post-Test-Cleanup
+    Strategy: sequential
+    Mode: runalways
+
+tasks:
+  - Command: uv run python -m tests.functional.orchestrator nuke
+    Name: Pre-test workspace nuke
+    Group: Pre-Test-Cleanup
+    TimeoutInMinutes: 5
+
+  - Command: uv run python -m tests.functional.orchestrator provision --schema-mode no_schema
+    Name: Provision no_schema lakehouse
+    Group: Provision-Infra
+    TimeoutInMinutes: 5
+
+  - Command: uv run python -m tests.functional.orchestrator provision --schema-mode with_schema
+    Name: Provision with_schema lakehouse
+    Group: Provision-Infra
+    TimeoutInMinutes: 5
+
+  - Command: uv run python -m tests.functional.orchestrator create-session --schema-mode no_schema --count 4
+    Name: Create Livy session (no_schema)
+    Group: Warmup-Sessions
+    TimeoutInMinutes: 40
+
+  - Command: uv run python -m tests.functional.orchestrator create-session --schema-mode with_schema --count 4
+    Name: Create Livy session (with_schema)
+    Group: Warmup-Sessions
+    TimeoutInMinutes: 40
+
+  - Command: uv run python -m tests.functional.orchestrator run-tests --schema-mode no_schema
+    Name: Functional tests (no_schema)
+    Group: Integration-Tests
+    TimeoutInMinutes: 180
+
+  - Command: uv run python -m tests.functional.orchestrator run-tests --schema-mode with_schema
+    Name: Functional tests (with_schema)
+    Group: Integration-Tests
+    TimeoutInMinutes: 180
+
+  - Command: uv run python -m tests.functional.orchestrator nuke
+    Name: Post-test workspace nuke
+    Group: Post-Test-Cleanup
+    TimeoutInMinutes: 5

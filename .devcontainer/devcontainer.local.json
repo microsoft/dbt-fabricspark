@@ -1,0 +1,101 @@
+{
+  "name": "Dev",
+  "build": {
+    "dockerfile": "Dockerfile.local"
+  },
+  "runArgs": [
+    // Access docker from host machine inside the container
+    "--add-host=host.docker.internal:host-gateway",
+    "--pids-limit=-1"
+  ],
+  // Features to add into the container following the new proposed specification
+  // https://github.com/devcontainers/features
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2.4.3": {
+      "username": "automatic",
+      "uid": "automatic",
+      "gid": "automatic",
+      "installZsh": false,
+      "installOhMyZsh": false,
+      "upgradePackages": true,
+      "nonFreePackages": false
+    },
+    "ghcr.io/devcontainers/features/docker-from-docker:1": {
+      "version": "5:20.10*",
+      "moby": false
+    },
+    "ghcr.io/devcontainers/features/git:1": {
+      "version": "os-provided",
+      "ppa": false
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts",
+      "nodeGypDependencies": true
+    },
+    "ghcr.io/devcontainers/features/python:1": {
+      "installTools": true,
+      "installPath": "/usr/local/bin/python"
+    }
+  },
+  // Various mounting, run, post-create, and user settings
+  "containerEnv": {
+    "NX_DAEMON": "true",
+    "SSH_AUTH_SOCK": "{localEnv:SSH_AUTH_SOCK}",
+    // Useful for doing bind mounts for containers launched from inside the devcontainer.
+    "LOCAL_WORKSPACE_FOLDER": "${localWorkspaceFolder}",
+    "CONTAINER_WORKSPACE_FOLDER": "${containerWorkspaceFolder}"
+  },
+  "postCreateCommand": "/tmp/overlay/post-create-commands.sh",
+  "postAttachCommand": "/tmp/overlay/post-attach-commands.sh",
+  // Set *default* container specific settings.json values on container create.
+  // See Also: https://containers.dev/supporting
+  "customizations": {
+    "vscode": {
+      "settings": {
+        // Editor
+        "editor.formatOnType": false,
+        "editor.formatOnSave": false,
+        // Terminal
+        "terminal.integrated.profiles.linux": {
+          "bash": {
+            "path": "bash"
+          }
+        },
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "terminal.integrated.inheritEnv": true,
+        "terminal.integrated.gpuAcceleration": "off",
+        "terminal.integrated.enablePersistentSessions": false,
+        "terminal.integrated.scrollback": 5000,
+        "remote.autoForwardPorts": false,
+        // VS Code team has a regression that regresses extensions in devcontainer, this is a workaround
+        // until they fix this bug: https://github.com/microsoft/vscode/issues/175705#issuecomment-1987083692
+        //
+        "extensions.verifySignature": false,
+        // Python
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.linting.enabled": true,
+        "python.linting.pylintEnabled": true,
+        "python.formatting.autopep8Path": "/usr/local/py-utils/bin/autopep8",
+        "python.formatting.blackPath": "/usr/local/py-utils/bin/black",
+        "python.formatting.yapfPath": "/usr/local/py-utils/bin/yapf",
+        "python.linting.banditPath": "/usr/local/py-utils/bin/bandit",
+        "python.linting.flake8Path": "/usr/local/py-utils/bin/flake8",
+        "python.linting.mypyPath": "/usr/local/py-utils/bin/mypy",
+        "python.linting.pycodestylePath": "/usr/local/py-utils/bin/pycodestyle",
+        "python.linting.pydocstylePath": "/usr/local/py-utils/bin/pydocstyle",
+        "python.linting.pylintPath": "/usr/local/py-utils/bin/pylint"
+      },
+      // Add the IDs of extensions you want installed when the container is created.
+      "extensions": [
+        "github.copilot-chat", // Copilot chat integration
+        "github.copilot", // Copilot integration
+        "stkb.rewrap", // "Alt + Q" -> rewrap comments after n characters on one line
+        "streetsidesoftware.code-spell-checker", // Spell checks your code
+        "tyriar.sort-lines", // "Ctrl + Shift + P -> Sort lines" -> sort lines alphabetically
+        "ms-python.python", // Python extension for Visual Studio Code
+        "ms-python.vscode-pylance", // Fast, feature-rich language support for Python
+        "ms-python.autopep8" // pep8 support
+      ]
+    }
+  }
+}

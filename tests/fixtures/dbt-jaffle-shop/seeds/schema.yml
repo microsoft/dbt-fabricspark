@@ -1,0 +1,22 @@
+version: 2
+
+seeds:
+  - name: raw_orders
+    columns:
+      - name: user_id
+        tests:
+          - relationships:
+              to: ref('raw_customers')
+              field: id
+              config:
+                severity: warn
+
+  - name: raw_payments
+    columns:
+      - name: order_id
+        tests:
+          - relationships:
+              to: ref('raw_orders')
+              field: id
+              config:
+                severity: warn

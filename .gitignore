@@ -18,6 +18,8 @@ logs/
 .env
 test.env
 
+# Warehouse
+warehouse/
 
 # Django stuff
 *.log
@@ -318,3 +320,14 @@ test.env
 
 # Temp
 .temp/*
+logs/**/*
+!logs/test-runs/
+!logs/test-runs/README.md
+logs/test-runs/report.json
+logs/test-runs/report.md
+
+# Node
+node_modules/
+
+# nx
+.nx/*

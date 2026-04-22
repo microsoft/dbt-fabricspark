@@ -1,0 +1,46 @@
+# ┌────────────────────────────────────────┬────────────────────────────────┐
+# │ Spark resource-allocation tunables     │                                │
+# │                                        │                                │
+# │ All values here feed into              │                                │
+# │ post-attach-commands.sh when it builds │                                │
+# │ spark-defaults.conf from templates.    │                                │
+# │                                        │                                │
+# │ Every key has validation bounds        │                                │
+# │ enforced at hydration time; the script │                                │
+# │ will abort if a value is out of range. │                                │
+# ├────────────────────────────────────────┼────────────────────────────────┤
+# │ Key                                    │ Valid range                    │
+# ├────────────────────────────────────────┼────────────────────────────────┤
+# │ driver.pct_ram                         │ 1 – 100                        │
+# │ driver.pct_cores                       │ 1 – 100                        │
+# │ executor.pct_ram                       │ 1 – 100                        │
+# │ executor.pct_cores                     │ 1 – 100                        │
+# │ resource_allocation.min_cores          │ 1 – <total machine cores>      │
+# │ parallelism.shuffle_partitions         │ 1 – 10000                      │
+# │ parallelism.default_parallelism        │ 1 – 10000                      │
+# └────────────────────────────────────────┴────────────────────────────────┘
+
+driver:
+    # Percentage of total system RAM for spark.driver.memory
+    pct_ram: 10
+
+    # Percentage of total system cores for spark.driver.cores
+    pct_cores: 10
+
+executor:
+    # Percentage of total system RAM for spark.executor.memory
+    pct_ram: 100
+
+    # Percentage of total system cores for spark.executor.cores
+    pct_cores: 100
+
+resource_allocation:
+    # Floor value when computing cores from percentage (clamp minimum)
+    min_cores: 1
+
+parallelism:
+    # spark.sql.shuffle.partitions
+    shuffle_partitions: 32
+
+    # spark.default.parallelism
+    default_parallelism: 32

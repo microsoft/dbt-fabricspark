@@ -1,0 +1,110 @@
+{
+   "name": "dbt-fabricspark",
+   "$schema": "./node_modules/nx/schemas/project-schema.json",
+   "targets": {
+      "clean": {
+         "executor": "nx:run-commands",
+         "dependsOn": ["metastore-down"],
+         "options": {
+            "commands": [
+               { "command": "bash tools/scripts/run.sh clean", "forwardAllArgs": false }
+            ],
+            "parallel": false
+         }
+      },
+      "lint": {
+         "executor": "nx:run-commands",
+         "options": {
+            "commands": [
+               { "command": "bash tools/scripts/run.sh lint", "forwardAllArgs": false }
+            ],
+            "parallel": false
+         }
+      },
+      "build": {
+         "executor": "nx:run-commands",
+         "options": {
+            "commands": [
+               { "command": "bash tools/scripts/run.sh build", "forwardAllArgs": false }
+            ],
+            "parallel": false
+         }
+      },
+      "test": {
+         "executor": "nx:run-commands",
+         "dependsOn": ["test:unit", "test:functional", "test:local-e2e"],
+         "options": {
+            "commands": [],
+            "parallel": false
+         }
+      },
+      "test:unit": {
+         "executor": "nx:run-commands",
+         "options": {
+            "commands": [
+               { "command": "bash tools/scripts/run.sh test:unit", "forwardAllArgs": false }
+            ],
+            "parallel": false
+         }
+      },
+      "test:functional": {
+         "executor": "nx:run-commands",
+         "options": {
+            "commands": [
+               { "command": "bash tools/scripts/run.sh test:functional", "forwardAllArgs": false }
+            ],
+            "parallel": false
+         }
+      },
+      "test:local-e2e": {
+         "executor": "nx:run-commands",
+         "dependsOn": ["build", "init"],
+         "options": {
+            "commands": [
+               { "command": "bash tools/scripts/run.sh test:local-e2e", "forwardAllArgs": false }
+            ],
+            "parallel": false
+         }
+      },
+      "init": {
+         "cache": false,
+         "executor": "nx:run-commands",
+         "dependsOn": ["metastore-up"],
+         "options": {
+            "commands": [
+               { "command": "bash -c 'source tools/scripts/run-livy.sh && start_livy'", "forwardAllArgs": false }
+            ],
+            "parallel": false
+         }
+      },
+      "metastore-up": {
+         "cache": false,
+         "executor": "nx:run-commands",
+         "options": {
+            "commands": [
+               { "command": "bash tools/scripts/init-metastore.sh", "forwardAllArgs": false }
+            ],
+            "parallel": false
+         }
+      },
+      "metastore-down": {
+         "cache": false,
+         "executor": "nx:run-commands",
+         "options": {
+            "commands": [
+               { "command": "docker compose -f docker/Compose.sqlserver.metastore.yaml down --volumes --remove-orphans", "forwardAllArgs": false }
+            ],
+            "parallel": false
+         }
+      },
+      "publish": {
+         "executor": "nx:run-commands",
+         "options": {
+            "commands": [
+               { "command": "bash tools/scripts/run.sh publish", "forwardAllArgs": false }
+            ],
+            "parallel": false
+         }
+      }
+   }
+}

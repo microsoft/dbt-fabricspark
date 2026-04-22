@@ -56,6 +56,7 @@ class FabricSparkCredentials(Credentials):
     # Auto-detected at connection time via Fabric REST API; not user-configurable.
     # init=False ensures this is never populated from profile YAML.
     lakehouse_schemas_enabled: bool = field(default=False, init=False)
+    identifier_prefix: Optional[str] = ""
     accessToken: Optional[str] = None
     spark_config: Dict[str, Any] = field(default_factory=dict)
     environmentId: Optional[str] = None
@@ -66,9 +67,11 @@ class FabricSparkCredentials(Credentials):
     # Livy session stability settings
     http_timeout: int = 120  # seconds for each HTTP request to Fabric API
     session_start_timeout: int = 600  # max seconds to wait for session start (10 min)
-    statement_timeout: int = 3600  # max seconds to wait for a statement result (1 hour)
+    statement_timeout: int = (
+        43200  # max seconds to wait for a statement result (12 hours); 0 = no timeout
+    )
     poll_wait: int = 10  # seconds between polls for session start
-    poll_statement_wait: int = 5  # seconds between polls for statement result
+    poll_statement_wait: float = 0.5  # seconds between polls for statement result
 
     def __repr__(self) -> str:
         """Mask sensitive fields in repr to prevent credential leakage in logs/tracebacks."""
@@ -172,14 +175,22 @@ class FabricSparkCredentials(Credentials):
         logger.debug(f"Lakehouse schemas enabled: {self.lakehouse_schemas_enabled}")
 
         if self.lakehouse_schemas_enabled:
-            if self.schema is not None and self.lakehouse is not None and self.schema == self.lakehouse:
+            if (
+                self.schema is not None
+                and self.lakehouse is not None
+                and self.schema == self.lakehouse
+            ):
                 raise DbtRuntimeError(
                     f"Lakehouse '{self.lakehouse}' has schemas enabled. "
                     f"Please set `schema` in profiles.yml to a schema name other than "
                     f"the lakehouse name (e.g. 'dbo')."
                 )
         else:
-            if self.schema is not None and self.lakehouse is not None and self.schema != self.lakehouse:
+            if (
+                self.schema is not None
+                and self.lakehouse is not None
+                and self.schema != self.lakehouse
+            ):
                 logger.debug(
                     f"Non-schema lakehouse: overriding schema '{self.schema}' "
                     f"to lakehouse name '{self.lakehouse}'"
@@ -203,14 +214,10 @@ class FabricSparkCredentials(Credentials):
 
         parsed = urlparse(self.endpoint)
         if parsed.scheme != "https":
-            raise DbtRuntimeError(
-                f"endpoint must use HTTPS, got: {self.endpoint}"
-            )
+            raise DbtRuntimeError(f"endpoint must use HTTPS, got: {self.endpoint}")
 
         hostname = parsed.hostname or ""
-        is_known_domain = any(
-            re.search(pattern, hostname) for pattern in _ALLOWED_FABRIC_DOMAINS
-        )
+        is_known_domain = any(re.search(pattern, hostname) for pattern in _ALLOWED_FABRIC_DOMAINS)
         if not is_known_domain:
             logger.warning(
                 f"Security warning: endpoint '{self.endpoint}' does not match any known "

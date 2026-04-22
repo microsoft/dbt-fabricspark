@@ -163,6 +163,9 @@ class FabricSparkConnectionManager(SQLConnectionManager):
         # Set the adapter-wide naming mode: all relations render uniformly as
         # either two-part (schema.table) or three-part (lakehouse.schema.table).
         FabricSparkRelation._schemas_enabled = creds.lakehouse_schemas_enabled
+        FabricSparkRelation._identifier_prefix = (
+            creds.identifier_prefix if not creds.lakehouse_schemas_enabled else ""
+        )
 
         for i in range(1 + creds.connect_retries):
             try:
@@ -271,6 +274,14 @@ class FabricSparkConnectionManager(SQLConnectionManager):
         if FabricSparkConnectionManager.spark_version:
             return FabricSparkConnectionManager.spark_version
 
+        # Fast path: honor a pre-populated DBT_SPARK_VERSION (set by the test
+        # orchestrator or CI). This avoids a 10–20 s probe round-trip per process.
+        env_version = os.environ.get("DBT_SPARK_VERSION")
+        if env_version:
+            FabricSparkConnectionManager.spark_version = env_version
+            logger.debug(f"Using pre-populated Spark version: {env_version}")
+            return
+
         try:
             sql = "SELECT split(version(), ' ')[0] as version"
             cursor = connection.handle.cursor()
@@ -305,7 +316,7 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                 "Materialized Lake Views require Fabric Runtime 1.3+. "
                 "Local mode (Docker Spark) does not support MLV."
             )
-            logger.warning(f"MLV prerequisite not met: {cls.mlv_prereq_error}")
+            logger.debug(f"MLV prerequisite not met: {cls.mlv_prereq_error}")
             return
 
         # 2. Spark version
@@ -335,7 +346,7 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                 "Materialized Lake Views require a schema-enabled lakehouse. "
                 "The target lakehouse does not have schemas enabled."
             )
-            logger.warning(f"MLV prerequisite not met: {cls.mlv_prereq_error}")
+            logger.debug(f"MLV prerequisite not met: {cls.mlv_prereq_error}")
             return
 
         # All checks passed
@@ -372,7 +383,9 @@ class FabricSparkConnectionManager(SQLConnectionManager):
             try:
                 cursor.execute(sql, bindings)
             except Exception as e:
-                is_type_retryable = isinstance(e, retryable_exceptions) if retryable_exceptions else False
+                is_type_retryable = (
+                    isinstance(e, retryable_exceptions) if retryable_exceptions else False
+                )
                 retryable_message = _is_retryable_error(e)
                 if not is_type_retryable and not retryable_message:
                     raise e
@@ -383,7 +396,7 @@ class FabricSparkConnectionManager(SQLConnectionManager):
 
                 fire_event(
                     AdapterEventDebug(
-                        message=f"Got a retryable error {type(e)}. {retry_limit-attempt} retries left. Retrying in {min(5 * (2 ** (attempt - 1)), 60)} seconds.\nError:\n{e}"
+                        message=f"Got a retryable error {type(e)}. {retry_limit - attempt} retries left. Retrying in {min(5 * (2 ** (attempt - 1)), 60)} seconds.\nError:\n{e}"
                     )
                 )
                 time.sleep(min(5 * (2 ** (attempt - 1)), 60))
@@ -415,13 +428,13 @@ class FabricSparkConnectionManager(SQLConnectionManager):
 
             try:
                 _execute_query_with_retry(
-                cursor=cursor,
-                sql=sql,
-                bindings=bindings,
-                retryable_exceptions=retryable_exceptions,
-                retry_limit=retry_limit,
-                attempt=1,
-            )
+                    cursor=cursor,
+                    sql=sql,
+                    bindings=bindings,
+                    retryable_exceptions=retryable_exceptions,
+                    retry_limit=retry_limit,
+                    attempt=1,
+                )
             except Exception as ex:
                 query_exception = ex
 
@@ -443,6 +456,13 @@ class FabricSparkConnectionManager(SQLConnectionManager):
 
 def _is_retryable_error(exc: Exception) -> str:
     message = str(exc).lower()
+
+    # Client-side statement polling timeouts should NOT be retried — retrying
+    # re-submits the SQL while the original statement may still be running on
+    # the Spark cluster, causing overlapping statements that exhaust resources.
+    if "increase `statement_timeout` in profiles.yml" in message:
+        return ""
+
     retryable_keywords = [
         "pending",
         "temporary",

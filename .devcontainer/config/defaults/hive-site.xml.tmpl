@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+  <!-- MSSQL Server metastore connection -->
+  <property>
+    <name>javax.jdo.option.ConnectionDriverName</name>
+    <value>com.microsoft.sqlserver.jdbc.SQLServerDriver</value>
+  </property>
+  <property>
+    <name>javax.jdo.option.ConnectionURL</name>
+    <value>jdbc:sqlserver://host.docker.internal:11434;databaseName=metastore;encrypt=false;trustServerCertificate=true</value>
+  </property>
+  <property>
+    <name>javax.jdo.option.ConnectionUserName</name>
+    <value>sa</value>
+  </property>
+  <property>
+    <name>javax.jdo.option.ConnectionPassword</name>
+    <value>Hive@Pass123</value>
+  </property>
+  <!-- Default warehouse location -->
+  <property>
+    <name>hive.metastore.warehouse.dir</name>
+    <value>${GIT_ROOT}/warehouse</value>
+  </property>
+  <!-- Schema is pre-initialized on SQL Server boot, disable auto-create -->
+  <property>
+    <name>datanucleus.schema.autoCreateAll</name>
+    <value>false</value>
+  </property>
+  <property>
+    <name>hive.metastore.schema.verification</name>
+    <value>true</value>
+  </property>
+  <property>
+    <name>hive.metastore.schema.verification.record.version</name>
+    <value>true</value>
+  </property>
+  <!-- Connection settings -->
+  <property>
+    <name>datanucleus.connectionPoolingType</name>
+    <value>DBCP</value>
+  </property>
+  <property>
+    <name>datanucleus.connectionPool.maxPoolSize</name>
+    <value>50</value>
+  </property>
+  <!-- Disable stats -->
+  <property>
+    <name>hive.stats.autogather</name>
+    <value>false</value>
+  </property>
+</configuration>

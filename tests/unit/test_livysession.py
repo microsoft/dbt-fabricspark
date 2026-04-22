@@ -1,4 +1,5 @@
 """Tests for livysession module, focusing on local vs Fabric mode routing."""
+
 import os
 import tempfile
 from unittest.mock import MagicMock, patch
@@ -51,6 +52,7 @@ class TestGetHeaders:
 
         # Reset global accessToken
         import dbt.adapters.fabricspark.livysession as livysession_module
+
         livysession_module.accessToken = None
 
         headers = get_headers(credentials)
@@ -184,7 +186,7 @@ class TestSessionFileManagement:
 
     def test_read_session_id_from_empty_file(self):
         """Test reading from an empty file returns None."""
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as f:
             f.write("")
             temp_path = f.name
 
@@ -196,7 +198,7 @@ class TestSessionFileManagement:
 
     def test_read_session_id_from_valid_file(self):
         """Test reading a valid session ID from file."""
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as f:
             f.write("123")
             temp_path = f.name
 
@@ -208,7 +210,7 @@ class TestSessionFileManagement:
 
     def test_read_session_id_strips_whitespace(self):
         """Test that whitespace is stripped from session ID."""
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as f:
             f.write("  456  \n")
             temp_path = f.name
 
@@ -226,7 +228,7 @@ class TestSessionFileManagement:
             result = write_session_id_to_file(file_path, "789")
 
             assert result is True
-            with open(file_path, 'r') as f:
+            with open(file_path, "r") as f:
                 assert f.read() == "789"
 
     def test_write_session_id_creates_directory(self):
@@ -238,7 +240,7 @@ class TestSessionFileManagement:
 
             assert result is True
             assert os.path.exists(file_path)
-            with open(file_path, 'r') as f:
+            with open(file_path, "r") as f:
                 assert f.read() == "999"
 
 
@@ -305,7 +307,9 @@ class TestFabricSessionReuseMode:
 
             LivySessionManager._connect_fabric_fresh(credentials, {"name": "test"})
 
-            assert not os.path.exists(session_file), "Session file should not be created in non-reuse mode"
+            assert not os.path.exists(session_file), (
+                "Session file should not be created in non-reuse mode"
+            )
 
     @patch("dbt.adapters.fabricspark.livysession.get_headers")
     @patch("dbt.adapters.fabricspark.livysession.LivySession.create_session")
@@ -323,6 +327,7 @@ class TestFabricSessionReuseMode:
             # Simulate session creation setting a session ID
             def set_session_id(config):
                 LivySessionManager.livy_global_session.session_id = "42"
+
             mock_create.side_effect = set_session_id
 
             LivySessionManager._connect_fabric_reuse(credentials, {"name": "test"})
@@ -380,6 +385,7 @@ class TestFabricSessionReuseMode:
 
             def set_session_id(config):
                 LivySessionManager.livy_global_session.session_id = "new-100"
+
             mock_create.side_effect = set_session_id
 
             with patch.object(session, "try_reuse_session", return_value=False):
@@ -423,8 +429,10 @@ class TestFabricSessionReuseMode:
         """_connect_fabric should route to _connect_fabric_reuse when reuse_session=True."""
         credentials = _make_fabric_credentials(reuse_session=True)
 
-        with patch.object(LivySessionManager, "_connect_fabric_reuse") as mock_reuse, \
-             patch.object(LivySessionManager, "_connect_fabric_fresh") as mock_fresh:
+        with (
+            patch.object(LivySessionManager, "_connect_fabric_reuse") as mock_reuse,
+            patch.object(LivySessionManager, "_connect_fabric_fresh") as mock_fresh,
+        ):
             LivySessionManager._connect_fabric(credentials, {"name": "test"})
             mock_reuse.assert_called_once_with(credentials, {"name": "test"})
             mock_fresh.assert_not_called()
@@ -434,8 +442,10 @@ class TestFabricSessionReuseMode:
         """_connect_fabric should route to _connect_fabric_fresh when reuse_session=False."""
         credentials = _make_fabric_credentials(reuse_session=False)
 
-        with patch.object(LivySessionManager, "_connect_fabric_reuse") as mock_reuse, \
-             patch.object(LivySessionManager, "_connect_fabric_fresh") as mock_fresh:
+        with (
+            patch.object(LivySessionManager, "_connect_fabric_reuse") as mock_reuse,
+            patch.object(LivySessionManager, "_connect_fabric_fresh") as mock_fresh,
+        ):
             LivySessionManager._connect_fabric(credentials, {"name": "test"})
             mock_fresh.assert_called_once_with(credentials, {"name": "test"})
             mock_reuse.assert_not_called()

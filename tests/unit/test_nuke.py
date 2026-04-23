@@ -63,27 +63,11 @@ class TestShouldDelete:
         assert _should_delete(name, current, now) is True
 
     def test_non_matching_pattern_never_deleted(self) -> None:
-        """Items that don't match either naming pattern are never deleted."""
+        """Items that don't match the naming pattern are never deleted."""
         now = time.time()
         current = branch_hash("my-branch")
         assert _should_delete("manual_lakehouse", current, now) is False
         assert _should_delete("my_other_lh", current, now) is False
-
-    def test_old_format_stale_deleted(self) -> None:
-        """Legacy ``dbt_{ts}_{mode}`` items older than 24 h are cleaned up."""
-        now = time.time()
-        current = branch_hash("my-branch")
-        old_ts = int(now) - STALE_THRESHOLD_SECONDS - 1
-        name = f"dbt_{old_ts}_no_schema"
-        assert _should_delete(name, current, now) is True
-
-    def test_old_format_recent_not_deleted(self) -> None:
-        """Legacy ``dbt_{ts}_{mode}`` items younger than 24 h are kept."""
-        now = time.time()
-        current = branch_hash("my-branch")
-        recent_ts = int(now) - 60
-        name = f"dbt_{recent_ts}_no_schema"
-        assert _should_delete(name, current, now) is False
 
     def test_regex_rejects_long_hex(self) -> None:
         """Hash segment must be exactly 8 hex chars; longer strings don't match."""

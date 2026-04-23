@@ -17,11 +17,6 @@ _ITEM_TYPES = [
 # Matches the new naming pattern: dbt_{8-char-hex-hash}_{timestamp}_{rest}
 _NAME_PATTERN = re.compile(r"^dbt_([a-f0-9]{8})_(\d+)_")
 
-# Matches the legacy naming pattern: dbt_{timestamp}_{mode}
-# (pre-branch-hash format, e.g. "dbt_1714000000_no_schema").
-# Only the two known schema modes are matched to avoid false positives.
-_LEGACY_NAME_PATTERN = re.compile(r"^dbt_(\d{10,})_(no_schema|with_schema)$")
-
 # Items older than this (in seconds) are considered stale and always deleted.
 STALE_THRESHOLD_SECONDS = 24 * 60 * 60  # 24 hours
 
@@ -34,40 +29,23 @@ def branch_hash(branch: str) -> str:
 def _should_delete(item_name: str, current_hash: str, now: float) -> bool:
     """Decide whether a workspace item should be deleted.
 
-    An item is deleted when **any** of these conditions are true:
+    Returns True when the name matches ``dbt_{hash}_{ts}_…`` and either the
+    hash equals *current_hash* (same-branch cleanup) or the timestamp is older
+    than ``STALE_THRESHOLD_SECONDS`` (stale-infra garbage collection).
 
-    1. Its name matches the ``dbt_{hash}_{ts}_…`` pattern **and** the hash
-       matches *current_hash* (same branch → always clean up).
-    2. Its name matches the pattern **and** the embedded unix timestamp is
-       older than ``STALE_THRESHOLD_SECONDS`` (stale infra from any branch).
-    3. Its name matches the **legacy** ``dbt_{ts}_{mode}`` pattern (pre-branch-
-       hash era) **and** the embedded timestamp is stale (>24 h).
-
-    Items that do **not** match either naming pattern are left untouched so
-    that manually-created resources are never accidentally removed.
+    Non-matching names are never deleted.
     """
-    # Try the new naming pattern first.
     m = _NAME_PATTERN.match(item_name)
-    if m:
-        item_hash = m.group(1)
-        item_ts = int(m.group(2))
-
-        if item_hash == current_hash:
-            return True
-
-        if (now - item_ts) > STALE_THRESHOLD_SECONDS:
-            return True
-
+    if not m:
         return False
 
-    # Try the legacy naming pattern for stale garbage collection.
-    m_legacy = _LEGACY_NAME_PATTERN.match(item_name)
-    if m_legacy:
-        item_ts = int(m_legacy.group(1))
-        if (now - item_ts) > STALE_THRESHOLD_SECONDS:
-            return True
+    item_hash = m.group(1)
+    item_ts = int(m.group(2))
 
-    return False
+    if item_hash == current_hash:
+        return True
+
+    return (now - item_ts) > STALE_THRESHOLD_SECONDS
 
 
 def _git_branch() -> str | None:
@@ -139,14 +117,9 @@ def nuke_workspace_task(shared_state: dict[str, Any]) -> None:
 def nuke_workspace(client: Any, current_hash: str) -> None:
     """Delete lakehouses and environments that belong to this branch or are stale.
 
-    Items whose ``displayName`` matches the ``dbt_{hash}_{ts}_…`` convention
-    are deleted when:
-
-    * The *hash* segment equals *current_hash* (same branch).
-    * The *ts* segment is more than 24 hours old (stale).
-
-    Items that do not match the naming convention are **never** deleted, so
-    manually-created or unrelated resources are safe.
+    Items whose ``displayName`` matches ``dbt_{hash}_{ts}_…`` are deleted when
+    the hash equals *current_hash* (same branch) or the timestamp is older than
+    24 hours (stale). Non-matching names are never deleted.
     """
     now = time.time()
 

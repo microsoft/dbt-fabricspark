@@ -1394,4 +1394,5 @@ class LivySessionConnectionWrapper(object):
         elif value is None:
             return "''"
         else:
-            return f"'{value}'"
+            escaped = str(value).replace("'", "\\'")
+            return f"'{escaped}'"

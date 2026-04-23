@@ -1,9 +1,12 @@
 """Tests for livysession module, focusing on local vs Fabric mode routing."""
 
+import datetime as dt
 import os
 import tempfile
+from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
+from dbt.adapters.fabricspark.connections import LivySessionConnectionWrapper
 from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
 from dbt.adapters.fabricspark.livysession import (
     LivyConnection,
@@ -449,3 +452,57 @@ class TestFabricSessionReuseMode:
             LivySessionManager._connect_fabric(credentials, {"name": "test"})
             mock_fresh.assert_called_once_with(credentials, {"name": "test"})
             mock_reuse.assert_not_called()
+
+
+class TestFixBinding:
+    """Tests for LivySessionConnectionWrapper._fix_binding."""
+
+    def test_string_without_quotes(self):
+        """Plain strings are wrapped in single quotes."""
+        assert LivySessionConnectionWrapper._fix_binding("hello") == "'hello'"
+
+    def test_string_with_single_quote(self):
+        """Single quotes inside string values are escaped with a backslash."""
+        result = LivySessionConnectionWrapper._fix_binding("Cote d'Ivoire")
+        assert result == "'Cote d\\'Ivoire'"
+
+    def test_string_with_multiple_single_quotes(self):
+        """Multiple single quotes are all escaped."""
+        result = LivySessionConnectionWrapper._fix_binding("it's a 'test'")
+        assert result == "'it\\'s a \\'test\\''"
+
+    def test_none_returns_empty_string_literal(self):
+        assert LivySessionConnectionWrapper._fix_binding(None) == "''"
+
+    def test_integer(self):
+        assert LivySessionConnectionWrapper._fix_binding(42) == 42.0
+
+    def test_float(self):
+        assert LivySessionConnectionWrapper._fix_binding(3.14) == 3.14
+
+    def test_decimal(self):
+        assert LivySessionConnectionWrapper._fix_binding(Decimal("1.5")) == 1.5
+
+    def test_datetime(self):
+        value = dt.datetime(2024, 1, 15, 10, 30, 45, 123456)
+        result = LivySessionConnectionWrapper._fix_binding(value)
+        assert result == "'2024-01-15 10:30:45.123'"
+
+    def test_seed_insert_with_single_quote_produces_valid_sql(self):
+        """End-to-end check: bindings containing single quotes produce
+        syntactically valid SQL when substituted into an INSERT template."""
+        sql_template = (
+            "insert into db.schema.sample values "
+            "(cast(%s as bigint),cast(%s as string)),(cast(%s as bigint),cast(%s as string))"
+        )
+        raw_bindings = [1.0, "Cote d'Ivoire", 2.0, "Tonga"]
+        bindings = tuple(LivySessionConnectionWrapper._fix_binding(b) for b in raw_bindings)
+        sql = sql_template % bindings
+        # The generated SQL must NOT have an unescaped inner quote that would
+        # break parsing. The value should be: 'Cote d\'Ivoire'
+        assert "Cote d\\'Ivoire" in sql
+        assert sql == (
+            "insert into db.schema.sample values "
+            "(cast(1.0 as bigint),cast('Cote d\\'Ivoire' as string)),"
+            "(cast(2.0 as bigint),cast('Tonga' as string))"
+        )

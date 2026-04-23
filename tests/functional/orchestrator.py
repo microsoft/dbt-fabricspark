@@ -54,26 +54,20 @@ def _make_client():
     )
 
 
-def _current_branch_hash() -> str:
-    """Return the short branch hash for the current CI branch."""
-    from tests.functional.nuke import branch_hash
-
-    branch = os.environ.get("GITHUB_HEAD_REF") or os.environ.get("GITHUB_REF_NAME", "unknown")
-    return branch_hash(branch)
-
-
 def cmd_nuke() -> None:
     """Delete items from the workspace that match this branch or are stale (>24h)."""
-    from tests.functional.nuke import nuke_workspace
+    from tests.functional.nuke import current_branch_hash, nuke_workspace
 
     client = _make_client()
-    bhash = _current_branch_hash()
+    bhash = current_branch_hash()
     logger.info("Nuking workspace items for branch hash '%s' and stale items", bhash)
     nuke_workspace(client, bhash)
 
 
 def cmd_provision() -> None:
     """Create a lakehouse and write its details to the shared env file."""
+    from tests.functional.nuke import current_branch_hash
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--schema-mode", required=True, choices=("no_schema", "with_schema"))
     args = parser.parse_args(sys.argv[2:])
@@ -81,7 +75,7 @@ def cmd_provision() -> None:
     client = _make_client()
     enable_schemas = args.schema_mode == "with_schema"
     ts = int(time.time())
-    bhash = _current_branch_hash()
+    bhash = current_branch_hash()
     name = f"dbt_{bhash}_{ts}_{args.schema_mode}"
 
     logger.info("Creating lakehouse '%s' (schemas=%s)...", name, enable_schemas)

@@ -54,6 +54,18 @@ def _should_delete(item_name: str, current_hash: str, now: float) -> bool:
     return False
 
 
+def current_branch_hash() -> str:
+    """Return the branch hash for the current CI run.
+
+    Reads ``GITHUB_HEAD_REF`` (set on PR builds) or ``GITHUB_REF_NAME``
+    (set on push builds).  Falls back to ``"unknown"`` for local runs.
+    """
+    import os
+
+    branch = os.environ.get("GITHUB_HEAD_REF") or os.environ.get("GITHUB_REF_NAME", "unknown")
+    return branch_hash(branch)
+
+
 def nuke_workspace_task(shared_state: dict[str, Any]) -> None:
     """Scheduler-compatible entry point — creates a FabricClient from env and nukes."""
     import os
@@ -80,8 +92,7 @@ def nuke_workspace_task(shared_state: dict[str, Any]) -> None:
         token_provider=provider,
     )
 
-    branch = os.environ.get("GITHUB_HEAD_REF") or os.environ.get("GITHUB_REF_NAME", "unknown")
-    nuke_workspace(client, branch_hash(branch))
+    nuke_workspace(client, current_branch_hash())
 
 
 def nuke_workspace(client: Any, current_hash: str) -> None:

@@ -29,9 +29,10 @@ npx tsx tools/gh-automation/nudge.ts 98 --no-watch --dry-run
 
 All tools share the same interface:
 
-| Flag                     | Default                     | Description                     |
-| ------------------------ | --------------------------- | ------------------------------- |
-| `[pr-number]`            | _(all Copilot PRs)_         | Target a specific PR            |
-| `--watch` / `--no-watch` | `--watch`                   | Reconcile loop every 60s        |
-| `--dry-run`              | `false`                     | Print actions without executing |
-| `--repo <owner/repo>`    | `microsoft/dbt-fabricspark` | Target repository               |
+| Flag                     | Default                     | Description                        |
+| ------------------------ | --------------------------- | ---------------------------------- |
+| `[pr-number]`            | _(all Copilot PRs)_         | Target a specific PR               |
+| `--watch` / `--no-watch` | `--watch`                   | Reconcile loop                     |
+| `--sleep <seconds>`      | `60`                        | Seconds between reconcile loops    |
+| `--dry-run`              | `false`                     | Print actions without executing    |
+| `--repo <owner/repo>`    | `microsoft/dbt-fabricspark` | Target repository                  |

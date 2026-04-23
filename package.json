@@ -15,7 +15,8 @@
     "typescript": "^5.4.0"
   },
   "scripts": {
-    "fail-on-untracked-files": "tsx tools/scripts/fail-on-untracked-files.ts"
+    "fail-on-untracked-files": "tsx tools/scripts/fail-on-untracked-files.ts",
+    "approve-copilot-gh-workflow": "tsx tools/gh-automation/approve-workflow.ts"
   },
   "type": "module",
   "nx": {}

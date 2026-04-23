@@ -1,7 +1,7 @@
 export default {
   preset: 'ts-jest',
   testEnvironment: 'node',
-  roots: ['<rootDir>/.devcontainer'],
+  roots: ['<rootDir>/gh-automation'],
   testMatch: ['**/__tests__/**/*.ts', '**/?(*.)+(spec|test).ts'],
   transform: {
     '^.+\\.ts$': ['ts-jest', {
@@ -14,9 +14,8 @@ export default {
   },
   moduleFileExtensions: ['ts', 'js', 'json'],
   collectCoverageFrom: [
-    '.devcontainer/**/*.ts',
-    '!.devcontainer/**/*.test.ts',
-    '!.devcontainer/**/*.spec.ts',
+    'gh-automation/**/*.ts',
+    '!gh-automation/**/*.test.ts',
+    '!gh-automation/**/*.spec.ts',
   ],
-  testTimeout: 300000, // 5 minutes for container operations
 };

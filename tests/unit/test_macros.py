@@ -3,8 +3,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from dbt.adapters.contracts.relation import RelationType
 from jinja2 import BaseLoader, Environment, FileSystemLoader
+
+from dbt.adapters.contracts.relation import RelationType
 
 # Resolve project root (tests/unit/test_macros.py → repo root)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -275,7 +276,9 @@ class TestMLVRelationTypeComparison(unittest.TestCase):
 
     def test_macro_uses_correct_materialized_view_literal(self):
         """The drop-guard comparison must use 'materialized_view' (with underscore)."""
-        self.assertTrue(self.MLV_MACRO_PATH.exists(), f"Macro file not found: {self.MLV_MACRO_PATH}")
+        self.assertTrue(
+            self.MLV_MACRO_PATH.exists(), f"Macro file not found: {self.MLV_MACRO_PATH}"
+        )
         contents = self.MLV_MACRO_PATH.read_text()
 
         expected = RelationType.MaterializedView.value  # 'materialized_view'

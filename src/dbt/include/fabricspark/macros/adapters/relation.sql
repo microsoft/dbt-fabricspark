@@ -33,7 +33,11 @@
 
 {% macro fabricspark__drop_relation(relation) -%}
   {% call statement('drop_relation', auto_begin=False) -%}
-    drop {{ relation.type }} if exists {{ relation }}
+    {% if relation.type == 'materialized_view' %}
+      drop materialized lake view if exists {{ relation }}
+    {% else %}
+      drop {{ relation.type }} if exists {{ relation }}
+    {% endif %}
   {%- endcall %}
 {% endmacro %}
 

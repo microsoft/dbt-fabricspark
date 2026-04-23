@@ -85,4 +85,13 @@ export class GhClient {
         const result = this.exec(args);
         return JSON.parse(result.stdout) as T;
     }
+
+    /** Post a comment on a pull request. */
+    postComment(prNumber: number, body: string): boolean {
+        const result = this.exec(
+            ['pr', 'comment', String(prNumber), '--repo', this.repo, '--body', body],
+            { fatal: false },
+        );
+        return result.status === 0;
+    }
 }

@@ -35,6 +35,14 @@ export interface WorkflowRunsResponse {
     readonly workflow_runs: readonly WorkflowRun[];
 }
 
+// ── GitHub compare API ─────────────────────────────────────────────────────────
+
+export interface CompareResponse {
+    readonly behind_by: number;
+    readonly ahead_by: number;
+    readonly status: 'diverged' | 'ahead' | 'behind' | 'identical';
+}
+
 // ── Results ────────────────────────────────────────────────────────────────────
 
 export interface ApprovalResult {
@@ -42,4 +50,10 @@ export interface ApprovalResult {
     readonly approved: number;
     readonly skipped: number;
     readonly failed: number;
+}
+
+export interface SyncResult {
+    readonly pr: PullRequest;
+    readonly behindBy: number;
+    readonly commented: boolean;
 }

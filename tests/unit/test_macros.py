@@ -2,6 +2,7 @@ import re
 import unittest
 from unittest import mock
 
+from dbt.adapters.contracts.relation import RelationType
 from jinja2 import BaseLoader, Environment, FileSystemLoader
 
 
@@ -252,3 +253,41 @@ class TestEnsureDatabaseExists(unittest.TestCase):
         """Schema-enabled with no database arg should use schema_name as-is."""
         result = self._render("myschema", database=None, schemas_enabled=True)
         self.assertEqual(result, "create database if not exists myschema")
+
+
+class TestMLVRelationTypeComparison(unittest.TestCase):
+    """Verify the materialized_lake_view macro uses the correct RelationType string.
+
+    The macro compares ``old_relation.type.value`` against a literal string
+    to decide whether to drop an existing relation before CREATE OR REPLACE.
+    The literal must match ``RelationType.MaterializedView.value``
+    (i.e. ``'materialized_view'``).
+    """
+
+    MLV_MACRO_PATH = (
+        "src/dbt/include/fabricspark/macros/materializations"
+        "/models/materialized_lake_view/materialized_lake_view.sql"
+    )
+
+    def test_macro_uses_correct_materialized_view_literal(self):
+        """The drop-guard comparison must use 'materialized_view' (with underscore)."""
+        with open(self.MLV_MACRO_PATH) as f:
+            contents = f.read()
+
+        expected = RelationType.MaterializedView.value  # 'materialized_view'
+
+        # The macro should compare against the correct value
+        self.assertIn(
+            f"!= '{expected}'",
+            contents,
+            f"materialized_lake_view.sql must compare against '{expected}' "
+            f"(RelationType.MaterializedView.value), not a typo like 'materializedview'.",
+        )
+
+        # Ensure the old typo is NOT present
+        self.assertNotIn(
+            "'materializedview'",
+            contents,
+            "materialized_lake_view.sql still contains the typo 'materializedview' "
+            "(missing underscore).",
+        )

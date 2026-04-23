@@ -41,4 +41,44 @@ export class Logger {
         const now = new Date().toLocaleTimeString();
         console.log(`\n── reconcile @ ${now} ${'─'.repeat(50)}\n`);
     }
+
+    behindMain(branch: string, behindBy: number): void {
+        console.log(`  ⬇ Branch ${branch} is ${behindBy} commit(s) behind main`);
+    }
+
+    upToDate(branch: string): void {
+        console.log(`  ✓ Branch ${branch} is up to date with main.`);
+    }
+
+    commentPosted(prNumber: number): void {
+        console.log(`  💬 Posted sync comment on PR #${prNumber}`);
+    }
+
+    commentFailed(prNumber: number): void {
+        console.log(`  ✗ Failed to post comment on PR #${prNumber}`);
+    }
+
+    syncSummary(commented: number, upToDate: number, failed: number): void {
+        console.log(`\nDone. Commented on ${commented} PR(s), ${upToDate} up to date, ${failed} failed.`);
+    }
+
+    ciFailure(runName: string, runId: number, conclusion: string): void {
+        console.log(`  ✗ ${runName} (run ${runId}) — ${conclusion}`);
+    }
+
+    nudgePosted(prNumber: number, runCount: number): void {
+        console.log(`  💬 Nudged PR #${prNumber} about ${runCount} failed run(s)`);
+    }
+
+    nudgeFailed(prNumber: number): void {
+        console.log(`  ✗ Failed to post nudge comment on PR #${prNumber}`);
+    }
+
+    noCiFailures(): void {
+        console.log('  ✓ No failed CI runs.');
+    }
+
+    nudgeSummary(nudged: number, clean: number, failed: number): void {
+        console.log(`\nDone. Nudged ${nudged} PR(s), ${clean} clean, ${failed} failed to comment.`);
+    }
 }

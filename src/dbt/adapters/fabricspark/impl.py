@@ -23,19 +23,19 @@ if TYPE_CHECKING:
     # Used by mypy for earlier type hints.
     import agate
 
-from dbt_common.clients.agate_helper import DEFAULT_TYPE_TESTER
-from dbt_common.contracts.constraints import ConstraintType
-from dbt_common.exceptions import CompilationError, DbtRuntimeError
-from dbt_common.utils import AttrDict, executor
-
 from dbt.adapters.base import AdapterConfig, BaseRelation, available
 from dbt.adapters.base.impl import ConstraintSupport, catch_as_completed
 from dbt.adapters.base.relation import InformationSchema
 from dbt.adapters.contracts.relation import RelationConfig, RelationType
 from dbt.adapters.events.logging import AdapterLogger
+from dbt.adapters.sql import SQLAdapter
+from dbt_common.clients.agate_helper import DEFAULT_TYPE_TESTER
+from dbt_common.contracts.constraints import ConstraintType
+from dbt_common.exceptions import CompilationError, DbtRuntimeError
+from dbt_common.utils import AttrDict, executor
+
 from dbt.adapters.fabricspark import FabricSparkColumn, FabricSparkConnectionManager, mlv_api
 from dbt.adapters.fabricspark.relation import FabricSparkRelation
-from dbt.adapters.sql import SQLAdapter
 
 logger = AdapterLogger("fabricspark")
 
@@ -333,6 +333,8 @@ class FabricSparkAdapter(SQLAdapter):
             rel_type: RelationType = (
                 RelationType.MaterializedView
                 if "Type: MATERIALIZED_LAKE_VIEW" in information
+                else RelationType.MaterializedView
+                if "Type: MATERIALIZED_VIEW" in information
                 else RelationType.View
                 if "Type: VIEW" in information
                 else RelationType.Table

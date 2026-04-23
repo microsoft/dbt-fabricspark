@@ -1,9 +1,13 @@
 import re
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from dbt.adapters.contracts.relation import RelationType
 from jinja2 import BaseLoader, Environment, FileSystemLoader
+
+# Resolve project root (tests/unit/test_macros.py → repo root)
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 @unittest.skip("Skipping temporarily - macros require full dbt context")
@@ -264,15 +268,14 @@ class TestMLVRelationTypeComparison(unittest.TestCase):
     (i.e. ``'materialized_view'``).
     """
 
-    MLV_MACRO_PATH = (
+    MLV_MACRO_PATH = _PROJECT_ROOT / (
         "src/dbt/include/fabricspark/macros/materializations"
         "/models/materialized_lake_view/materialized_lake_view.sql"
     )
 
     def test_macro_uses_correct_materialized_view_literal(self):
         """The drop-guard comparison must use 'materialized_view' (with underscore)."""
-        with open(self.MLV_MACRO_PATH) as f:
-            contents = f.read()
+        contents = self.MLV_MACRO_PATH.read_text()
 
         expected = RelationType.MaterializedView.value  # 'materialized_view'
 

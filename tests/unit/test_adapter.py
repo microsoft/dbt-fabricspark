@@ -347,8 +347,8 @@ class TestSparkAdapter(unittest.TestCase):
             # include_policy.database should be True
             assert rel.include_policy.database is True
             assert rel.include_policy.schema is True
-            # Renders as database.schema.identifier (three-part)
-            assert str(rel) == "my_lakehouse.dbo.my_table"
+            # Renders as `database`.schema.identifier (three-part, database quoted)
+            assert str(rel) == "`my_lakehouse`.dbo.my_table"
         finally:
             FabricSparkRelation._schemas_enabled = False
 
@@ -361,8 +361,73 @@ class TestSparkAdapter(unittest.TestCase):
             rel_three = FabricSparkRelation.create(database="lh", schema="dbo", identifier="t2")
             # Existing relation retains its original policy
             assert str(rel_two) == "lh.t1"
-            # New relation uses updated policy
-            assert str(rel_three) == "lh.dbo.t2"
+            # New relation uses updated policy (database quoted)
+            assert str(rel_three) == "`lh`.dbo.t2"
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_mixed_case_database_no_approximate_match_error(self):
+        """Regression test for ApproximateMatchError when lakehouse name uses mixed case.
+
+        When the Fabric lakehouse displayName contains uppercase characters
+        (e.g. 'DBTTest'), the relation cache stores relations with the
+        case-preserved database name from the catalog.  Before the fix,
+        FabricSparkQuotePolicy.database was False, which caused
+        _make_match_kwargs to lowercase the search term ('dbttest'), while
+        the cached relation kept the original casing ('DBTTest').  This
+        mismatch triggered ApproximateMatchError on every rerun.
+
+        The fix sets FabricSparkQuotePolicy.database to True so dbt
+        preserves the original casing through the cache-lookup path.
+        """
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            # Simulate a cached relation returned by Fabric's catalog with
+            # case-preserved lakehouse name (as list_relations_without_caching
+            # populates it).
+            cached_relation = FabricSparkRelation.create(
+                database="DBTTest",
+                schema="dbo",
+                identifier="my_first_model",
+                type=FabricSparkRelation.get_relation_type.Table,
+            )
+
+            # Verify that the quote policy defaults database to True
+            assert cached_relation.quote_policy.database is True
+
+            # The search term that dbt passes through _make_match_kwargs.
+            # With quoting.database=True, the database name is NOT lowercased,
+            # so it stays as "DBTTest" and matches exactly.
+            assert cached_relation.matches(
+                database="DBTTest", schema="dbo", identifier="my_first_model"
+            )
+
+            # Also verify that mixed-case database renders correctly
+            # with backtick quoting (harmless in Spark SQL).
+            assert str(cached_relation) == "`DBTTest`.dbo.my_first_model"
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_mixed_case_database_lowered_raises_approximate_match(self):
+        """Verify that searching with a lowered database name vs. mixed-case
+        cached relation correctly raises ApproximateMatchError, confirming
+        the root cause described in the issue."""
+        from dbt_common.exceptions import CompilationError
+
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            cached_relation = FabricSparkRelation.create(
+                database="DBTTest",
+                schema="dbo",
+                identifier="my_first_model",
+                type=FabricSparkRelation.get_relation_type.Table,
+            )
+            # Searching with the lowered form should raise ApproximateMatchError
+            # (which is a CompilationError subclass) since 'dbttest' != 'DBTTest'.
+            with self.assertRaises(CompilationError):
+                cached_relation.matches(
+                    database="dbttest", schema="dbo", identifier="my_first_model"
+                )
         finally:
             FabricSparkRelation._schemas_enabled = False
 

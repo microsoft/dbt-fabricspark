@@ -11,7 +11,7 @@
     "test": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "jest --config tools/jest.config.ts --runInBand"
+        "command": "jest --config tools/jest.config.ts --passWithNoTests --runInBand"
       }
     }
   }

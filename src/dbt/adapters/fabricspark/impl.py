@@ -332,7 +332,7 @@ class FabricSparkAdapter(SQLAdapter):
 
             rel_type: RelationType = (
                 RelationType.MaterializedView
-                if "Type: MATERIALIZED_VIEW" in information
+                if "Type: MATERIALIZED_LAKE_VIEW" in information
                 else RelationType.View
                 if "Type: VIEW" in information
                 else RelationType.Table

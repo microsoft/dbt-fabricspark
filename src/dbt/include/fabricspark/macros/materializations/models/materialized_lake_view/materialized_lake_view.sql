@@ -108,7 +108,7 @@
     {% endfor %}
 
     {#-- Drop existing object if it's a different type (table/view) --#}
-    {% if old_relation is not none and old_relation.type.value != 'materializedview' %}
+    {% if old_relation is not none and old_relation.type.value != 'materialized_view' %}
         {{ log("Dropping " ~ old_relation.type ~ " " ~ old_relation.render() ~ " to replace with materialized lake view") }}
         {{ adapter.drop_relation(old_relation) }}
     {% endif %}

@@ -5,6 +5,7 @@ from unittest import mock
 from agate import Row
 
 import dbt.flags as flags
+from dbt.adapters.contracts.relation import RelationType
 from dbt.adapters.fabricspark import FabricSparkAdapter, FabricSparkRelation
 
 from .utils import config_from_parts_or_dicts
@@ -635,3 +636,48 @@ class TestSparkAdapter(unittest.TestCase):
                 "stats:rows:value": 12345678,
             },
         )
+
+    def test_build_spark_relation_list_classifies_materialized_lake_view(self):
+        """MATERIALIZED_LAKE_VIEW type string from Fabric metadata must be
+        classified as RelationType.MaterializedView, not Table."""
+
+        mlv_information = (
+            "Database: mydb\n"
+            "Table: my_mlv\n"
+            "Type: MATERIALIZED_LAKE_VIEW\n"
+            "Provider: delta\n"
+        )
+        view_information = (
+            "Database: mydb\n"
+            "Table: my_view\n"
+            "Type: VIEW\n"
+        )
+        table_information = (
+            "Database: mydb\n"
+            "Table: my_table\n"
+            "Type: MANAGED\n"
+            "Provider: delta\n"
+        )
+
+        # Each "row" is just a sentinel; the relation_info_func maps it to
+        # (schema, name, information).
+        rows = ["mlv_row", "view_row", "table_row"]
+        info_map = {
+            "mlv_row": ("dbo", "my_mlv", mlv_information),
+            "view_row": ("dbo", "my_view", view_information),
+            "table_row": ("dbo", "my_table", table_information),
+        }
+
+        config = self._get_target_livy(self.project_cfg)
+        adapter = FabricSparkAdapter(config, self.mp_context)
+
+        relations = adapter._build_spark_relation_list(
+            row_list=rows,
+            relation_info_func=lambda row: info_map[row],
+        )
+
+        self.assertEqual(len(relations), 3)
+        types_by_name = {r.identifier: r.type for r in relations}
+        self.assertEqual(types_by_name["my_mlv"], RelationType.MaterializedView)
+        self.assertEqual(types_by_name["my_view"], RelationType.View)
+        self.assertEqual(types_by_name["my_table"], RelationType.Table)

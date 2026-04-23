@@ -57,3 +57,9 @@ export interface SyncResult {
     readonly behindBy: number;
     readonly commented: boolean;
 }
+
+export interface NudgeResult {
+    readonly pr: PullRequest;
+    readonly failedRuns: number;
+    readonly commented: boolean;
+}

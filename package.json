@@ -17,7 +17,8 @@
   "scripts": {
     "fail-on-untracked-files": "tsx tools/scripts/fail-on-untracked-files.ts",
     "approve-copilot-gh-workflow": "tsx tools/gh-automation/approve-workflow.ts",
-    "sync-copilot-main": "tsx tools/gh-automation/sync-main.ts"
+    "sync-copilot-main": "tsx tools/gh-automation/sync-main.ts",
+    "nudge-copilot": "tsx tools/gh-automation/nudge.ts"
   },
   "type": "module",
   "nx": {}

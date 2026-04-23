@@ -61,4 +61,24 @@ export class Logger {
     syncSummary(commented: number, upToDate: number, failed: number): void {
         console.log(`\nDone. Commented on ${commented} PR(s), ${upToDate} up to date, ${failed} failed.`);
     }
+
+    ciFailure(runName: string, runId: number, conclusion: string): void {
+        console.log(`  ✗ ${runName} (run ${runId}) — ${conclusion}`);
+    }
+
+    nudgePosted(prNumber: number, runCount: number): void {
+        console.log(`  💬 Nudged PR #${prNumber} about ${runCount} failed run(s)`);
+    }
+
+    nudgeFailed(prNumber: number): void {
+        console.log(`  ✗ Failed to post nudge comment on PR #${prNumber}`);
+    }
+
+    noCiFailures(): void {
+        console.log('  ✓ No failed CI runs.');
+    }
+
+    nudgeSummary(nudged: number, clean: number, failed: number): void {
+        console.log(`\nDone. Nudged ${nudged} PR(s), ${clean} clean, ${failed} failed to comment.`);
+    }
 }

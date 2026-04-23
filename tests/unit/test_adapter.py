@@ -2,10 +2,10 @@ import unittest
 from multiprocessing import get_context
 from unittest import mock
 
-import dbt.flags as flags
 from agate import Row
-from dbt.adapters.contracts.relation import RelationType
 
+import dbt.flags as flags
+from dbt.adapters.contracts.relation import RelationType
 from dbt.adapters.fabricspark import FabricSparkAdapter, FabricSparkRelation
 
 from .utils import config_from_parts_or_dicts

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import subprocess
 import time
 from typing import Any
 
@@ -13,8 +14,12 @@ _ITEM_TYPES = [
     "environments",
 ]
 
-# Matches the naming pattern: dbt_{branchhash}_{timestamp}_{rest}
-_NAME_PATTERN = re.compile(r"^dbt_([a-f0-9]+)_(\d+)_")
+# Matches the new naming pattern: dbt_{8-char-hex-hash}_{timestamp}_{rest}
+_NAME_PATTERN = re.compile(r"^dbt_([a-f0-9]{8})_(\d+)_")
+
+# Matches the legacy naming pattern: dbt_{timestamp}_{mode}
+# (pre-branch-hash format, e.g. "dbt_1714000000_no_schema")
+_LEGACY_NAME_PATTERN = re.compile(r"^dbt_(\d{10,})_(no_schema|with_schema)$")
 
 # Items older than this (in seconds) are considered stale and always deleted.
 STALE_THRESHOLD_SECONDS = 24 * 60 * 60  # 24 hours
@@ -34,35 +39,70 @@ def _should_delete(item_name: str, current_hash: str, now: float) -> bool:
        matches *current_hash* (same branch → always clean up).
     2. Its name matches the pattern **and** the embedded unix timestamp is
        older than ``STALE_THRESHOLD_SECONDS`` (stale infra from any branch).
+    3. Its name matches the **legacy** ``dbt_{ts}_{mode}`` pattern (pre-branch-
+       hash era) **and** the embedded timestamp is stale (>24 h).
 
-    Items that do **not** match the naming pattern are left untouched so that
-    manually-created resources are never accidentally removed.
+    Items that do **not** match either naming pattern are left untouched so
+    that manually-created resources are never accidentally removed.
     """
+    # Try the new naming pattern first.
     m = _NAME_PATTERN.match(item_name)
-    if not m:
+    if m:
+        item_hash = m.group(1)
+        item_ts = int(m.group(2))
+
+        if item_hash == current_hash:
+            return True
+
+        if (now - item_ts) > STALE_THRESHOLD_SECONDS:
+            return True
+
         return False
 
-    item_hash = m.group(1)
-    item_ts = int(m.group(2))
-
-    if item_hash == current_hash:
-        return True
-
-    if (now - item_ts) > STALE_THRESHOLD_SECONDS:
-        return True
+    # Try the legacy naming pattern for stale garbage collection.
+    m_legacy = _LEGACY_NAME_PATTERN.match(item_name)
+    if m_legacy:
+        item_ts = int(m_legacy.group(1))
+        if (now - item_ts) > STALE_THRESHOLD_SECONDS:
+            return True
 
     return False
+
+
+def _git_branch() -> str | None:
+    """Best-effort ``git rev-parse --abbrev-ref HEAD``, or *None* on failure."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        branch = result.stdout.strip()
+        if result.returncode == 0 and branch and branch != "HEAD":
+            return branch
+    except Exception:
+        pass
+    return None
 
 
 def current_branch_hash() -> str:
     """Return the branch hash for the current CI run.
 
     Reads ``GITHUB_HEAD_REF`` (set on PR builds) or ``GITHUB_REF_NAME``
-    (set on push builds).  Falls back to ``"unknown"`` for local runs.
+    (set on push builds).  On local machines where neither variable is set,
+    falls back to ``git rev-parse --abbrev-ref HEAD`` so that each
+    developer's branch gets its own hash.  If that also fails, falls back
+    to ``"unknown"``.
     """
     import os
 
-    branch = os.environ.get("GITHUB_HEAD_REF") or os.environ.get("GITHUB_REF_NAME", "unknown")
+    branch = (
+        os.environ.get("GITHUB_HEAD_REF")
+        or os.environ.get("GITHUB_REF_NAME")
+        or _git_branch()
+        or "unknown"
+    )
     return branch_hash(branch)
 
 

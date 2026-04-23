@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import time
+from unittest.mock import patch
 
 from tests.functional.nuke import (
     STALE_THRESHOLD_SECONDS,
+    _git_branch,
     _should_delete,
     branch_hash,
+    current_branch_hash,
 )
 
 
@@ -60,24 +63,34 @@ class TestShouldDelete:
         assert _should_delete(name, current, now) is True
 
     def test_non_matching_pattern_never_deleted(self) -> None:
-        """Items that don't match the naming pattern are never deleted."""
+        """Items that don't match either naming pattern are never deleted."""
         now = time.time()
         current = branch_hash("my-branch")
         assert _should_delete("manual_lakehouse", current, now) is False
         assert _should_delete("my_other_lh", current, now) is False
 
-    def test_old_format_without_hash_not_matched(self) -> None:
-        """Old naming format dbt_{ts}_{mode} does not match the new pattern.
-
-        The regex requires ``dbt_{hex}_{digits}_`` — the old format
-        ``dbt_1714000000_no_schema`` has no second numeric segment after the
-        first underscore-delimited group, so the regex does not match and the
-        item is left untouched.  This is the desired behaviour: unknown items
-        are never deleted.
-        """
+    def test_old_format_stale_deleted(self) -> None:
+        """Legacy ``dbt_{ts}_{mode}`` items older than 24 h are cleaned up."""
         now = time.time()
         current = branch_hash("my-branch")
-        name = "dbt_1714000000_no_schema"
+        old_ts = int(now) - STALE_THRESHOLD_SECONDS - 1
+        name = f"dbt_{old_ts}_no_schema"
+        assert _should_delete(name, current, now) is True
+
+    def test_old_format_recent_not_deleted(self) -> None:
+        """Legacy ``dbt_{ts}_{mode}`` items younger than 24 h are kept."""
+        now = time.time()
+        current = branch_hash("my-branch")
+        recent_ts = int(now) - 60
+        name = f"dbt_{recent_ts}_no_schema"
+        assert _should_delete(name, current, now) is False
+
+    def test_regex_rejects_long_hex(self) -> None:
+        """Hash segment must be exactly 8 hex chars; longer strings don't match."""
+        now = time.time()
+        current = branch_hash("my-branch")
+        # 10-char hex prefix — should NOT match the new pattern
+        name = f"dbt_deadbeef01_{int(now)}_no_schema"
         assert _should_delete(name, current, now) is False
 
     def test_exactly_at_threshold_not_deleted(self) -> None:
@@ -97,3 +110,42 @@ class TestShouldDelete:
         name_ws = self._make_name(current, int(now), "with_schema")
         assert _should_delete(name_no, current, now) is True
         assert _should_delete(name_ws, current, now) is True
+
+
+class TestCurrentBranchHash:
+    """Tests for current_branch_hash() and _git_branch()."""
+
+    def test_prefers_github_head_ref(self) -> None:
+        """GITHUB_HEAD_REF takes priority over GITHUB_REF_NAME and git."""
+        env = {"GITHUB_HEAD_REF": "pr-branch", "GITHUB_REF_NAME": "main"}
+        with patch.dict("os.environ", env, clear=False):
+            assert current_branch_hash() == branch_hash("pr-branch")
+
+    def test_falls_back_to_github_ref_name(self) -> None:
+        """GITHUB_REF_NAME is used when GITHUB_HEAD_REF is empty."""
+        env = {"GITHUB_HEAD_REF": "", "GITHUB_REF_NAME": "main"}
+        with patch.dict("os.environ", env, clear=False):
+            assert current_branch_hash() == branch_hash("main")
+
+    def test_falls_back_to_git_branch(self) -> None:
+        """git rev-parse is used when no GitHub env vars are set."""
+        env = {"GITHUB_HEAD_REF": "", "GITHUB_REF_NAME": ""}
+        with (
+            patch.dict("os.environ", env, clear=False),
+            patch("tests.functional.nuke._git_branch", return_value="local-dev"),
+        ):
+            assert current_branch_hash() == branch_hash("local-dev")
+
+    def test_falls_back_to_unknown(self) -> None:
+        """Falls back to 'unknown' when all detection methods fail."""
+        env = {"GITHUB_HEAD_REF": "", "GITHUB_REF_NAME": ""}
+        with (
+            patch.dict("os.environ", env, clear=False),
+            patch("tests.functional.nuke._git_branch", return_value=None),
+        ):
+            assert current_branch_hash() == branch_hash("unknown")
+
+    def test_git_branch_returns_string(self) -> None:
+        """_git_branch() returns a string or None without raising."""
+        result = _git_branch()
+        assert result is None or isinstance(result, str)

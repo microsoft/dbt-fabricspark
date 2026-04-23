@@ -642,22 +642,10 @@ class TestSparkAdapter(unittest.TestCase):
         classified as RelationType.MaterializedView, not Table."""
 
         mlv_information = (
-            "Database: mydb\n"
-            "Table: my_mlv\n"
-            "Type: MATERIALIZED_LAKE_VIEW\n"
-            "Provider: delta\n"
+            "Database: mydb\nTable: my_mlv\nType: MATERIALIZED_LAKE_VIEW\nProvider: delta\n"
         )
-        view_information = (
-            "Database: mydb\n"
-            "Table: my_view\n"
-            "Type: VIEW\n"
-        )
-        table_information = (
-            "Database: mydb\n"
-            "Table: my_table\n"
-            "Type: MANAGED\n"
-            "Provider: delta\n"
-        )
+        view_information = "Database: mydb\nTable: my_view\nType: VIEW\n"
+        table_information = "Database: mydb\nTable: my_table\nType: MANAGED\nProvider: delta\n"
 
         # Each "row" is just a sentinel; the relation_info_func maps it to
         # (schema, name, information).

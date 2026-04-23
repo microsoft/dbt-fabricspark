@@ -260,12 +260,12 @@ class TestEnsureDatabaseExists(unittest.TestCase):
 
 
 class TestMLVRelationTypeComparison(unittest.TestCase):
-    """Verify the materialized_lake_view macro uses the correct RelationType string.
+    """Regression: the materialized_lake_view macro must use the correct RelationType string.
 
     The macro compares ``old_relation.type.value`` against a literal string
     to decide whether to drop an existing relation before CREATE OR REPLACE.
     The literal must match ``RelationType.MaterializedView.value``
-    (i.e. ``'materialized_view'``).
+    (``'materialized_view'``), not the old typo ``'materializedview'``.
     """
 
     MLV_MACRO_PATH = _PROJECT_ROOT / (

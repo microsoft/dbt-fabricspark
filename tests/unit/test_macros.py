@@ -325,9 +325,7 @@ class TestSnapshotCrossLakehouseWrite(unittest.TestCase):
             re.MULTILINE,
         )
         match = pattern.search(self.macro_src)
-        self.assertIsNotNone(
-            match, "Could not find ensure_database_exists call in snapshot.sql"
-        )
+        self.assertIsNotNone(match, "Could not find ensure_database_exists call in snapshot.sql")
         db_arg = match.group(1)
         self.assertEqual(
             db_arg,

@@ -55,15 +55,19 @@ def _make_client():
 
 
 def cmd_nuke() -> None:
-    """Delete ALL items from the workspace."""
-    from tests.functional.nuke import nuke_workspace
+    """Delete items from the workspace that match this branch or are stale (>24h)."""
+    from tests.functional.nuke import current_branch_hash, nuke_workspace
 
     client = _make_client()
-    nuke_workspace(client)
+    bhash = current_branch_hash()
+    logger.info("Nuking workspace items for branch hash '%s' and stale items", bhash)
+    nuke_workspace(client, bhash)
 
 
 def cmd_provision() -> None:
     """Create a lakehouse and write its details to the shared env file."""
+    from tests.functional.nuke import current_branch_hash
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--schema-mode", required=True, choices=("no_schema", "with_schema"))
     args = parser.parse_args(sys.argv[2:])
@@ -71,7 +75,8 @@ def cmd_provision() -> None:
     client = _make_client()
     enable_schemas = args.schema_mode == "with_schema"
     ts = int(time.time())
-    name = f"dbt_{ts}_{args.schema_mode}"
+    bhash = current_branch_hash()
+    name = f"dbt_{bhash}_{ts}_{args.schema_mode}"
 
     logger.info("Creating lakehouse '%s' (schemas=%s)...", name, enable_schemas)
     lh = client.create_lakehouse(name, enable_schemas=enable_schemas)

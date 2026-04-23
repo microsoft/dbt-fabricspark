@@ -18,7 +18,8 @@ _ITEM_TYPES = [
 _NAME_PATTERN = re.compile(r"^dbt_([a-f0-9]{8})_(\d+)_")
 
 # Matches the legacy naming pattern: dbt_{timestamp}_{mode}
-# (pre-branch-hash format, e.g. "dbt_1714000000_no_schema")
+# (pre-branch-hash format, e.g. "dbt_1714000000_no_schema").
+# Only the two known schema modes are matched to avoid false positives.
 _LEGACY_NAME_PATTERN = re.compile(r"^dbt_(\d{10,})_(no_schema|with_schema)$")
 
 # Items older than this (in seconds) are considered stale and always deleted.
@@ -76,7 +77,7 @@ def _git_branch() -> str | None:
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=2,
         )
         branch = result.stdout.strip()
         if result.returncode == 0 and branch and branch != "HEAD":

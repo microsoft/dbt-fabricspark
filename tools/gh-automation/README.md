@@ -17,7 +17,7 @@ npx tsx tools/gh-automation/approve-workflow.ts
 
 ```bash
 # Watch a specific PR
-npx tsx tools/gh-automation/approve-workflow.ts 98
+npx tsx tools/gh-automation/approve-workflow.ts 98 --sleep 360
 
 # One-shot: approve all Copilot PRs, then exit
 npx tsx tools/gh-automation/approve-workflow.ts --no-watch

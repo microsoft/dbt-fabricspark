@@ -6,6 +6,7 @@ export default {
   transform: {
     '^.+\\.ts$': ['ts-jest', {
       tsconfig: {
+        module: 'commonjs',
         esModuleInterop: true,
         isolatedModules: true,
       },

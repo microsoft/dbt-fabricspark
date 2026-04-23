@@ -648,12 +648,14 @@ class TestSparkAdapter(unittest.TestCase):
         table_information = "Database: mydb\nTable: my_table\nType: MANAGED\nProvider: delta\n"
 
         # Each "row" is just a sentinel; the relation_info_func maps it to
-        # (schema, name, information).
-        rows = ["mlv_row", "view_row", "table_row"]
+        # (schema, name, information).  A None return signals a session-scoped
+        # temp view that should be skipped.
+        rows = ["mlv_row", "view_row", "table_row", "skip_row"]
         info_map = {
             "mlv_row": ("dbo", "my_mlv", mlv_information),
             "view_row": ("dbo", "my_view", view_information),
             "table_row": ("dbo", "my_table", table_information),
+            "skip_row": None,
         }
 
         config = self._get_target_livy(self.project_cfg)
@@ -664,6 +666,7 @@ class TestSparkAdapter(unittest.TestCase):
             relation_info_func=lambda row: info_map[row],
         )
 
+        # skip_row (None) must be excluded from the result.
         self.assertEqual(len(relations), 3)
         types_by_name = {r.identifier: r.type for r in relations}
         self.assertEqual(types_by_name["my_mlv"], RelationType.MaterializedView)

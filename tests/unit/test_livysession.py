@@ -496,9 +496,7 @@ class TestFixBinding:
             "(cast(%s as bigint),cast(%s as string)),(cast(%s as bigint),cast(%s as string))"
         )
         raw_bindings = [1.0, "Cote d'Ivoire", 2.0, "Tonga"]
-        bindings = tuple(
-            LivySessionConnectionWrapper._fix_binding(b) for b in raw_bindings
-        )
+        bindings = tuple(LivySessionConnectionWrapper._fix_binding(b) for b in raw_bindings)
         sql = sql_template % bindings
         # The generated SQL must NOT have an unescaped inner quote that would
         # break parsing. The value should be: 'Cote d\'Ivoire'

@@ -275,6 +275,7 @@ class TestMLVRelationTypeComparison(unittest.TestCase):
 
     def test_macro_uses_correct_materialized_view_literal(self):
         """The drop-guard comparison must use 'materialized_view' (with underscore)."""
+        self.assertTrue(self.MLV_MACRO_PATH.exists(), f"Macro file not found: {self.MLV_MACRO_PATH}")
         contents = self.MLV_MACRO_PATH.read_text()
 
         expected = RelationType.MaterializedView.value  # 'materialized_view'

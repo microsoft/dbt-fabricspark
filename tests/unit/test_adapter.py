@@ -5,6 +5,7 @@ from unittest import mock
 from agate import Row
 
 import dbt.flags as flags
+from dbt.adapters.contracts.relation import RelationType
 from dbt.adapters.fabricspark import FabricSparkAdapter, FabricSparkRelation
 
 from .utils import config_from_parts_or_dicts
@@ -635,3 +636,34 @@ class TestSparkAdapter(unittest.TestCase):
                 "stats:rows:value": 12345678,
             },
         )
+
+    def test_build_spark_relation_list_materialized_lake_view(self):
+        """MATERIALIZED_LAKE_VIEW from Fabric should be classified as MaterializedView."""
+        config = self._get_target_livy(self.project_cfg)
+        adapter = FabricSparkAdapter(config, self.mp_context)
+
+        schema_relation = FabricSparkRelation.create(
+            database="mydb", schema="dbo", identifier="dummy"
+        )
+
+        def fake_info(row):
+            return row
+
+        rows = [
+            ("dbo", "mlv_table", "Type: MATERIALIZED_LAKE_VIEW\nProvider: delta\n"),
+            ("dbo", "mv_table", "Type: MATERIALIZED_VIEW\nProvider: delta\n"),
+            ("dbo", "view_table", "Type: VIEW\nProvider: delta\n"),
+            ("dbo", "regular_table", "Type: MANAGED\nProvider: delta\n"),
+        ]
+
+        relations = adapter._build_spark_relation_list(
+            row_list=rows,
+            relation_info_func=fake_info,
+            schema_relation=schema_relation,
+        )
+
+        self.assertEqual(len(relations), 4)
+        self.assertEqual(relations[0].type, RelationType.MaterializedView)
+        self.assertEqual(relations[1].type, RelationType.MaterializedView)
+        self.assertEqual(relations[2].type, RelationType.View)
+        self.assertEqual(relations[3].type, RelationType.Table)

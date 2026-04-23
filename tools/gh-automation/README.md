@@ -2,11 +2,11 @@
 
 GitHub Action automations for repo maintenance. All tools discover open Copilot PRs (author: `copilot-swe-agent`) and run in a reconcile loop by default.
 
-| Tool | What it does |
-|------|-------------|
-| **approve-workflow** | Re-runs `action_required` workflow runs (GitHub UI's "Approve and run") |
-| **sync-main** | Comments on PRs whose branches are behind `main`, telling Copilot to merge and re-test |
-| **nudge** | Detects failed/cancelled/timed-out CI runs and comments telling Copilot to read logs, fix, and retry |
+| Tool                 | What it does                                                                                         |
+| -------------------- | ---------------------------------------------------------------------------------------------------- |
+| **approve-workflow** | Re-runs `action_required` workflow runs (GitHub UI's "Approve and run")                              |
+| **sync-main**        | Comments on PRs whose branches are behind `main`, telling Copilot to merge and re-test               |
+| **nudge**            | Detects failed/cancelled/timed-out CI runs and comments telling Copilot to read logs, fix, and retry |
 
 ## Usage
 

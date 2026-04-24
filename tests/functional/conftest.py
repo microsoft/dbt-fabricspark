@@ -182,9 +182,9 @@ def dbt_profile_target(request, workspace_id, api_endpoint, schema_mode):
         "reuse_session": True,
         "session_idle_timeout": "60m",
         "spark_config": {
-            "name": f"dbt-test-{lakehouse_name}",
+            "name": f"dbt-test-{os.getenv('RESOURCE_PREFIX', 'local')}-{lakehouse_name}",
             "tags": {
-                "project": f"dbt-test-{lakehouse_name}",
+                "project": f"dbt-test-{os.getenv('RESOURCE_PREFIX', 'local')}-{lakehouse_name}",
             },
         },
     }

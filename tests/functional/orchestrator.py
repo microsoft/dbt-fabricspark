@@ -166,9 +166,9 @@ def cmd_create_session() -> None:
 
     def _try_create_session(idx: int, attempt: int) -> str:
         spark_config = {
-            "name": f"dbt-test-{lakehouse_name}-{idx}",
+            "name": f"dbt-test-{os.getenv('RESOURCE_PREFIX', 'local')}-{lakehouse_name}-{idx}",
             "conf": {"spark.livy.session.idle.timeout": "60m"},
-            "tags": {"project": f"dbt-test-{lakehouse_name}", "shard": str(idx)},
+            "tags": {"project": f"dbt-test-{os.getenv('RESOURCE_PREFIX', 'local')}-{lakehouse_name}", "shard": str(idx)},
         }
         logger.info(
             "[shard %d] Creating Livy session for %s at %s (attempt %d)...",

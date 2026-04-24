@@ -231,11 +231,15 @@ class TestPollJobInstanceUntilComplete:
         result = poll_job_instance_until_complete(mock_credentials, "job-1")
         assert result == job
 
+    @patch("dbt.adapters.fabricspark.mlv_api.time.time")
     @patch("dbt.adapters.fabricspark.mlv_api.time.sleep")
     @patch("dbt.adapters.fabricspark.mlv_api.get_job_instance")
-    def test_raises_on_timeout(self, mock_get, mock_sleep, mock_credentials):
+    def test_raises_on_timeout(self, mock_get, mock_sleep, mock_time, mock_credentials):
         mock_credentials.statement_timeout = 2
         mock_credentials.poll_statement_wait = 1
+        # time.time() is called: (1) deadline calc, (2) log message, (3) loop check,
+        # (4) debug log, (5) sleep, (6) loop check again (expired).
+        mock_time.side_effect = [100.0, 100.0, 100.5, 100.5, 101.0, 103.0]
         mock_get.return_value = {"status": "InProgress", "failureReason": None}
         with pytest.raises(MLVApiError, match="timed out"):
             poll_job_instance_until_complete(mock_credentials, "job-1")
@@ -258,7 +262,10 @@ class TestRunOnDemandRefresh:
         result = run_on_demand_refresh(mock_credentials)
 
         mock_request.assert_called_once()
-        mock_poll.assert_called_once_with(mock_credentials, "job-123", None)
+        mock_poll.assert_called_once()
+        call_args = mock_poll.call_args
+        assert call_args[0] == (mock_credentials, "job-123", None)
+        assert "deadline" in call_args[1]
         assert result["status"] == "Completed"
 
     @patch("dbt.adapters.fabricspark.mlv_api.get_headers")

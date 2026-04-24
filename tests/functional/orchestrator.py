@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import random
 import sys
 import time
 
@@ -141,9 +142,9 @@ def cmd_create_session() -> None:
 
     headers = {"Authorization": f"Bearer {token_str}", "Content-Type": "application/json"}
 
-    MAX_RETRIES = 3
-    POLL_TIMEOUT = 600  # 10 min per attempt before considering it stale
-    POLL_INTERVAL = 10
+    MAX_RETRIES = 2
+    POLL_TIMEOUT = 1800  # 30 min per attempt — sessions need more time under heavy contention
+    POLL_INTERVAL = 15
 
     def _create_one(idx: int) -> str:
         last_err: Exception | None = None
@@ -156,7 +157,7 @@ def cmd_create_session() -> None:
                     "[shard %d] Attempt %d/%d failed: %s", idx, attempt, MAX_RETRIES, exc
                 )
                 if attempt < MAX_RETRIES:
-                    backoff = 10 * attempt
+                    backoff = 30 * attempt + random.randint(0, 15)
                     logger.info("[shard %d] Retrying in %ds...", idx, backoff)
                     time.sleep(backoff)
         raise RuntimeError(
@@ -177,25 +178,87 @@ def cmd_create_session() -> None:
             livy_url,
             attempt,
         )
-        resp = requests.post(
-            f"{livy_url}/sessions",
-            data=json.dumps(spark_config),
-            headers=headers,
-            timeout=120,
-        )
+
+        # Retry POST for transient HTTP errors (429, 5xx)
+        post_retries = 5
+        resp = None
+        for post_attempt in range(1, post_retries + 1):
+            try:
+                resp = requests.post(
+                    f"{livy_url}/sessions",
+                    data=json.dumps(spark_config),
+                    headers=headers,
+                    timeout=120,
+                )
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+                if post_attempt >= post_retries:
+                    raise
+                wait = 2**post_attempt + random.randint(0, 5)
+                logger.warning(
+                    "[shard %d] Session POST failed (%s), retrying in %ds (attempt %d/%d)",
+                    idx,
+                    type(exc).__name__,
+                    wait,
+                    post_attempt,
+                    post_retries,
+                )
+                time.sleep(wait)
+                continue
+            if resp.status_code == 429:
+                if post_attempt >= post_retries:
+                    resp.raise_for_status()
+                wait = min(2**post_attempt * 5, 60) + random.randint(0, 10)
+                logger.warning(
+                    "[shard %d] Session POST got 429, retrying in %ds (attempt %d/%d)",
+                    idx,
+                    wait,
+                    post_attempt,
+                    post_retries,
+                )
+                time.sleep(wait)
+                continue
+            break
         resp.raise_for_status()
         sid = str(resp.json()["id"])
         logger.info("[shard %d] Livy session initiated: %s (waiting for idle...)", idx, sid)
 
         deadline = time.monotonic() + POLL_TIMEOUT
+        consecutive_poll_errors = 0
         while time.monotonic() < deadline:
             time.sleep(POLL_INTERVAL)
-            status_resp = requests.get(
-                f"{livy_url}/sessions/{sid}",
-                headers=headers,
-                timeout=120,
-            )
+            try:
+                status_resp = requests.get(
+                    f"{livy_url}/sessions/{sid}",
+                    headers=headers,
+                    timeout=120,
+                )
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+                consecutive_poll_errors += 1
+                if consecutive_poll_errors > 10:
+                    raise RuntimeError(
+                        f"[shard {idx}] Session {sid} poll failed after "
+                        f"{consecutive_poll_errors} errors: {exc}"
+                    )
+                logger.warning(
+                    "[shard %d] Session %s poll error (%s), continuing...",
+                    idx,
+                    sid,
+                    type(exc).__name__,
+                )
+                continue
+            if status_resp.status_code == 429:
+                consecutive_poll_errors += 1
+                wait = min(2**consecutive_poll_errors * 2, 60)
+                logger.warning(
+                    "[shard %d] Session %s poll got 429, backing off %ds",
+                    idx,
+                    sid,
+                    wait,
+                )
+                time.sleep(wait)
+                continue
             if status_resp.ok:
+                consecutive_poll_errors = 0
                 data = status_resp.json()
                 top_state = data.get("state", "")
                 livy_state = data.get("livyInfo", {}).get("currentState", "")

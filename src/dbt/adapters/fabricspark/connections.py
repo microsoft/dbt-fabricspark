@@ -475,6 +475,7 @@ def _is_retryable_error(exc: Exception) -> str:
         "connection reset",
         "service busy",
         "unable to fetch mwc token",
+        "failed to get database metadata",
     ]
     for keyword in retryable_keywords:
         if keyword in message:

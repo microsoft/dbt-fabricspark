@@ -142,11 +142,18 @@ def cmd_create_session() -> None:
 
     headers = {"Authorization": f"Bearer {token_str}", "Content-Type": "application/json"}
 
-    MAX_RETRIES = 2
+    MAX_RETRIES = 5
     POLL_TIMEOUT = 1800  # 30 min per attempt — sessions need more time under heavy contention
     POLL_INTERVAL = 15
 
     def _create_one(idx: int) -> str:
+        # Stagger session creation to reduce thundering-herd effects.
+        # Each shard waits a bit longer so requests don't all hit at once.
+        stagger = idx * 5 + random.randint(0, 3)
+        if stagger:
+            logger.info("[shard %d] Staggering session creation by %ds", idx, stagger)
+            time.sleep(stagger)
+
         last_err: Exception | None = None
         for attempt in range(1, MAX_RETRIES + 1):
             try:
@@ -179,7 +186,7 @@ def cmd_create_session() -> None:
             attempt,
         )
 
-        # Retry POST for transient HTTP errors (429, 5xx)
+        # Retry POST for transient HTTP errors (404, 429, 5xx)
         post_retries = 5
         resp = None
         for post_attempt in range(1, post_retries + 1):
@@ -204,6 +211,20 @@ def cmd_create_session() -> None:
                 )
                 time.sleep(wait)
                 continue
+            if resp.status_code == 404:
+                if post_attempt >= post_retries:
+                    resp.raise_for_status()
+                wait = 2**post_attempt * 5 + random.randint(0, 10)
+                logger.warning(
+                    "[shard %d] Session POST got 404 (Livy endpoint not ready), "
+                    "retrying in %ds (attempt %d/%d)",
+                    idx,
+                    wait,
+                    post_attempt,
+                    post_retries,
+                )
+                time.sleep(wait)
+                continue
             if resp.status_code == 429:
                 if post_attempt >= post_retries:
                     resp.raise_for_status()
@@ -211,6 +232,20 @@ def cmd_create_session() -> None:
                 logger.warning(
                     "[shard %d] Session POST got 429, retrying in %ds (attempt %d/%d)",
                     idx,
+                    wait,
+                    post_attempt,
+                    post_retries,
+                )
+                time.sleep(wait)
+                continue
+            if resp.status_code >= 500:
+                if post_attempt >= post_retries:
+                    resp.raise_for_status()
+                wait = 2**post_attempt * 3 + random.randint(0, 10)
+                logger.warning(
+                    "[shard %d] Session POST got HTTP %d, retrying in %ds (attempt %d/%d)",
+                    idx,
+                    resp.status_code,
                     wait,
                     post_attempt,
                     post_retries,

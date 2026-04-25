@@ -38,9 +38,11 @@ dependencies = [
     "dbt-core>=1.8.0",  
     "azure-identity>=1.21.0",
     "azure-core>=1.33.0",
-    "azure-cli>=2.84.0",
     "requests>=2.32.0",
 ]
+
+[project.optional-dependencies]
+cli = ["azure-cli>=2.84.0"]
 
 [dependency-groups]
 dev = [

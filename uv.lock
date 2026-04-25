@@ -1878,13 +1878,17 @@ wheels = [
 name = "dbt-fabricspark"
 source = { editable = "." }
 dependencies = [
-    { name = "azure-cli" },
     { name = "azure-core" },
     { name = "azure-identity" },
     { name = "dbt-adapters" },
     { name = "dbt-common" },
     { name = "dbt-core" },
     { name = "requests" },
+]
+
+[package.optional-dependencies]
+cli = [
+    { name = "azure-cli" },
 ]
 
 [package.dev-dependencies]
@@ -1902,7 +1906,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "azure-cli", specifier = ">=2.84.0" },
+    { name = "azure-cli", marker = "extra == 'cli'", specifier = ">=2.84.0" },
     { name = "azure-core", specifier = ">=1.33.0" },
     { name = "azure-identity", specifier = ">=1.21.0" },
     { name = "dbt-adapters", specifier = ">=1.7,<2.0" },
@@ -1910,6 +1914,7 @@ requires-dist = [
     { name = "dbt-core", specifier = ">=1.8.0" },
     { name = "requests", specifier = ">=2.32.0" },
 ]
+provides-extras = ["cli"]
 
 [package.metadata.requires-dev]
 dev = [

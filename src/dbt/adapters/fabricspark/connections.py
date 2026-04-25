@@ -396,15 +396,10 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                     not is_type_retryable
                     and not retryable_message
                     and getattr(connection.credentials, "retry_all", False)
-                    and "increase `statement_timeout` in profiles.yml"
-                    not in str(e).lower()
+                    and "increase `statement_timeout` in profiles.yml" not in str(e).lower()
                 )
 
-                if (
-                    not is_type_retryable
-                    and not retryable_message
-                    and not is_retry_all_fallback
-                ):
+                if not is_type_retryable and not retryable_message and not is_retry_all_fallback:
                     raise e
 
                 # Cease retries and fail when limit is hit.

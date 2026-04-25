@@ -5,3 +5,4 @@
 # sentinel 5 — 20260424T181423Z
 # sentinel 1 (reset) — 20260424T214626Z
 # sentinel 2 (reset) — 20260424T233155Z
+# sentinel 1 (reset after retry_all fix) — 20260425T095919Z

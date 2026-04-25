@@ -43,6 +43,14 @@ The `dbt-fabricspark` package contains all of the code enabling dbt to work with
 pip install dbt-fabricspark
 ```
 
+For local development using **Azure CLI** authentication (`authentication: CLI`), install with the `cli` extra:
+
+```bash
+pip install dbt-fabricspark[cli]
+```
+
+> **Note:** The `azure-cli` dependency is only required for the `CLI` authentication mode. Service Principal (`SPN`) and Fabric Notebook (`fabric_notebook`) authentication modes do not need it.
+
 ## Configuration
 
 Use a Livy endpoint to connect to Apache Spark in Microsoft Fabric. Configure your `profiles.yml` to connect via Livy endpoints.

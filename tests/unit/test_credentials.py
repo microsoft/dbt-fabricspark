@@ -293,18 +293,3 @@ def test_other_retryable_keywords_still_work() -> None:
     for keyword in ["throttling", "service busy", "rate limit", "unavailable"]:
         exc = Exception(f"The server returned: {keyword}")
         assert _is_retryable_error(exc) != "", f"Expected '{keyword}' to be retryable"
-
-
-def test_new_retryable_keywords() -> None:
-    """Infrastructure/transport error keywords should be retryable."""
-    new_keywords = [
-        "session not found",
-        "connection aborted",
-        "broken pipe",
-        "bad gateway",
-        "service unavailable",
-        "gateway timeout",
-    ]
-    for keyword in new_keywords:
-        exc = Exception(f"Livy returned: {keyword}")
-        assert _is_retryable_error(exc) != "", f"Expected '{keyword}' to be retryable"

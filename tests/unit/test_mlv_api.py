@@ -237,8 +237,6 @@ class TestPollJobInstanceUntilComplete:
     def test_raises_on_timeout(self, mock_get, mock_sleep, mock_time, mock_credentials):
         mock_credentials.statement_timeout = 2
         mock_credentials.poll_statement_wait = 1
-        # time.time() is called: (1) deadline calc, (2) log message, (3) loop check,
-        # (4) debug log, (5) sleep, (6) loop check again (expired).
         mock_time.side_effect = [100.0, 100.0, 100.5, 100.5, 101.0, 103.0]
         mock_get.return_value = {"status": "InProgress", "failureReason": None}
         with pytest.raises(MLVApiError, match="timed out"):

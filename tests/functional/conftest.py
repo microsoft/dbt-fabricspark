@@ -167,8 +167,8 @@ def dbt_profile_target(request, workspace_id, api_endpoint, schema_mode):
     base = {
         "type": "fabricspark",
         "method": "livy",
-        "connect_retries": 2,
-        "connect_timeout": 10,
+        "connect_retries": 5,
+        "connect_timeout": 15,
         "endpoint": api_endpoint,
         "workspaceid": workspace_id,
         "lakehouseid": lakehouse_id,

@@ -387,16 +387,33 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                     isinstance(e, retryable_exceptions) if retryable_exceptions else False
                 )
                 retryable_message = _is_retryable_error(e)
-                if not is_type_retryable and not retryable_message:
+
+                # retry_all: fall back to retrying even if the error message
+                # doesn't match a known retryable pattern.  Statement-timeout
+                # errors are still excluded (they are already filtered out by
+                # _is_retryable_error returning "").
+                is_retry_all_fallback = (
+                    not is_type_retryable
+                    and not retryable_message
+                    and getattr(connection.credentials, "retry_all", False)
+                    and "increase `statement_timeout` in profiles.yml" not in str(e).lower()
+                )
+
+                if not is_type_retryable and not retryable_message and not is_retry_all_fallback:
                     raise e
 
                 # Cease retries and fail when limit is hit.
                 if attempt >= retry_limit:
                     raise e
 
+                retry_reason = (
+                    "retry_all"
+                    if is_retry_all_fallback
+                    else ("retryable_type" if is_type_retryable else "retryable_message")
+                )
                 fire_event(
                     AdapterEventDebug(
-                        message=f"Got a retryable error {type(e)}. {retry_limit - attempt} retries left. Retrying in {min(5 * (2 ** (attempt - 1)), 60)} seconds.\nError:\n{e}"
+                        message=f"Got a retryable error ({retry_reason}) {type(e)}. {retry_limit - attempt} retries left. Retrying in {min(5 * (2 ** (attempt - 1)), 60)} seconds.\nError:\n{e}"
                     )
                 )
                 time.sleep(min(5 * (2 ** (attempt - 1)), 60))
@@ -475,6 +492,13 @@ def _is_retryable_error(exc: Exception) -> str:
         "connection reset",
         "service busy",
         "unable to fetch mwc token",
+        "failed to get database metadata",
+        "session not found",
+        "connection aborted",
+        "broken pipe",
+        "bad gateway",
+        "service unavailable",
+        "gateway timeout",
     ]
     for keyword in retryable_keywords:
         if keyword in message:

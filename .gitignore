@@ -11,7 +11,7 @@ dbt_env/
 dist/
 *.egg-info
 logs/
-
+*.patch
 
 # Unit test
 .tox/

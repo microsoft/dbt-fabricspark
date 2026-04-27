@@ -1,12 +1,26 @@
-<a href="https://github.com/microsoft/dbt-fabricspark/actions/workflows/ci.yml">
-  <img src="https://github.com/microsoft/dbt-fabricspark/actions/workflows/ci.yml/badge.svg?branch=main" alt="Tests and Code Checks"/>
-</a>
-<a href="https://github.com/microsoft/dbt-fabricspark/actions/workflows/integration.yml">
-  <img src="https://github.com/microsoft/dbt-fabricspark/actions/workflows/integration.yml/badge.svg?branch=main&event=pull_request" alt="Adapter Integration Tests"/>
-</a>
-<a href="https://github.com/microsoft/dbt-fabricspark/actions/workflows/release.yml">
-  <img src="https://github.com/microsoft/dbt-fabricspark/actions/workflows/release.yml/badge.svg" alt="Release to PyPI"/>
-</a>
+<!-- PROJECT LOGO -->
+<p align="center">
+  <img src="https://rakirahman.blob.core.windows.net/public/images/Misc/dbt-fabricspark.png" alt="Logo" width="30%">
+  <h3 align="center">Fabric Spark - dbt</h3>
+  <p align="center">
+    dbt adapter for Fabric Spark supporting SQL models.
+    <br />
+    <br />
+    <a href="https://docs.getdbt.com/">dbt Docs</a>
+    ·
+    <a href="https://learn.microsoft.com/en-us/fabric/data-engineering/tutorial-lakehouse-data-preparation?tabs=pyspark">Fabric Lakehouse with Spark</a>
+    ·
+    <a href="https://learn.microsoft.com/en-us/fabric/data-engineering/api-livy-overview">Fabric Lakehouse Livy API</a>
+    ·
+    <a href="https://github.com/microsoft/dbt-fabricspark/actions/workflows/ci.yml">
+        <img src="https://github.com/microsoft/dbt-fabricspark/actions/workflows/ci.yml/badge.svg?branch=main" alt="Tests and Code Checks"/>
+    </a>
+    ·
+    <a href="https://github.com/microsoft/dbt-fabricspark/actions/workflows/release.yml">
+        <img src="https://github.com/microsoft/dbt-fabricspark/actions/workflows/release.yml/badge.svg" alt="Release to PyPI"/>
+    </a>
+  </p>
+</p>
 
 ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)
 ![dbt-core](https://img.shields.io/badge/dbt--core-%3E%3D1.8.0-orange)

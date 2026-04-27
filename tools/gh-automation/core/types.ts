@@ -63,3 +63,10 @@ export interface NudgeResult {
     readonly failedRuns: number;
     readonly commented: boolean;
 }
+
+// ── Compact Dependabot ─────────────────────────────────────────────────────────
+
+export interface CompactDependabotResult {
+    readonly prs: readonly PullRequest[];
+    readonly patchFile: string;
+}

@@ -8,6 +8,7 @@ import { GhClient } from './gh-client.js';
 import type { PullRequest, PullRequestWithAuthor } from './types.js';
 
 const COPILOT_AUTHOR = 'copilot-swe-agent';
+const DEPENDABOT_AUTHOR = 'app/dependabot';
 
 export class PullRequestService {
     constructor(private readonly client: GhClient) {}
@@ -23,6 +24,17 @@ export class PullRequestService {
 
         if (!allPRs) return null;
         return allPRs.filter((pr) => pr.author.login === COPILOT_AUTHOR);
+    }
+
+    /** List all open PRs authored by Dependabot. */
+    listDependabotPRs(): PullRequest[] | null {
+        return this.client.execJson<PullRequest[]>([
+            'pr', 'list',
+            '--repo', this.client.repoSlug,
+            '--state', 'open',
+            '--author', DEPENDABOT_AUTHOR,
+            '--json', 'number,title,url,headRefName',
+        ]);
     }
 
     /** Fetch a single PR by number. */

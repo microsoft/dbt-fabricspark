@@ -47,7 +47,7 @@ cli = ["azure-cli>=2.84.0"]
 [dependency-groups]
 dev = [
     # Testing
-    "pytest~=7.4",
+    "pytest>=7.4,<10.0",
     "pytest-dotenv~=0.5.2",
     "flaky~=3.7",
     "pytest-xdist~=3.5",

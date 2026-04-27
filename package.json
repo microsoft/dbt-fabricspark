@@ -8,7 +8,7 @@
     "@types/node": "^20.4.4",
     "commander": "^11.0.0",
     "jest": "^30.2.0",
-    "nx": "20.6.0",
+    "nx": "22.6.5",
     "ts-jest": "^29.4.6",
     "ts-node": "^10.9.2",
     "tsx": "^4.7.1",
@@ -18,7 +18,8 @@
     "fail-on-untracked-files": "tsx tools/scripts/fail-on-untracked-files.ts",
     "approve-copilot-gh-workflow": "tsx tools/gh-automation/approve-workflow.ts",
     "sync-copilot-main": "tsx tools/gh-automation/sync-main.ts",
-    "nudge-copilot": "tsx tools/gh-automation/nudge.ts"
+    "nudge-copilot": "tsx tools/gh-automation/nudge.ts",
+    "compact-dependabot": "tsx tools/gh-automation/compact-dependabot.ts"
   },
   "type": "module",
   "nx": {}

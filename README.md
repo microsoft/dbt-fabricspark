@@ -459,6 +459,14 @@ SELECT ...
 - **No temp views as sources** — The SELECT query can reference tables and other MLVs, but not temporary views.
 - **Schedule is per-lakehouse** — One active schedule per lakehouse lineage, not per MLV.
 
+## FAQs
+
+### No support for Python Models
+
+For adapter stability, test coverage and high quality - this adapter is only focusing on SQL models with no support planned for [Python models](https://docs.getdbt.com/docs/build/python-models?version=1.12).
+
+For Python code execution, consider [Microsoft Fabric notebooks](https://learn.microsoft.com/en-us/fabric/data-engineering/author-execute-notebook).
+
 ## Reporting bugs and contributing code
 
 - Want to report a bug or request a feature? Let us know on [Slack](http://community.getdbt.com/), or open [an issue](https://github.com/microsoft/dbt-fabricspark/issues/new)

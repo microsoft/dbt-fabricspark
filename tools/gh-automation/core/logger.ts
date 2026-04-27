@@ -81,4 +81,16 @@ export class Logger {
     nudgeSummary(nudged: number, clean: number, failed: number): void {
         console.log(`\nDone. Nudged ${nudged} PR(s), ${clean} clean, ${failed} failed to comment.`);
     }
+
+    fetchingDiff(prNumber: number, title: string): void {
+        console.log(`  ↓ Fetching diff for PR #${prNumber}: ${title}`);
+    }
+
+    patchWritten(path: string, prCount: number): void {
+        console.log(`\n✓ Wrote combined patch from ${prCount} PR(s) to ${path}`);
+    }
+
+    noDependabotPRs(): void {
+        console.log('No open Dependabot PRs found.');
+    }
 }

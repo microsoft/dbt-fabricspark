@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.9.6
+
+### Bug Fixes
+
+- Fixed cross-lakehouse snapshot writes — snapshots now honor the user's `database` config instead of always writing to the default lakehouse (#96)
+- Fixed `ApproximateMatchError` on incremental reruns when lakehouse names contain mixed casing (#94)
+- Fixed single-quote escaping in seed values (e.g., `Cote d'Ivoire`) that caused Spark parse errors (#95)
+- Fixed `dbt docs generate` failing with multiple lakehouses by removing an unnecessary single-database guard (#84)
+- Fixed relation type detection for `MATERIALIZED_LAKE_VIEW` in `show table extended` output and corrected the `DROP` SQL generation (#106)
+
+### Improvements
+
+- Moved `azure-cli` to an optional dependency (`pip install dbt-fabricspark[cli]`) to resolve install conflicts with `azure-cosmos>=4.0` in environments like Fabric Managed Airflow (#149)
+- Hardened MLV API against capacity throttling — retries `Failed` jobs with throttle error codes and uses adaptive backoff on sustained 429s (#146)
+- Increased Livy session creation timeout and added retry/jitter for high-concurrency CI environments (#146)
+
+### Infrastructure
+
+- Added VSCode Devcontainer walkthrough for new developers (#93)
+- Parallelized functional test suite (~7× faster) with declarative YAML scheduler and Nx build system (#87)
+- Added branch-aware workspace nuke for safe concurrent CI runs (#98)
+- Added GitHub automation tools (`sync-main`, `nudge`) for Copilot PR management (#109)
+- Consolidated Dependabot dependency bumps (#152)
+
+---
+
 ## v1.9.5
 
 ### Materialized Lake View Support
@@ -9,6 +35,7 @@
 dbt-fabricspark now supports [Materialized Lake Views](https://learn.microsoft.com/en-us/fabric/data-engineering/materialized-lake-views/materialized-lake-views) as a first-class materialization. MLVs are precomputed, incrementally-maintained views in Fabric lakehouses that accelerate queries over Delta tables without manual refresh pipelines.
 
 **Requirements:**
+
 - Fabric Runtime 1.3+ (Apache Spark ≥ 3.5)
 - Schema-enabled lakehouse
 
@@ -43,14 +70,14 @@ select * from {{ ref('orders') }}
 
 **Config options:**
 
-| Option | Type | Required | Description |
-|---|---|---|---|
-| `mlv_on_demand` | bool | At least one of `mlv_on_demand` or `mlv_schedule` | Trigger an immediate refresh after creation |
-| `mlv_schedule` | dict | At least one of `mlv_on_demand` or `mlv_schedule` | Schedule config for periodic refresh. Must include `endDateTime` |
-| `mlv_comment` | string | No | Description added to the view |
-| `partitioned_by` | list | No | Partition columns |
-| `mlv_constraints` | list | No | CHECK constraints with optional `on_mismatch` (DROP or FAIL) |
-| `tblproperties` | dict | No | Delta table properties |
+| Option            | Type   | Required                                          | Description                                                      |
+| ----------------- | ------ | ------------------------------------------------- | ---------------------------------------------------------------- |
+| `mlv_on_demand`   | bool   | At least one of `mlv_on_demand` or `mlv_schedule` | Trigger an immediate refresh after creation                      |
+| `mlv_schedule`    | dict   | At least one of `mlv_on_demand` or `mlv_schedule` | Schedule config for periodic refresh. Must include `endDateTime` |
+| `mlv_comment`     | string | No                                                | Description added to the view                                    |
+| `partitioned_by`  | list   | No                                                | Partition columns                                                |
+| `mlv_constraints` | list   | No                                                | CHECK constraints with optional `on_mismatch` (DROP or FAIL)     |
+| `tblproperties`   | dict   | No                                                | Delta table properties                                           |
 
 ---
 
@@ -85,6 +112,7 @@ Terminal statuses follow the Fabric `ItemJobStatus` enum: `NotStarted`, `InProgr
 When `mlv_schedule` is provided, the adapter creates or updates a refresh schedule via the Fabric REST API. The operation is idempotent — if a schedule already exists, it is updated in place.
 
 Supported schedule types:
+
 - **Cron** — `interval` in minutes
 - **Daily** — list of `times` (e.g., `["06:00", "18:00"]`)
 - **Weekly** — `weekdays` and `times`
@@ -149,6 +177,7 @@ Errors surface as `MLVApiError` (extends `DbtRuntimeError`) with the operation n
 **Fix:** A new `reuse_session` credential flag allows sessions to persist across dbt runs. When enabled, the adapter writes the active session ID to a file and reattaches to it on the next run if the session is still alive. Fabric automatically reclaims idle sessions after the configured timeout.
 
 **Configuration:**
+
 ```yaml
 # profiles.yml
 my_fabric_profile:
@@ -172,6 +201,7 @@ my_fabric_profile:
 **Fix:** All polling loops are now bounded by configurable deadlines. The adapter raises a clear error when a timeout is exceeded. Statement result polling also handles `error`, `cancelled`, and `cancelling` states explicitly instead of continuing to poll.
 
 **Configuration:**
+
 ```yaml
 # profiles.yml — timeout tuning
 my_fabric_profile:
@@ -233,6 +263,7 @@ my_fabric_profile:
 **Fix:** On connection open, the adapter calls the Fabric REST API (`GET /v1/workspaces/{workspaceId}/lakehouses/{lakehouseId}`) and checks for the `properties.defaultSchema` property. If present, the lakehouse is schema-enabled and three-part naming is used. This detection is automatic and requires no user configuration.
 
 The adapter also validates schema configuration:
+
 - **Schema-enabled lakehouse:** The `schema` value must differ from the lakehouse name (e.g., use `dbo`).
 - **Non-schema lakehouse:** The `schema` is silently set to the lakehouse name for correct SQL generation.
 
@@ -267,6 +298,7 @@ The adapter also validates schema configuration:
 **Problem:** `generate_schema_name` and `generate_database_name` did not account for lakehouse type, potentially generating invalid namespace values.
 
 **Fix:**
+
 - **Non-schema lakehouses:** `generate_schema_name` always returns the lakehouse name (the only valid namespace).
 - **Schema-enabled lakehouses:** Uses dbt's standard `generate_schema_name_for_env` logic.
 - `generate_database_name` always returns the target lakehouse name.
@@ -282,6 +314,7 @@ The adapter also validates schema configuration:
 **Fix:** A new `environmentId` credential field injects the environment identifier into the Livy session's Spark configuration, telling Fabric to launch the session using that environment's settings.
 
 **Configuration:**
+
 ```yaml
 # profiles.yml
 my_fabric_profile:

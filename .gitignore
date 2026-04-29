@@ -13,6 +13,9 @@ dist/
 logs/
 *.patch
 
+# Temporary
+.temp/
+
 # Unit test
 .tox/
 .env

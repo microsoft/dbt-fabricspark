@@ -8,6 +8,7 @@ GitHub Action automations for repo maintenance. All tools discover open Copilot 
 | **sync-main**          | Comments on PRs whose branches are behind `main`, telling Copilot to merge and re-test               |
 | **nudge**              | Detects failed/cancelled/timed-out CI runs and comments telling Copilot to read logs, fix, and retry |
 | **compact-dependabot** | Fetches diffs from open Dependabot PRs and writes a combined patch file for review and application   |
+| **get-version-diffs**  | Generates a changelog of PR descriptions between the last version bump and HEAD of main              |
 
 ## Usage
 
@@ -30,6 +31,11 @@ npx tsx tools/gh-automation/nudge.ts 98 --no-watch --dry-run
 npm run compact-dependabot
 npm run compact-dependabot -- --dry-run
 npm run compact-dependabot -- --output my-patch.patch
+
+# Generate version changelog (one-shot)
+npm run get-version-diffs
+npm run get-version-diffs -- --dry-run
+npm run get-version-diffs -- --output custom-changelog.md
 ```
 
 ## Flags

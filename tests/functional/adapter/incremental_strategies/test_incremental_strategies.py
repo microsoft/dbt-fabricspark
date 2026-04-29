@@ -91,6 +91,11 @@ class TestDeltaStrategies(BaseIncrementalStrategies):
 
     def run_and_test(self, project):
         self.seed_and_run_twice()
+        # Invalidate Spark's cached metadata for seed tables to avoid
+        # TABLE_OR_VIEW_NOT_FOUND flakes caused by cross-catalog metastore
+        # propagation delays in Fabric.
+        for seed in ["expected_append", "expected_upsert", "expected_partial_upsert"]:
+            project.run_sql(f"REFRESH TABLE {{schema}}.{seed}")
         check_relations_equal(project.adapter, ["append_delta", "expected_append"])
         check_relations_equal(project.adapter, ["merge_no_key", "expected_append"])
         check_relations_equal(project.adapter, ["merge_unique_key", "expected_upsert"])

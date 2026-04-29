@@ -17,8 +17,7 @@
 When you create a **GitHub Release** with a tag like `v1.9.6`, it automatically triggers the `release.yml` workflow, which:
 
 1. Builds the Python package
-2. Runs the full test suite against a real Fabric workspace
-3. Publishes the package to **PyPI** automatically
+2. Publishes the package to **PyPI** automatically
 
 ---
 
@@ -105,11 +104,9 @@ This is the magic step. Creating a release with the right tag automatically fire
 
 1. Go to **Actions → release.yml** on GitHub
 2. You'll see a new run triggered by the tag. It will:
-   - 🔒 Authenticate to Azure via OIDC
    - 📦 Build the wheel/sdist (`nx run dbt-fabricspark:build`)
-   - 🧪 Run integration tests against the real Fabric workspace
    - 🚀 Publish to PyPI (`nx run dbt-fabricspark:publish`) using the `PYPI_TOKEN` secret
-3. The run takes up to **120 minutes** (integration tests are slow). Monitor for ✅ or ❌.
+3. Monitor for ✅ or ❌.
 
 ---
 
@@ -120,3 +117,28 @@ Once the workflow is green:
 1. Go to `pypi.org/project/dbt-fabricspark`
 2. Confirm `v1.9.6` is listed as the latest version
 3. Test it locally: `pip install dbt-fabricspark==1.9.6`
+
+---
+
+## 🔥 Removing a Tag (Aborting or Re-doing a Release)
+
+If a release was created by mistake or you need to redo it:
+
+### Delete the remote tag
+
+```sh
+git push origin --delete vX.Y.Z
+```
+
+### Delete the local tag (if it exists)
+
+```sh
+git tag -d vX.Y.Z
+```
+
+### Delete the GitHub Release
+
+1. Go to `github.com/microsoft/dbt-fabricspark/releases`
+2. Find the release, click **"Delete"**
+
+> ⚠️ If the package was already published to PyPI, you **cannot** re-upload the same version. You'll need to bump to a new patch version (e.g. `v1.9.7`).

@@ -11,15 +11,11 @@ import type { NudgeResult, PullRequest, WorkflowRun, WorkflowRunsResponse } from
 
 const NUDGE_CONCLUSIONS = new Set(['failure', 'cancelled', 'timed_out']);
 
-function buildNudgeComment(failedRuns: WorkflowRun[]): string {
-    const runLines = failedRuns.map(
-        (r) => `- [${r.name}](${r.html_url}) — \`${r.conclusion}\``,
-    );
-
+function buildNudgeComment(run: WorkflowRun): string {
     return [
-        '@copilot The following CI run(s) failed:',
+        '@copilot The latest CI run failed:',
         '',
-        ...runLines,
+        `- [${run.name}](${run.html_url}) — \`${run.conclusion}\``,
         '',
         'Read the logs, fix your code, and push again. Keep trying until CI is green.',
     ].join('\n');
@@ -31,18 +27,19 @@ export class NudgeService {
         private readonly logger: Logger,
     ) {}
 
-    /** Get failed/cancelled/timed-out workflow runs for a branch. */
-    getFailedRuns(branch: string): WorkflowRun[] {
+    /** Get the latest failed/cancelled/timed-out workflow run for a branch. */
+    getLatestFailedRun(branch: string): WorkflowRun | null {
         const encoded = encodeURIComponent(branch);
         const response = this.client.execJson<WorkflowRunsResponse>([
             'api',
             `repos/${this.client.owner}/${this.client.repoName}/actions/runs?branch=${encoded}&per_page=100`,
         ]);
 
-        if (!response) return [];
-        return response.workflow_runs.filter(
+        if (!response) return null;
+        // API returns runs sorted by created_at desc; first match is the latest.
+        return response.workflow_runs.find(
             (r) => r.conclusion !== null && NUDGE_CONCLUSIONS.has(r.conclusion),
-        );
+        ) ?? null;
     }
 
     /** Nudge all PRs with failed CI runs. */
@@ -61,31 +58,29 @@ export class NudgeService {
                 continue;
             }
 
-            const failedRuns = this.getFailedRuns(pr.headRefName);
+            const latestFailedRun = this.getLatestFailedRun(pr.headRefName);
 
-            if (failedRuns.length === 0) {
+            if (!latestFailedRun) {
                 this.logger.noCiFailures();
                 results.push({ pr, failedRuns: 0, commented: false });
                 clean++;
                 continue;
             }
 
-            for (const run of failedRuns) {
-                this.logger.ciFailure(run.name, run.id, run.conclusion!);
-            }
+            this.logger.ciFailure(latestFailedRun.name, latestFailedRun.id, latestFailedRun.conclusion!);
 
-            const comment = buildNudgeComment(failedRuns);
+            const comment = buildNudgeComment(latestFailedRun);
             const success = this.client.postComment(pr.number, comment);
 
             if (success) {
-                this.logger.nudgePosted(pr.number, failedRuns.length);
+                this.logger.nudgePosted(pr.number, 1);
                 nudged++;
             } else {
                 this.logger.nudgeFailed(pr.number);
                 failed++;
             }
 
-            results.push({ pr, failedRuns: failedRuns.length, commented: success });
+            results.push({ pr, failedRuns: 1, commented: success });
         }
 
         this.logger.nudgeSummary(nudged, clean, failed);

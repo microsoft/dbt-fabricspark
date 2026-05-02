@@ -17,6 +17,7 @@ JAFFLE_SHOP_DIR="${WORK_DIR}/dbt-jaffle-shop"
 SESSION_ID_FILE="${WORK_DIR}/livy-session-id.txt"
 PROFILES_DIR="${WORK_DIR}/profiles"
 WAREHOUSE_DIR="${ADAPTER_DIR}/warehouse"
+JAFFLE_SCHEMA="dbt_jaffle_shop_dwh"
 DBT_THREADS="${DBT_THREADS:-4}"
 export DBT_THREADS
 
@@ -30,7 +31,7 @@ echo "============================================"
 source "${SCRIPT_DIR}/run-livy.sh"
 kill_all_sessions
 
-rm -rf "${WAREHOUSE_DIR}/dbt_jaffle_shop_dwh.db" 2>/dev/null || true
+rm -rf "${WAREHOUSE_DIR}/${JAFFLE_SCHEMA}.db" 2>/dev/null || true
 
 WHEEL=$(ls "${ADAPTER_DIR}"/dist/*.whl | head -1)
 echo "  Using wheel: ${WHEEL}"
@@ -68,8 +69,8 @@ jaffle_shop:
       session_id_file: ${SESSION_ID_FILE}
       connect_retries: 25
       connect_timeout: 10
-      lakehouse: dbt_jaffle_shop_dwh
-      schema: dbt_jaffle_shop_dwh
+      lakehouse: ${JAFFLE_SCHEMA}
+      schema: ${JAFFLE_SCHEMA}
       threads: ${DBT_THREADS}
       type: fabricspark
       retry_all: true
@@ -85,6 +86,34 @@ dbt clean --target "${TARGET}"
 dbt seed --target "${TARGET}" --full-refresh
 dbt run --target "${TARGET}"
 dbt test --target "${TARGET}"
+
+echo ""
+echo "============================================"
+echo " Incremental / full-refresh cycle"
+echo "============================================"
+
+echo ""
+echo "--- [incremental_orders] Trickle-inserting 3 new orders via Livy SQL ---"
+echo "    (simulates new source data arriving after the initial load)"
+TRICKLE_SESSION=$(create_session pyspark | tail -1)
+execute_code "${TRICKLE_SESSION}" \
+  "spark.sql(\"\"\"INSERT INTO ${JAFFLE_SCHEMA}.raw_orders (id, user_id, order_date, status) VALUES (100, 1, '2018-04-10', 'placed'), (101, 2, '2018-04-11', 'completed'), (102, 3, '2018-04-12', 'shipped')\"\"\")" \
+  60
+kill_session "${TRICKLE_SESSION}"
+
+echo ""
+echo "--- [incremental_orders] Incremental run (picks up new rows by order_date) ---"
+dbt run --select incremental_orders --target "${TARGET}"
+
+echo ""
+echo "--- [incremental_orders] Full-refresh run (regression: must not raise TABLE_OR_VIEW_ALREADY_EXISTS) ---"
+dbt run --select incremental_orders --full-refresh --target "${TARGET}"
+
+echo ""
+echo "============================================"
+echo " Resuming remaining dbt lifecycle commands"
+echo "============================================"
+
 dbt build --exclude resource_type:seed --target "${TARGET}"
 dbt compile --target "${TARGET}"
 dbt ls --target "${TARGET}"

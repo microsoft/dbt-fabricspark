@@ -14,6 +14,7 @@ from tests.functional.adapter.incremental_strategies.fixtures import (
     # Skip: CT-1873 insert_overwrite_partitions_delta_sql,
     insert_overwrite_no_partitions_sql,
     insert_overwrite_partitions_sql,
+    merge_full_refresh_sql,
 )
 from tests.functional.adapter.incremental_strategies.seeds import (
     expected_append_csv,
@@ -124,3 +125,29 @@ class TestBadStrategies(BaseIncrementalStrategies):
 
     def test_bad_strategies(self, project):
         self.run_and_test()
+
+
+class TestIncrementalFullRefresh(BaseIncrementalStrategies):
+    """Regression test for TABLE_OR_VIEW_ALREADY_EXISTS on --full-refresh.
+
+    When an incremental model backed by a Delta table is re-run with
+    --full-refresh and file_format is NOT explicitly set in the model config,
+    the materialization must still drop the existing table before recreating it
+    rather than relying on CREATE OR REPLACE TABLE (which requires
+    target_relation.is_delta to be set on the `this` relation).
+    """
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {"merge_full_refresh.sql": merge_full_refresh_sql}
+
+    def test_full_refresh(self, project):
+        # First run: create the incremental model
+        results = run_dbt(["run"])
+        assert len(results) == 1
+        assert results[0].status == "success"
+
+        # Second run with --full-refresh: must not raise TABLE_OR_VIEW_ALREADY_EXISTS
+        results = run_dbt(["run", "--full-refresh"])
+        assert len(results) == 1
+        assert results[0].status == "success"

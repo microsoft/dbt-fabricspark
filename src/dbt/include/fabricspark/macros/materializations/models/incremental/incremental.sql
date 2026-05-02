@@ -48,10 +48,11 @@
     {% do persist_constraints(target_relation, model) %}
   {%- elif existing_relation.is_view or should_full_refresh() -%}
     {#-- Relation must be dropped & recreated --#}
-    {% set is_delta = existing_relation.is_delta %}
-    {% if not is_delta %} {#-- If Delta, we will `create or replace` below, so no need to drop --#}
-      {% do adapter.drop_relation(existing_relation) %}
-    {% endif %}
+    {#-- Always drop the existing relation so that CREATE TABLE succeeds even when
+         the existing table is Delta but file_format is not explicitly configured.
+         Skipping the drop and relying on CREATE OR REPLACE TABLE only works when
+         target_relation.is_delta is set, which is not guaranteed for `this`. --#}
+    {% do adapter.drop_relation(existing_relation) %}
     {%- call statement('main', language=language) -%}
       {{ create_table_as(False, target_relation, compiled_code, language) }}
     {%- endcall -%}

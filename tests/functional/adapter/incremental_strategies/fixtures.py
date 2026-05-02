@@ -211,6 +211,22 @@ select cast(3 as bigint) as id, 'anyway' as msg, 'purple' as color
 """.lstrip()
 
 #
+# Full Refresh Models (no explicit file_format — reproduces TABLE_OR_VIEW_ALREADY_EXISTS bug)
+#
+
+merge_full_refresh_sql = """
+{{ config(
+    materialized = 'incremental',
+    incremental_strategy = 'merge',
+    unique_key = 'id',
+) }}
+
+select cast(1 as bigint) as id, 'hello' as msg
+union all
+select cast(2 as bigint) as id, 'goodbye' as msg
+""".lstrip()
+
+#
 # Insert Overwrite
 #
 

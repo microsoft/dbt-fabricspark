@@ -413,7 +413,9 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                 )
                 fire_event(
                     AdapterEventDebug(
-                        message=f"Got a retryable error ({retry_reason}) {type(e)}. {retry_limit - attempt} retries left. Retrying in {min(5 * (2 ** (attempt - 1)), 60)} seconds.\nError:\n{e}"
+                        name="FabricSpark",
+                        base_msg=f"Got a retryable error ({retry_reason}) {type(e)}. {retry_limit - attempt} retries left. Retrying in {min(5 * (2 ** (attempt - 1)), 60)} seconds.\nError:\n{e}",
+                        args=[],
                     )
                 )
                 time.sleep(min(5 * (2 ** (attempt - 1)), 60))

@@ -451,16 +451,10 @@ class TestSparkAdapter(unittest.TestCase):
                 type=FabricSparkRelation.get_relation_type.Table,
             )
 
-            # Verify that the quote policy defaults schema to True
             assert cached_relation.quote_policy.schema is True
-
-            # With quoting.schema=True the schema is NOT lowercased, so matching
-            # 'Operations' against the cached 'Operations' must succeed.
             assert cached_relation.matches(
                 database="my_lakehouse", schema="Operations", identifier="my_table"
             )
-
-            # Also verify that mixed-case schema renders correctly with backtick quoting.
             assert str(cached_relation) == "`my_lakehouse`.`Operations`.my_table"
         finally:
             FabricSparkRelation._schemas_enabled = False
@@ -484,13 +478,8 @@ class TestSparkAdapter(unittest.TestCase):
                 type=FabricSparkRelation.get_relation_type.Table,
             )
 
-            # Verify that the quote policy defaults schema to True
             assert cached_relation.quote_policy.schema is True
-
-            # With quoting.schema=True the schema is NOT lowercased during matching.
             assert cached_relation.matches(schema=lakehouse_name, identifier="my_table")
-
-            # Renders as `schema`.identifier in no-schema mode (database excluded).
             assert str(cached_relation) == f"`{lakehouse_name}`.my_table"
         finally:
             FabricSparkRelation._schemas_enabled = False

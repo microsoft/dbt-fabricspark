@@ -333,7 +333,8 @@ class TestSparkAdapter(unittest.TestCase):
             # include_policy.database should be False
             assert rel.include_policy.database is False
             assert rel.include_policy.schema is True
-            # Renders as `schema`.identifier (two-part, schema quoted to preserve casing)
+            # Renders as `lakehouse_name`.identifier (two-part; the lakehouse name occupies the
+            # schema position and is backtick-quoted to preserve its original casing)
             assert str(rel) == "`my_lakehouse`.my_table"
         finally:
             FabricSparkRelation._schemas_enabled = False

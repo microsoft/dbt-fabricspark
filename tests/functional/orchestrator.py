@@ -77,7 +77,7 @@ def cmd_provision() -> None:
     enable_schemas = args.schema_mode == "with_schema"
     ts = int(time.time())
     bhash = current_branch_hash()
-    # Use mixed-case suffix to exercise the schema/database case-preservation fix:
+    # Use mixed-case suffix to exercise the schema and database name case-preservation fix:
     # lakehouse names with uppercase characters must not be lowercased by the adapter.
     mode_suffix = "NoSchema" if args.schema_mode == "no_schema" else "WithSchema"
     name = f"dbt_{bhash}_{ts}_{mode_suffix}"

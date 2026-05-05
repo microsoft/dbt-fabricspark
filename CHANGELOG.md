@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.9.7 (unreleased)
+
+### Bug Fixes
+
+- Fixed `ApproximateMatchError` when lakehouse schema names contain mixed-case characters (e.g. `QA_LH_Operations_Bronze`). `FabricSparkQuotePolicy.schema` was `False`, causing dbt's `_make_match_kwargs` to lowercase schema names before cache lookups; the catalog-returned casing never matched, triggering the error on every run. Fix: set `schema: bool = True` (matching the existing `database` fix) so original casing is preserved end-to-end (#159).
+
+### Infrastructure
+
+- Integration test orchestrator now provisions lakehouses with mixed-case suffixes (`NoSchema`/`WithSchema`) so CI exercises schema and database case-preservation on every run (#159).
+
+---
+
 ## v1.9.6
 
 ### Bug Fixes

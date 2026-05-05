@@ -18,6 +18,10 @@ function buildNudgeComment(run: WorkflowRun): string {
         `- [${run.name}](${run.html_url}) — \`${run.conclusion}\``,
         '',
         'Read the logs, fix your code, and push again. Keep trying until CI is green.',
+        'Even if the failure appears as if it\`s not related to your changes, do **NOT**',
+        'dismiss as "transient" Fabric issue, do the due dilligence to make the necessary.',
+        'code changes to ensure this doesn\'t happen again by improving the CI suite for the',
+        'repository so that future runs are less likely to fail for the same reason.',
     ].join('\n');
 }
 

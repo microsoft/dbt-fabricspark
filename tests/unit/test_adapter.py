@@ -469,14 +469,14 @@ class TestSparkAdapter(unittest.TestCase):
         """Regression test: mixed-case lakehouse name used as schema in no-schema mode.
 
         In no-schema mode the schema field is set to the lakehouse name
-        (e.g. 'QA_LH_Operations_Bronze').  With FabricSparkQuotePolicy.schema
-        previously False, dbt would lowercase this to 'qa_lh_operations_bronze'
+        (e.g. 'Demo_Bronze').  With FabricSparkQuotePolicy.schema
+        previously False, dbt would lowercase this to 'demo_bronze'
         in _make_match_kwargs, while the catalog returned the original casing,
         causing ApproximateMatchError.  The fix sets schema to True.
         """
         FabricSparkRelation._schemas_enabled = False
         try:
-            lakehouse_name = "QA_LH_Operations_Bronze"
+            lakehouse_name = "Demo_Bronze"
             cached_relation = FabricSparkRelation.create(
                 database=lakehouse_name,
                 schema=lakehouse_name,

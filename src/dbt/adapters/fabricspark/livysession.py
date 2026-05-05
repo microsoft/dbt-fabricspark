@@ -756,6 +756,9 @@ class LivyCursor:
     def _submitLivyCode(self, code) -> Response:
         if self.livy_session.is_new_session_required:
             LivySessionManager.connect(self.credential)
+            # connect() may replace livy_global_session with a new LivySession
+            # object; update our reference so session_id reflects the new session.
+            self.livy_session = LivySessionManager.livy_global_session
             self.session_id = self.livy_session.session_id
 
         # Submit code with retry for transient 5xx and 429 (rate-limit) errors
@@ -811,6 +814,11 @@ class LivyCursor:
                 time.sleep(wait_time)
 
         if res.status_code >= 400:
+            # A 404 on submit means the Livy session is gone; flag for reconnect
+            # so the next _execute_query_with_retry attempt gets a fresh session.
+            if res.status_code == 404 and LivySessionManager.livy_global_session is not None:
+                LivySessionManager.livy_global_session.is_new_session_required = True
+                logger.debug("Livy statement submit returned 404 — flagging session for reconnect")
             raise DbtRuntimeError(
                 f"Livy statement submit failed (HTTP {res.status_code}): {res.text}"
             )
@@ -928,6 +936,17 @@ class LivyCursor:
                 time.sleep(wait_time)
                 continue
             if poll_res.status_code >= 400:
+                # A 404 that survived all not-found retries means the session (not
+                # just the statement) is gone.  Flag for reconnect so that the outer
+                # _execute_query_with_retry creates a fresh session on the next attempt.
+                if (
+                    poll_res.status_code == 404
+                    and LivySessionManager.livy_global_session is not None
+                ):
+                    LivySessionManager.livy_global_session.is_new_session_required = True
+                    logger.debug(
+                        "Livy statement poll exhausted 404 retries — flagging session for reconnect"
+                    )
                 raise DbtRuntimeError(
                     f"Livy statement poll failed (HTTP {poll_res.status_code}): {poll_res.text}"
                 )

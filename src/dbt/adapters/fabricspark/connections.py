@@ -496,6 +496,7 @@ def _is_retryable_error(exc: Exception) -> str:
         "unable to fetch mwc token",
         "failed to get database metadata",
         "session not found",
+        "entitynotfound",
         "connection aborted",
         "broken pipe",
         "bad gateway",

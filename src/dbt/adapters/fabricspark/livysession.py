@@ -5,10 +5,12 @@ import datetime as dt
 import json
 import os
 import re
+import shlex
+import subprocess
 import threading
 import time
 from types import TracebackType
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import requests
 from azure.core.credentials import AccessToken
@@ -185,6 +187,173 @@ def get_default_access_token(credentials: FabricSparkCredentials) -> AccessToken
     return accessToken
 
 
+def _resolve_token_command_args(cmd: Union[str, list]) -> list[str]:
+    """Normalize the ``token_command`` profile field into a subprocess argv list.
+
+    Accepts either a list of strings (preferred — cross-platform safe, no
+    shell parsing) or a single string (parsed via ``shlex.split`` on POSIX,
+    which is **not** safe for Windows shell semantics).
+    """
+    if isinstance(cmd, list):
+        if not cmd:
+            raise DbtRuntimeError("token_command resolved to an empty list")
+        return [str(x) for x in cmd]
+    if isinstance(cmd, str):
+        try:
+            args = shlex.split(cmd, posix=(os.name == "posix"))
+        except ValueError as e:
+            raise DbtRuntimeError(
+                f"token_command string is not a valid shell expression: {e}. "
+                f"Use a list of arguments instead for cross-platform safety."
+            ) from e
+        if not args:
+            raise DbtRuntimeError("token_command resolved to an empty argument list")
+        return args
+    raise DbtRuntimeError(
+        f"token_command must be a string or list of strings, "
+        f"got {type(cmd).__name__}"
+    )
+
+
+def _walk_json_path(data: Any, path: str) -> Any:
+    """Walk a dotted JSON path through nested dicts.
+
+    Returns ``None`` if any segment is missing or a non-dict is hit before
+    the end of the path. ``_walk_json_path({"a": {"b": 1}}, "a.b") == 1``.
+    """
+    cur = data
+    for part in path.split("."):
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(part)
+        if cur is None:
+            return None
+    return cur
+
+
+# Threshold for distinguishing relative-seconds vs absolute-unix-timestamp
+# in the parsed expires field. The current unix epoch is ~1.76 * 10^9;
+# OAuth 2.0 ``expires_in`` values are typically a few thousand at most.
+# Anything past 10^9 is unambiguously a timestamp.
+_EXPIRES_TIMESTAMP_THRESHOLD = 10**9
+
+
+def get_token_command_access_token(credentials: FabricSparkCredentials) -> AccessToken:
+    """Spawn an external command to fetch a fresh Fabric access token.
+
+    Modelled on AWS CLI's ``credential_process`` and gcloud's
+    ``credential_source`` patterns: the adapter runs a user-configured
+    command whenever a fresh token is needed (first connection, and again
+    when the cached token nears expiry — same logic as the other auth
+    methods).
+
+    The command's stdout is read in two modes:
+
+    1. **JSON mode** — if stdout parses as a JSON object and the
+       configured ``token_path`` resolves to a non-empty string. Defaults
+       match OAuth 2.0 / Microsoft Identity Platform shape
+       (``access_token`` + ``expires_in``). Both paths support
+       dot-notation for nested fields, e.g. ``data.access_token`` for
+       HashiCorp Vault or ``accessToken`` for Azure CLI's camelCase
+       output.
+
+    2. **Raw-text mode** — fallback when stdout isn't JSON, or when the
+       JSON token path doesn't resolve. The entire stripped stdout is
+       used as the bearer token. Works for ``gcloud auth
+       print-access-token``, ``az account get-access-token --query
+       accessToken -o tsv``, custom scripts that just ``echo $TOKEN``.
+
+    Expiry interpretation auto-detects: values > 10^9 are treated as
+    absolute unix timestamps; smaller values as relative seconds (RFC
+    6749 standard). When no expiry can be parsed, defaults to a 1-hour
+    lifetime.
+
+    The command is the source of truth for whatever auth flow it
+    implements — HashiCorp Vault, GitHub-Actions OIDC → Entra
+    federation, a corporate SSO proxy, an IDE's local OAuth helper, a
+    smartcard wrapper. The adapter doesn't care.
+
+    Cross-platform: invoked via ``subprocess.run`` with an argv list, no
+    shell. Works identically on Linux/macOS/Windows. The *command* you
+    point at must itself be platform-appropriate (a ``.sh`` won't run
+    natively on Windows; use a Python helper, ``.exe``, or ``.cmd``).
+    """
+    cmd = credentials.token_command
+    if cmd is None:
+        raise DbtRuntimeError(
+            "authentication=token_command requires `token_command` to be set in profiles.yml."
+        )
+
+    args = _resolve_token_command_args(cmd)
+    timeout = credentials.token_command_timeout
+
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except FileNotFoundError as e:
+        raise DbtRuntimeError(
+            f"token_command executable not found: {args[0]!r} ({e})"
+        ) from e
+    except subprocess.TimeoutExpired:
+        raise DbtRuntimeError(
+            f"token_command timed out after {timeout}s: {args}"
+        )
+
+    if result.returncode != 0:
+        raise DbtRuntimeError(
+            f"token_command failed (exit {result.returncode}). "
+            f"stderr: {(result.stderr or '').strip()[:500] or '(empty)'} "
+            f"stdout: {(result.stdout or '').strip()[:200] or '(empty)'}"
+        )
+
+    output = (result.stdout or "").strip()
+    token: Optional[str] = None
+    expires_value: Any = None
+
+    # JSON mode first; raw-text is the fallback.
+    try:
+        data = json.loads(output)
+    except (json.JSONDecodeError, ValueError):
+        data = None
+
+    if isinstance(data, dict):
+        candidate = _walk_json_path(data, credentials.token_path)
+        if isinstance(candidate, str) and candidate:
+            token = candidate
+            expires_value = _walk_json_path(data, credentials.expires_path)
+
+    if token is None:
+        # Raw-text fallback: the entire stdout is the bearer token.
+        if not output:
+            raise DbtRuntimeError(
+                f"token_command produced empty output. args={args}"
+            )
+        token = output
+
+    if expires_value is None:
+        expires_on = int(time.time()) + 3600
+    else:
+        try:
+            expires_int = int(expires_value)
+            if expires_int > _EXPIRES_TIMESTAMP_THRESHOLD:
+                expires_on = expires_int
+            else:
+                expires_on = int(time.time()) + expires_int
+        except (TypeError, ValueError):
+            expires_on = int(time.time()) + 3600
+
+    logger.debug(
+        f"token_command produced token expiring at "
+        f"{dt.datetime.fromtimestamp(expires_on).isoformat()}"
+    )
+    return AccessToken(token=token, expires_on=expires_on)
+
+
 def get_fabric_notebook_access_token(credentials: FabricSparkCredentials) -> AccessToken:
     """
     Get an Azure access token using notebookutils.
@@ -250,6 +419,12 @@ def get_headers(credentials: FabricSparkCredentials, tokenPrint: bool = False) -
             ):
                 logger.info("Using Fabric Notebook auth")
                 accessToken = get_fabric_notebook_access_token(credentials)
+            elif (
+                credentials.authentication
+                and credentials.authentication.lower() == "token_command"
+            ):
+                logger.info("Using token_command auth")
+                accessToken = get_token_command_access_token(credentials)
             else:
                 logger.info("Using SPN auth")
                 accessToken = get_sp_access_token(credentials)

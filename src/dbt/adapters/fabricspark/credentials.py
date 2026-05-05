@@ -73,6 +73,33 @@ class FabricSparkCredentials(Credentials):
     poll_wait: int = 10  # seconds between polls for session start
     poll_statement_wait: float = 0.5  # seconds between polls for statement result
 
+    # token_command auth — invoke an external process to fetch fresh tokens.
+    # Pattern modelled on AWS CLI's `credential_process` and gcloud's
+    # `credential_source`. The command's stdout is parsed as JSON if
+    # possible; otherwise the entire stripped stdout is treated as the
+    # bearer token directly (raw-text mode, e.g. for `gcloud auth
+    # print-access-token` or `az ... --query accessToken -o tsv`).
+    #
+    # Prefer the list-of-args form for cross-platform safety (no shell parsing).
+    # The string form is parsed with shlex on POSIX only.
+    token_command: Optional[Any] = None  # str or list[str]
+    token_command_timeout: int = 30  # seconds before the spawned command is killed
+
+    # JSON path (dot-notation) into the JSON output of `token_command`.
+    # Defaults match the OAuth 2.0 / Microsoft Identity Platform spec.
+    # Common alternatives:
+    #   token_path: "accessToken"          (Azure CLI default JSON output)
+    #   token_path: "data.access_token"    (HashiCorp Vault)
+    # If the output isn't valid JSON, or the path doesn't resolve, the
+    # adapter falls back to using the entire stripped stdout as the token.
+    token_path: str = "access_token"
+    # Path to expiry in the JSON output. Value is auto-interpreted:
+    # numbers > 10^9 are treated as absolute unix timestamps (current
+    # epoch is ~1.76*10^9); smaller values are treated as relative
+    # seconds (RFC 6749 standard). If absent, defaults to a 1-hour
+    # lifetime.
+    expires_path: str = "expires_in"
+
     def __repr__(self) -> str:
         """Mask sensitive fields in repr to prevent credential leakage in logs/tracebacks."""
         return (

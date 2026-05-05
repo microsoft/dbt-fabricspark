@@ -57,17 +57,22 @@ def _make_client():
 
 def cmd_nuke() -> None:
     """Delete items from the workspace that match this branch or are stale (>24h)."""
-    from tests.functional.nuke import current_branch_hash, nuke_workspace
+    from tests.functional.nuke import current_branch_hash, current_run_id, nuke_workspace
 
     client = _make_client()
     bhash = current_branch_hash()
-    logger.info("Nuking workspace items for branch hash '%s' and stale items", bhash)
-    nuke_workspace(client, bhash)
+    run_id = current_run_id()
+    logger.info(
+        "Nuking workspace items for branch hash '%s', run '%s', and stale items",
+        bhash,
+        run_id,
+    )
+    nuke_workspace(client, bhash, run_id)
 
 
 def cmd_provision() -> None:
     """Create a lakehouse and write its details to the shared env file."""
-    from tests.functional.nuke import current_branch_hash
+    from tests.functional.nuke import current_branch_hash, current_run_id
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--schema-mode", required=True, choices=("no_schema", "with_schema"))
@@ -77,8 +82,11 @@ def cmd_provision() -> None:
     enable_schemas = args.schema_mode == "with_schema"
     ts = int(time.time())
     bhash = current_branch_hash()
+    run_id = current_run_id()
     mode_suffix = "NoSchema" if args.schema_mode == "no_schema" else "WithSchema"
-    name = f"dbt_{bhash}_{ts}_{mode_suffix}"
+    # Include the run ID so each CI run's nuke only removes its own lakehouses,
+    # preventing concurrent runs for the same branch from interfering.
+    name = f"dbt_{bhash}_r{run_id}_{ts}_{mode_suffix}"
 
     logger.info("Creating lakehouse '%s' (schemas=%s)...", name, enable_schemas)
     lh = client.create_lakehouse(name, enable_schemas=enable_schemas)

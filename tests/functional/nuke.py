@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 import subprocess
 import time
@@ -14,8 +15,15 @@ _ITEM_TYPES = [
     "environments",
 ]
 
-# Matches the new naming pattern: dbt_{8-char-hex-hash}_{timestamp}_{rest}
-_NAME_PATTERN = re.compile(r"^dbt_([a-f0-9]{8})_(\d+)_")
+# V2 naming convention: dbt_{8hex}_r{run_id}_{ts}_{rest}
+# The 'r' prefix on the run segment makes the format unambiguous.
+_NAME_PATTERN_V2 = re.compile(r"^dbt_([a-f0-9]{8})_r(\d+)_(\d+)_")
+
+# V1 (legacy) naming convention: dbt_{8hex}_{ts}_{rest}
+_NAME_PATTERN_V1 = re.compile(r"^dbt_([a-f0-9]{8})_(\d+)_")
+
+# Backward-compat alias so existing code that imports _NAME_PATTERN still works.
+_NAME_PATTERN = _NAME_PATTERN_V1
 
 # Items older than this (in seconds) are considered stale and always deleted.
 STALE_THRESHOLD_SECONDS = 24 * 60 * 60  # 24 hours
@@ -26,22 +34,53 @@ def branch_hash(branch: str) -> str:
     return hashlib.sha256(branch.encode()).hexdigest()[:8]
 
 
-def _should_delete(item_name: str, current_hash: str, now: float) -> bool:
+def current_run_id() -> str:
+    """Return the GitHub Actions run ID for this CI invocation, or '0' locally."""
+    return os.environ.get("GITHUB_RUN_ID", "0")
+
+
+def _should_delete(item_name: str, current_hash: str, now: float, run_id: str = "") -> bool:
     """Decide whether a workspace item should be deleted.
 
-    Returns True when the name matches ``dbt_{hash}_{ts}_…`` and either the
-    hash equals *current_hash* (same-branch cleanup) or the timestamp is older
-    than ``STALE_THRESHOLD_SECONDS`` (stale-infra garbage collection).
+    **V2 items** (``dbt_{hash}_r{run_id}_{ts}_…``) are deleted when:
+    - the hash AND run_id both match the current run (same-branch, same-run
+      cleanup), **or**
+    - the timestamp is older than ``STALE_THRESHOLD_SECONDS``.
+
+    This ensures that two concurrent runs for the same branch never delete
+    each other's lakehouses: each run's nuke only removes its own V2 items.
+
+    **V1 items** (``dbt_{hash}_{ts}_…``, legacy format) are deleted when:
+    - ``run_id`` is empty (caller has not opted in to run-aware cleanup) and
+      the hash matches, **or**
+    - the timestamp is older than ``STALE_THRESHOLD_SECONDS``.
 
     Non-matching names are never deleted.
     """
-    m = _NAME_PATTERN.match(item_name)
+    # --- Try V2 format first (run-ID-aware) ---
+    m = _NAME_PATTERN_V2.match(item_name)
+    if m:
+        item_hash = m.group(1)
+        item_run_id = m.group(2)
+        item_ts = int(m.group(3))
+        if item_hash == current_hash and run_id and item_run_id == run_id:
+            return True
+        return (now - item_ts) > STALE_THRESHOLD_SECONDS
+
+    # --- Fall back to V1 format ---
+    m = _NAME_PATTERN_V1.match(item_name)
     if not m:
         return False
 
     item_hash = m.group(1)
     item_ts = int(m.group(2))
 
+    # When the caller is run-aware (run_id provided), we can't tell
+    # which concurrent run created this V1 item, so we only delete if stale.
+    if run_id:
+        return (now - item_ts) > STALE_THRESHOLD_SECONDS
+
+    # Legacy mode (no run_id): use the original hash-match logic.
     if item_hash == current_hash:
         return True
 
@@ -74,8 +113,6 @@ def current_branch_hash() -> str:
     developer's branch gets its own hash.  If that also fails, falls back
     to ``"unknown"``.
     """
-    import os
-
     branch = (
         os.environ.get("GITHUB_HEAD_REF")
         or os.environ.get("GITHUB_REF_NAME")
@@ -87,8 +124,6 @@ def current_branch_hash() -> str:
 
 def nuke_workspace_task(shared_state: dict[str, Any]) -> None:
     """Scheduler-compatible entry point — creates a FabricClient from env and nukes."""
-    import os
-
     from tests.functional.fabric_client import (
         AzureCliTokenProvider,
         FabricClient,
@@ -111,15 +146,22 @@ def nuke_workspace_task(shared_state: dict[str, Any]) -> None:
         token_provider=provider,
     )
 
-    nuke_workspace(client, current_branch_hash())
+    nuke_workspace(client, current_branch_hash(), current_run_id())
 
 
-def nuke_workspace(client: Any, current_hash: str) -> None:
+def nuke_workspace(client: Any, current_hash: str, run_id: str = "") -> None:
     """Delete lakehouses and environments that belong to this branch or are stale.
 
-    Items whose ``displayName`` matches ``dbt_{hash}_{ts}_…`` are deleted when
-    the hash equals *current_hash* (same branch) or the timestamp is older than
-    24 hours (stale). Non-matching names are never deleted.
+    Items using the V2 naming convention (``dbt_{hash}_r{run_id}_{ts}_…``) are
+    deleted only when *both* the hash and the run_id match (same run) or the
+    timestamp is older than 24 hours.  This prevents one concurrent CI run
+    from deleting the lakehouses of a sibling run sharing the same branch hash.
+
+    Items using the legacy V1 convention (``dbt_{hash}_{ts}_…``) are deleted
+    only when they are older than 24 hours (stale GC), unless ``run_id`` is
+    empty (legacy callers), in which case the original hash-match logic applies.
+
+    Non-matching names are never deleted.
     """
     now = time.time()
 
@@ -137,9 +179,9 @@ def nuke_workspace(client: Any, current_hash: str) -> None:
                 item_id = item["id"]
                 item_name = item.get("displayName", "<unknown>")
 
-                if not _should_delete(item_name, current_hash, now):
+                if not _should_delete(item_name, current_hash, now, run_id):
                     logger.info(
-                        "Skipping %s: %s (%s) — not matching branch or stale threshold",
+                        "Skipping %s: %s (%s) — not matching branch/run or stale threshold",
                         item_type,
                         item_name,
                         item_id,

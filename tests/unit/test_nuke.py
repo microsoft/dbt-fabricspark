@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from unittest.mock import patch
 
@@ -11,6 +12,7 @@ from tests.functional.nuke import (
     _should_delete,
     branch_hash,
     current_branch_hash,
+    current_run_id,
 )
 
 
@@ -35,31 +37,40 @@ class TestBranchHash:
 class TestShouldDelete:
     """Tests for _should_delete()."""
 
-    def _make_name(self, bhash: str, ts: int, mode: str = "no_schema") -> str:
+    # -------------------------------------------------------------------------
+    # V1 (legacy) naming: dbt_{hash}_{ts}_{mode}
+    # -------------------------------------------------------------------------
+
+    def _make_name_v1(self, bhash: str, ts: int, mode: str = "no_schema") -> str:
+        """Build a legacy V1 lakehouse name (no run_id)."""
         return f"dbt_{bhash}_{ts}_{mode}"
 
+    # Keep old alias so existing call-sites continue to work.
+    def _make_name(self, bhash: str, ts: int, mode: str = "no_schema") -> str:
+        return self._make_name_v1(bhash, ts, mode)
+
     def test_same_branch_always_deleted(self) -> None:
-        """Items from the same branch are always deleted."""
+        """V1 items from the same branch are deleted in legacy (no run_id) mode."""
         now = time.time()
         current = branch_hash("my-branch")
-        name = self._make_name(current, int(now) - 60)  # 60s ago, same branch
+        name = self._make_name_v1(current, int(now) - 60)  # 60s ago, same branch
         assert _should_delete(name, current, now) is True
 
     def test_different_branch_recent_not_deleted(self) -> None:
-        """Recent items from other branches are kept."""
+        """Recent V1 items from other branches are kept."""
         now = time.time()
         current = branch_hash("my-branch")
         other = branch_hash("other-branch")
-        name = self._make_name(other, int(now) - 60)  # 60s ago, different branch
+        name = self._make_name_v1(other, int(now) - 60)  # 60s ago, different branch
         assert _should_delete(name, current, now) is False
 
     def test_different_branch_stale_deleted(self) -> None:
-        """Old items from any branch are deleted (>24h)."""
+        """Old V1 items from any branch are deleted (>24h)."""
         now = time.time()
         current = branch_hash("my-branch")
         other = branch_hash("other-branch")
         old_ts = int(now) - STALE_THRESHOLD_SECONDS - 1
-        name = self._make_name(other, old_ts)
+        name = self._make_name_v1(other, old_ts)
         assert _should_delete(name, current, now) is True
 
     def test_non_matching_pattern_never_deleted(self) -> None:
@@ -73,7 +84,7 @@ class TestShouldDelete:
         """Hash segment must be exactly 8 hex chars; longer strings don't match."""
         now = time.time()
         current = branch_hash("my-branch")
-        # 10-char hex prefix — should NOT match the new pattern
+        # 10-char hex prefix — should NOT match either pattern
         name = f"dbt_deadbeef01_{int(now)}_no_schema"
         assert _should_delete(name, current, now) is False
 
@@ -83,26 +94,102 @@ class TestShouldDelete:
         current = branch_hash("my-branch")
         other = branch_hash("other-branch")
         boundary_ts = int(now) - STALE_THRESHOLD_SECONDS
-        name = self._make_name(other, boundary_ts)
+        name = self._make_name_v1(other, boundary_ts)
         assert _should_delete(name, current, now) is False
 
     def test_with_schema_mode_suffix(self) -> None:
-        """The pattern works with both schema mode suffixes."""
+        """The pattern works with both V1 schema mode suffixes."""
         now = time.time()
         current = branch_hash("my-branch")
-        name_no = self._make_name(current, int(now), "no_schema")
-        name_ws = self._make_name(current, int(now), "with_schema")
+        name_no = self._make_name_v1(current, int(now), "no_schema")
+        name_ws = self._make_name_v1(current, int(now), "with_schema")
         assert _should_delete(name_no, current, now) is True
         assert _should_delete(name_ws, current, now) is True
 
     def test_with_mixed_case_schema_mode_suffix(self) -> None:
-        """The pattern works with the new mixed-case schema mode suffixes (NoSchema/WithSchema)."""
+        """The pattern works with the new mixed-case V1 suffixes (NoSchema/WithSchema)."""
         now = time.time()
         current = branch_hash("my-branch")
-        name_no = self._make_name(current, int(now), "NoSchema")
-        name_ws = self._make_name(current, int(now), "WithSchema")
+        name_no = self._make_name_v1(current, int(now), "NoSchema")
+        name_ws = self._make_name_v1(current, int(now), "WithSchema")
         assert _should_delete(name_no, current, now) is True
         assert _should_delete(name_ws, current, now) is True
+
+    # -------------------------------------------------------------------------
+    # V2 naming: dbt_{hash}_r{run_id}_{ts}_{mode}  (run-ID-aware)
+    # -------------------------------------------------------------------------
+
+    def _make_name_v2(self, bhash: str, run_id: str, ts: int, mode: str = "NoSchema") -> str:
+        """Build a V2 lakehouse name that includes the run ID."""
+        return f"dbt_{bhash}_r{run_id}_{ts}_{mode}"
+
+    def test_v2_same_run_deleted(self) -> None:
+        """V2 items from the same branch AND run are deleted."""
+        now = time.time()
+        current = branch_hash("my-branch")
+        name = self._make_name_v2(current, "12345", int(now) - 60)
+        assert _should_delete(name, current, now, "12345") is True
+
+    def test_v2_same_branch_different_run_not_deleted(self) -> None:
+        """V2 items from the same branch but a different run are NOT deleted.
+
+        This is the key test: concurrent CI runs for the same branch must not
+        delete each other's lakehouses.
+        """
+        now = time.time()
+        current = branch_hash("my-branch")
+        name = self._make_name_v2(current, "99999", int(now) - 60)
+        assert _should_delete(name, current, now, "12345") is False
+
+    def test_v2_different_branch_not_deleted(self) -> None:
+        """V2 items from a different branch are not deleted (unless stale)."""
+        now = time.time()
+        current = branch_hash("my-branch")
+        other = branch_hash("other-branch")
+        name = self._make_name_v2(other, "12345", int(now) - 60)
+        assert _should_delete(name, current, now, "12345") is False
+
+    def test_v2_stale_always_deleted(self) -> None:
+        """V2 items older than 24h are always deleted (garbage collection)."""
+        now = time.time()
+        current = branch_hash("my-branch")
+        other = branch_hash("other-branch")
+        old_ts = int(now) - STALE_THRESHOLD_SECONDS - 1
+        # Even a V2 item from a different branch/run is deleted when stale.
+        name = self._make_name_v2(other, "99999", old_ts)
+        assert _should_delete(name, current, now, "12345") is True
+
+    def test_v2_same_run_no_run_id_arg_not_deleted(self) -> None:
+        """V2 items are NOT deleted by hash match alone when run_id arg is empty."""
+        now = time.time()
+        current = branch_hash("my-branch")
+        name = self._make_name_v2(current, "12345", int(now) - 60)
+        # Caller didn't pass run_id → safe default: don't delete unless stale.
+        assert _should_delete(name, current, now) is False
+
+    def test_v2_mixed_case_suffixes(self) -> None:
+        """V2 naming works with both mixed-case suffix variants."""
+        now = time.time()
+        current = branch_hash("my-branch")
+        name_no = self._make_name_v2(current, "12345", int(now), "NoSchema")
+        name_ws = self._make_name_v2(current, "12345", int(now), "WithSchema")
+        assert _should_delete(name_no, current, now, "12345") is True
+        assert _should_delete(name_ws, current, now, "12345") is True
+
+
+class TestCurrentRunId:
+    """Tests for current_run_id()."""
+
+    def test_reads_github_run_id(self) -> None:
+        """Returns GITHUB_RUN_ID when set."""
+        with patch.dict("os.environ", {"GITHUB_RUN_ID": "98765"}, clear=False):
+            assert current_run_id() == "98765"
+
+    def test_defaults_to_zero_locally(self) -> None:
+        """Returns '0' when GITHUB_RUN_ID is not set (local dev)."""
+        with patch.dict("os.environ", {}, clear=False):
+            os.environ.pop("GITHUB_RUN_ID", None)
+            assert current_run_id() == "0"
 
 
 class TestCurrentBranchHash:

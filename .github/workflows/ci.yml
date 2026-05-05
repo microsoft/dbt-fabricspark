@@ -4,6 +4,14 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Cancel any in-progress run for the same branch/PR when a new commit is pushed.
+# This prevents concurrent runs from sharing the same Fabric workspace: the nuke
+# step in each run deletes ALL lakehouses for the branch, so overlapping runs
+# would delete each other's lakehouses mid-test.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   IS_GH_ACTION: "1"
   CLIENT_ID: ${{ secrets.APP_ID }}

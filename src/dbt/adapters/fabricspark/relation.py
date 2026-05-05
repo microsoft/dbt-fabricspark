@@ -15,10 +15,28 @@ _VALID_RELATION_TYPES = {t.value for t in RelationType}
 
 @dataclass
 class FabricSparkQuotePolicy(Policy):
-    # database must be quoted (True) so that dbt preserves original casing
-    # through _make_match_kwargs; otherwise mixed-case lakehouse names like
-    # 'DBTTest' get lowered to 'dbttest' and trigger ApproximateMatchError.
-    database: bool = True
+    # ``database`` is unquoted so that dotted database values render as
+    # multiple native identifiers — required for cross-workspace queries.
+    #
+    # When ``database = True``, ``BaseRelation.render()`` wraps the
+    # database value in backticks. A profile setting
+    # ``database: "ws.lh"`` then becomes ``` `ws.lh`.dbo.t ``` — Spark
+    # treats that as a single backtick-quoted identifier with a literal
+    # dot, **not** as the four-part name needed to address ``lh`` in a
+    # different Fabric workspace. With ``database = False``, the same
+    # value renders as ``ws.lh.dbo.t`` (four native unquoted parts) and
+    # the cross-workspace query resolves correctly.
+    #
+    # Single-lakehouse profiles (``database: "lh"``) continue to render
+    # as expected (``lh.dbo.t``) — only the no-longer-quoted style.
+    #
+    # Precondition: workspace, lakehouse, and schema names should be
+    # lowercase. ``_make_match_kwargs`` lowercases unquoted identifiers
+    # internally, so a mixed-case lakehouse (e.g. ``DBTTest``) would
+    # silently mismatch its catalog entry through dbt's relation cache
+    # under unquoted policy. This matches the de-facto convention in
+    # most Fabric environments.
+    database: bool = False
     schema: bool = False
     identifier: bool = False
 

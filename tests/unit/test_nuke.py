@@ -95,6 +95,15 @@ class TestShouldDelete:
         assert _should_delete(name_no, current, now) is True
         assert _should_delete(name_ws, current, now) is True
 
+    def test_with_mixed_case_schema_mode_suffix(self) -> None:
+        """The pattern works with the new mixed-case schema mode suffixes (NoSchema/WithSchema)."""
+        now = time.time()
+        current = branch_hash("my-branch")
+        name_no = self._make_name(current, int(now), "NoSchema")
+        name_ws = self._make_name(current, int(now), "WithSchema")
+        assert _should_delete(name_no, current, now) is True
+        assert _should_delete(name_ws, current, now) is True
+
 
 class TestCurrentBranchHash:
     """Tests for current_branch_hash() and _git_branch()."""

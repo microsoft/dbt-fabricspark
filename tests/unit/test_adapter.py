@@ -333,8 +333,8 @@ class TestSparkAdapter(unittest.TestCase):
             # include_policy.database should be False
             assert rel.include_policy.database is False
             assert rel.include_policy.schema is True
-            # Renders as schema.identifier (two-part)
-            assert str(rel) == "my_lakehouse.my_table"
+            # Renders as `schema`.identifier (two-part, schema quoted to preserve casing)
+            assert str(rel) == "`my_lakehouse`.my_table"
         finally:
             FabricSparkRelation._schemas_enabled = False
 
@@ -348,8 +348,8 @@ class TestSparkAdapter(unittest.TestCase):
             # include_policy.database should be True
             assert rel.include_policy.database is True
             assert rel.include_policy.schema is True
-            # Renders as `database`.schema.identifier (three-part, database quoted)
-            assert str(rel) == "`my_lakehouse`.dbo.my_table"
+            # Renders as `database`.`schema`.identifier (three-part, both quoted)
+            assert str(rel) == "`my_lakehouse`.`dbo`.my_table"
         finally:
             FabricSparkRelation._schemas_enabled = False
 
@@ -361,9 +361,9 @@ class TestSparkAdapter(unittest.TestCase):
             FabricSparkRelation._schemas_enabled = True
             rel_three = FabricSparkRelation.create(database="lh", schema="dbo", identifier="t2")
             # Existing relation retains its original policy
-            assert str(rel_two) == "lh.t1"
-            # New relation uses updated policy (database quoted)
-            assert str(rel_three) == "`lh`.dbo.t2"
+            assert str(rel_two) == "`lh`.t1"
+            # New relation uses updated policy (both database and schema quoted)
+            assert str(rel_three) == "`lh`.`dbo`.t2"
         finally:
             FabricSparkRelation._schemas_enabled = False
 
@@ -405,7 +405,7 @@ class TestSparkAdapter(unittest.TestCase):
 
             # Also verify that mixed-case database renders correctly
             # with backtick quoting (harmless in Spark SQL).
-            assert str(cached_relation) == "`DBTTest`.dbo.my_first_model"
+            assert str(cached_relation) == "`DBTTest`.`dbo`.my_first_model"
         finally:
             FabricSparkRelation._schemas_enabled = False
 
@@ -429,6 +429,68 @@ class TestSparkAdapter(unittest.TestCase):
                 cached_relation.matches(
                     database="dbttest", schema="dbo", identifier="my_first_model"
                 )
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_mixed_case_schema_no_approximate_match_error(self):
+        """Regression test: mixed-case schema names must not trigger ApproximateMatchError.
+
+        When a lakehouse has schemas enabled and the schema name contains
+        uppercase characters (e.g. 'Operations'), FabricSparkQuotePolicy.schema
+        must be True so that dbt's _make_match_kwargs does NOT lowercase the
+        search term — otherwise 'operations' would fail to match 'Operations'
+        in the relation cache and trigger ApproximateMatchError.
+        """
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            cached_relation = FabricSparkRelation.create(
+                database="my_lakehouse",
+                schema="Operations",
+                identifier="my_table",
+                type=FabricSparkRelation.get_relation_type.Table,
+            )
+
+            # Verify that the quote policy defaults schema to True
+            assert cached_relation.quote_policy.schema is True
+
+            # With quoting.schema=True the schema is NOT lowercased, so matching
+            # 'Operations' against the cached 'Operations' must succeed.
+            assert cached_relation.matches(
+                database="my_lakehouse", schema="Operations", identifier="my_table"
+            )
+
+            # Also verify that mixed-case schema renders correctly with backtick quoting.
+            assert str(cached_relation) == "`my_lakehouse`.`Operations`.my_table"
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_mixed_case_schema_no_schema_mode_no_approximate_match_error(self):
+        """Regression test: mixed-case lakehouse name used as schema in no-schema mode.
+
+        In no-schema mode the schema field is set to the lakehouse name
+        (e.g. 'QA_LH_Operations_Bronze').  With FabricSparkQuotePolicy.schema
+        previously False, dbt would lowercase this to 'qa_lh_operations_bronze'
+        in _make_match_kwargs, while the catalog returned the original casing,
+        causing ApproximateMatchError.  The fix sets schema to True.
+        """
+        FabricSparkRelation._schemas_enabled = False
+        try:
+            lakehouse_name = "QA_LH_Operations_Bronze"
+            cached_relation = FabricSparkRelation.create(
+                database=lakehouse_name,
+                schema=lakehouse_name,
+                identifier="my_table",
+                type=FabricSparkRelation.get_relation_type.Table,
+            )
+
+            # Verify that the quote policy defaults schema to True
+            assert cached_relation.quote_policy.schema is True
+
+            # With quoting.schema=True the schema is NOT lowercased during matching.
+            assert cached_relation.matches(schema=lakehouse_name, identifier="my_table")
+
+            # Renders as `schema`.identifier in no-schema mode (database excluded).
+            assert str(cached_relation) == f"`{lakehouse_name}`.my_table"
         finally:
             FabricSparkRelation._schemas_enabled = False
 

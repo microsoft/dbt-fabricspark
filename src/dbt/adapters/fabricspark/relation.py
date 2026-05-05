@@ -15,11 +15,14 @@ _VALID_RELATION_TYPES = {t.value for t in RelationType}
 
 @dataclass
 class FabricSparkQuotePolicy(Policy):
-    # database must be quoted (True) so that dbt preserves original casing
-    # through _make_match_kwargs; otherwise mixed-case lakehouse names like
-    # 'DBTTest' get lowered to 'dbttest' and trigger ApproximateMatchError.
+    # Both database and schema must be quoted (True) so that dbt preserves
+    # original casing through _make_match_kwargs; otherwise mixed-case names
+    # like 'QA_LH_Operations_Bronze' get lowered to
+    # 'qa_lh_operations_bronze' and trigger ApproximateMatchError.
+    # Fabric/Spark stores names with their original casing, so case-sensitive
+    # matching is required for correct relation resolution.
     database: bool = True
-    schema: bool = False
+    schema: bool = True
     identifier: bool = False
 
 

@@ -543,9 +543,32 @@ class LivySession:
                 headers=get_headers(self.credential, False),
                 timeout=self.credential.http_timeout,
             )
+
+            # Fabric returns HTTP 430 (non-standard) — and sometimes 429 —
+            # when the capacity has too many concurrent Spark sessions. The
+            # body is an ErrorResponse (errorCode + message), not a
+            # SessionResponse, so without explicit handling
+            # ``raise_for_status()`` below would raise an ``HTTPError``
+            # which the legacy ``except HTTPError`` arm wraps as a generic
+            # ``Exception("Http Error: ", err_detail)``. That hides the
+            # rate-limit nature from the user (and from any retry logic
+            # that might want to back off). Surface a clearer error
+            # explicitly instead.
+            if response.status_code in (429, 430):
+                raise FailedToConnectError(
+                    f"Fabric Spark rate limit (HTTP {response.status_code}): "
+                    f"too many concurrent Spark sessions on this capacity. "
+                    f"Cancel active jobs in the Fabric Monitoring Hub, "
+                    f"use a larger capacity SKU, or try again later. "
+                    f"Tip: set ``reuse_session: true`` in profiles.yml so dbt "
+                    f"shares an existing session across runs."
+                )
+
             if response.status_code == 200 or response.status_code == 201:
                 logger.debug("Initiated Livy Session...")
             response.raise_for_status()
+        except FailedToConnectError:
+            raise
         except requests.exceptions.ConnectionError as c_err:
             err_detail = c_err.response.json() if c_err.response else str(c_err)
             raise Exception("Connection Error :", err_detail)
@@ -566,9 +589,24 @@ class LivySession:
 
         self.session_id = None
         try:
-            self.session_id = str(response.json()["id"])
-        except requests.exceptions.JSONDecodeError as json_err:
-            raise Exception("Json decode error to get session_id") from json_err
+            res_body = response.json()
+        except (requests.exceptions.JSONDecodeError, ValueError) as json_err:
+            raise FailedToConnectError(
+                f"Cannot parse session creation response from Fabric Livy API: "
+                f"{response.text[:500]}"
+            ) from json_err
+
+        # Per the Fabric Livy SessionResponse swagger contract, ``id`` is an
+        # optional field — clients must not assume it is present. Use
+        # ``dict.get`` so a missing ``id`` raises a clear ``FailedToConnectError``
+        # instead of an opaque ``KeyError('id')``.
+        session_id = res_body.get("id")
+        if session_id is None:
+            raise FailedToConnectError(
+                f"Session creation response has no 'id' field. "
+                f"Response: {json.dumps(res_body)[:500]}"
+            )
+        self.session_id = str(session_id)
 
         # Wait for the session to start
         self.wait_for_session_start()
@@ -577,7 +615,26 @@ class LivySession:
         return self.session_id
 
     def wait_for_session_start(self) -> None:
-        """Wait for the Livy session to reach the 'idle' state."""
+        """Wait for the Livy session to reach the 'idle' state.
+
+        Per the Fabric Livy SessionResponse swagger contract, every state
+        field is optional. A SessionResponse may legitimately arrive with:
+
+          - ``state`` (top-level Livy state) — present once Livy mints the
+            session; absent during the early Fabric acquisition window
+          - ``livyInfo.currentState`` — appears once the Spark driver is
+            provisioned; lags ``state`` slightly
+          - ``fabricSessionStateInfo.state`` — Fabric-side acquisition state
+            (``queued`` / ``acquiringSession`` / ``error`` / ``cancelled`` /
+            ...). This is the **earliest** signal of a provisioning failure
+            and is the only field populated when Fabric rejects the request
+            outright (e.g. capacity unavailable).
+
+        On HTTP 4xx/5xx the body is an ``ErrorResponse`` (``errorCode`` +
+        ``message``), not a ``SessionResponse`` — none of the state fields
+        exist at all. Always check the HTTP status before parsing as
+        SessionResponse.
+        """
         deadline = time.time() + self.credential.session_start_timeout
         while True:
             if time.time() > deadline:
@@ -585,11 +642,44 @@ class LivySession:
                     f"Timeout ({self.credential.session_start_timeout}s) waiting for session "
                     f"{self.session_id} to start. Increase `session_start_timeout` in profiles.yml."
                 )
-            res = requests.get(
+            http_res = requests.get(
                 self.connect_url + "/sessions/" + self.session_id,
                 headers=get_headers(self.credential, False),
                 timeout=self.credential.http_timeout,
-            ).json()
+            )
+
+            # Non-2xx: body is an ErrorResponse, not a SessionResponse. Only
+            # fail fast on codes where retry cannot help — auth/permission
+            # (401, 403) or "session no longer exists" (410). Other 4xx/5xx
+            # (including transient 404s on the session endpoint during early
+            # acquisition, and 5xx from Fabric infra blips) fall through to
+            # the polling loop so the existing ``session_start_timeout``
+            # bounds them — same tolerance the legacy code path provided.
+            if http_res.status_code in (401, 403, 410):
+                try:
+                    err_body = http_res.json()
+                    err_code = err_body.get("errorCode", "")
+                    err_msg = err_body.get("message", "")
+                except (requests.exceptions.JSONDecodeError, ValueError):
+                    err_code = f"HTTP {http_res.status_code}"
+                    err_msg = http_res.text[:500]
+                raise FailedToConnectError(
+                    f"Failed to poll session {self.session_id}: {err_code} — {err_msg}"
+                )
+
+            if http_res.status_code >= 400:
+                # Transient: log and keep polling. The body is an
+                # ErrorResponse with no state fields, so calling .json() on
+                # it and falling through to the state-check branches below
+                # would just see empty strings and sleep — same effect.
+                logger.debug(
+                    f"Session {self.session_id} poll got HTTP "
+                    f"{http_res.status_code}, retrying after poll_wait..."
+                )
+                time.sleep(self.credential.poll_wait)
+                continue
+
+            res = http_res.json()
 
             # Local Livy uses "state" directly, Fabric uses "livyInfo.currentState"
             if self.is_local_mode:
@@ -604,27 +694,67 @@ class LivySession:
                     logger.error("ERROR, cannot create a livy session")
                     raise FailedToConnectError("failed to connect")
             else:
-                # Fabric Livy: check top-level state first
-                # When session is starting, "livyInfo" may not exist yet
+                # Fabric Livy: three optional state levels per swagger.
                 top_level_state = res.get("state", "")
-                livy_info = res.get("livyInfo", {})
+                livy_info = res.get("livyInfo") or {}
                 livy_state = livy_info.get("currentState", "")
+                fabric_info = res.get("fabricSessionStateInfo") or {}
+                fabric_state = fabric_info.get("state", "")
+
+                # Fabric-side acquisition failure (earliest signal — fires
+                # before Livy state appears). Capturing this avoids the
+                # silent multi-minute timeout users hit today when capacity
+                # rejection arrives via fabricSessionStateInfo only.
+                if fabric_state in ("error", "cancelled"):
+                    error_info = res.get("errorInfo") or []
+                    err_detail = (
+                        error_info[0].get("message", "") if error_info else ""
+                    )
+                    raise FailedToConnectError(
+                        f"Fabric failed to acquire Spark session "
+                        f"{self.session_id}. fabricSessionStateInfo.state="
+                        f"{fabric_state}. {err_detail} "
+                        f"Response: {json.dumps(res)[:1000]}"
+                    )
 
                 if top_level_state in ("starting", "not_started"):
                     # Session still starting, continue polling
-                    logger.debug(f"Session {self.session_id} is {top_level_state}, waiting...")
+                    logger.debug(
+                        f"Session {self.session_id} is {top_level_state} "
+                        f"(fabric={fabric_state}), waiting..."
+                    )
                     time.sleep(self.credential.poll_wait)
                 elif livy_state == "idle":
                     logger.debug(f"New livy session id is: {self.session_id}, {res}")
                     self.is_new_session_required = False
                     break
-                elif livy_state == "dead" or top_level_state == "dead":
+                elif top_level_state in (
+                    "dead",
+                    "error",
+                    "killed",
+                    "shutting_down",
+                ) or livy_state in ("dead", "error", "killed", "shutting_down"):
+                    # Terminal state set matches the canonical list accepted
+                    # in PR #65 (microsoft/dbt-fabricspark#65). Surface
+                    # Fabric's ``errorInfo[]`` when present — it carries the
+                    # precise failure reason (``LIVY_JOB_TIMED_OUT``,
+                    # ``CAPACITY_UNAVAILABLE``, ...). Without this, users see
+                    # only the generic "failed to connect".
+                    error_info = res.get("errorInfo") or []
+                    err_detail = (
+                        error_info[0].get("message", "") if error_info else ""
+                    )
                     logger.error("ERROR, cannot create a livy session")
-                    raise FailedToConnectError("failed to connect")
+                    raise FailedToConnectError(
+                        f"Spark session {self.session_id} failed to start. "
+                        f"state={top_level_state}, livy={livy_state}, "
+                        f"fabric={fabric_state}. {err_detail}"
+                    )
                 else:
                     # Unknown state, keep waiting (could be transitioning)
                     logger.debug(
-                        f"Session {self.session_id} in state: top={top_level_state}, livy={livy_state}, waiting..."
+                        f"Session {self.session_id} state: top={top_level_state}, "
+                        f"livy={livy_state}, fabric={fabric_state}, waiting..."
                     )
                     time.sleep(self.credential.poll_wait)
 

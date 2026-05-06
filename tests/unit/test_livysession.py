@@ -782,3 +782,49 @@ class TestFetchmany:
 
         mock_cursor.fetchone.assert_called_once_with()
         assert result == (1, "a")
+
+    def test_fetchone_resets_on_new_execute(self):
+        """After execute() is called, _fetch_index resets so fetchone() returns
+        row 0 even if it was previously advanced."""
+        credentials = FabricSparkCredentials(
+            method="livy",
+            livy_mode="local",
+            spark_config={"name": "test-session"},
+        )
+        mock_session = MagicMock()
+        mock_session.session_id = "s1"
+        mock_session.is_new_session_required = False
+        cursor = LivyCursor(credentials, mock_session)
+
+        # Simulate a first execute result: two rows
+        first_rows = [("a",), ("b",)]
+        # Manually set _rows and advance the index (as if fetchone was called once)
+        cursor._rows = first_rows
+        cursor._fetch_index = 1
+
+        # Now simulate a second execute (single-row result) via patching
+        # the internal helpers that make remote calls.
+        second_rows = [("c",)]
+        second_result = {
+            "output": {
+                "status": "ok",
+                "data": {
+                    "application/json": {
+                        "data": second_rows,
+                        "schema": {"fields": []},
+                    }
+                },
+            }
+        }
+
+        with (
+            patch.object(cursor, "_getLivySQL", return_value="SELECT 1"),
+            patch.object(cursor, "_submitLivyCode", return_value=MagicMock()),
+            patch.object(cursor, "_getLivyResult", return_value=second_result),
+        ):
+            cursor.execute("SELECT 1")
+
+        # After execute(), _fetch_index must have been reset to 0
+        assert cursor._fetch_index == 0
+        # fetchone() should return the first (only) row of the new result
+        assert cursor.fetchone() == ("c",)

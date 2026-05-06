@@ -523,7 +523,9 @@ class LivySession:
         )
 
     def create_session(self, spark_config) -> str:
-        # Create sessions
+        # Create sessions with retry for transient 404 and 5xx errors.
+        # Fabric sometimes returns 404 on the /sessions endpoint right after
+        # a lakehouse is provisioned before the Livy feature becomes available.
         response = None
         logger.debug("Creating Livy session (this may take a few minutes)")
 
@@ -536,30 +538,45 @@ class LivySession:
         else:
             session_data = spark_config
 
-        try:
-            response = requests.post(
-                self.connect_url + "/sessions",
-                data=json.dumps(session_data),
-                headers=get_headers(self.credential, False),
-                timeout=self.credential.http_timeout,
-            )
-            if response.status_code == 200 or response.status_code == 201:
-                logger.debug("Initiated Livy Session...")
-            response.raise_for_status()
-        except requests.exceptions.ConnectionError as c_err:
-            err_detail = c_err.response.json() if c_err.response else str(c_err)
-            raise Exception("Connection Error :", err_detail)
-        except requests.exceptions.HTTPError as h_err:
-            err_detail = h_err.response.json() if h_err.response else str(h_err)
-            raise Exception("Http Error: ", err_detail)
-        except requests.exceptions.Timeout as t_err:
-            err_detail = t_err.response.json() if t_err.response else str(t_err)
-            raise Exception("Timeout Error: ", err_detail)
-        except requests.exceptions.RequestException as a_err:
-            err_detail = a_err.response.json() if a_err.response else str(a_err)
-            raise Exception("Authorization Error: ", err_detail)
-        except Exception as ex:
-            raise Exception(ex) from ex
+        max_create_retries = 5
+        for attempt in range(max_create_retries):
+            try:
+                response = requests.post(
+                    self.connect_url + "/sessions",
+                    data=json.dumps(session_data),
+                    headers=get_headers(self.credential, False),
+                    timeout=self.credential.http_timeout,
+                )
+                if response.status_code == 200 or response.status_code == 201:
+                    logger.debug("Initiated Livy Session...")
+                    break  # Success — exit retry loop
+                # Retry on 404 (Fabric Livy endpoint transiently unavailable)
+                # and 5xx server errors; give up on the last attempt.
+                if attempt < max_create_retries - 1 and (
+                    response.status_code == 404 or response.status_code >= 500
+                ):
+                    wait_time = 5 * (2**attempt)  # 5, 10, 20, 40 s
+                    logger.warning(
+                        f"Livy session create returned HTTP {response.status_code}, "
+                        f"retrying in {wait_time}s (attempt {attempt + 1}/{max_create_retries})"
+                    )
+                    time.sleep(wait_time)
+                    continue
+                response.raise_for_status()
+            except requests.exceptions.ConnectionError as c_err:
+                err_detail = c_err.response.json() if c_err.response else str(c_err)
+                raise Exception("Connection Error :", err_detail)
+            except requests.exceptions.HTTPError as h_err:
+                err_detail = h_err.response.json() if h_err.response else str(h_err)
+                raise Exception("Http Error: ", err_detail)
+            except requests.exceptions.Timeout as t_err:
+                err_detail = t_err.response.json() if t_err.response else str(t_err)
+                raise Exception("Timeout Error: ", err_detail)
+            except requests.exceptions.RequestException as a_err:
+                err_detail = a_err.response.json() if a_err.response else str(a_err)
+                raise Exception("Authorization Error: ", err_detail)
+            except Exception as ex:
+                raise Exception(ex) from ex
 
         if response is None:
             raise Exception("Invalid response from Livy server")

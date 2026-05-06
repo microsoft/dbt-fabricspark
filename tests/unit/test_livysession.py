@@ -104,6 +104,125 @@ class TestLivySession:
         assert "lakehouses/8c5bc260-bc3a-4898-9ada-01e433d461ba" in session.connect_url
 
 
+class TestCreateSessionRetry:
+    """Tests for retry logic in LivySession.create_session()."""
+
+    def _make_credentials(self):
+        return FabricSparkCredentials(
+            method="livy",
+            livy_mode="local",
+            livy_url="http://localhost:8998",
+            spark_config={"name": "test-session"},
+        )
+
+    def _make_response(self, status_code, json_body=None):
+        mock_resp = MagicMock()
+        mock_resp.status_code = status_code
+        mock_resp.json.return_value = json_body or {"id": 42}
+        mock_resp.raise_for_status.return_value = None
+        if status_code >= 400:
+            import requests
+
+            mock_resp.raise_for_status.side_effect = requests.exceptions.HTTPError(
+                response=mock_resp
+            )
+        return mock_resp
+
+    @patch("dbt.adapters.fabricspark.livysession.get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.livysession.time.sleep")
+    @patch("dbt.adapters.fabricspark.livysession.requests.post")
+    @patch("dbt.adapters.fabricspark.livysession.LivySession.wait_for_session_start")
+    def test_create_session_succeeds_immediately(
+        self, mock_wait, mock_post, mock_sleep, mock_headers
+    ):
+        """create_session should succeed on the first attempt with no retries."""
+        mock_post.return_value = self._make_response(201)
+        session = LivySession(self._make_credentials())
+
+        session.create_session({"kind": "sql"})
+
+        assert mock_post.call_count == 1
+        mock_sleep.assert_not_called()
+
+    @patch("dbt.adapters.fabricspark.livysession.get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.livysession.time.sleep")
+    @patch("dbt.adapters.fabricspark.livysession.requests.post")
+    @patch("dbt.adapters.fabricspark.livysession.LivySession.wait_for_session_start")
+    def test_create_session_retries_on_404_then_succeeds(
+        self, mock_wait, mock_post, mock_sleep, mock_headers
+    ):
+        """create_session should retry on HTTP 404 and succeed on the next attempt."""
+        mock_post.side_effect = [
+            self._make_response(404),
+            self._make_response(201),
+        ]
+        session = LivySession(self._make_credentials())
+
+        session.create_session({"kind": "sql"})
+
+        assert mock_post.call_count == 2
+        mock_sleep.assert_called_once_with(5)  # 5 * 2**0 = 5s on first retry
+
+    @patch("dbt.adapters.fabricspark.livysession.get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.livysession.time.sleep")
+    @patch("dbt.adapters.fabricspark.livysession.requests.post")
+    @patch("dbt.adapters.fabricspark.livysession.LivySession.wait_for_session_start")
+    def test_create_session_retries_on_500_then_succeeds(
+        self, mock_wait, mock_post, mock_sleep, mock_headers
+    ):
+        """create_session should retry on HTTP 5xx and succeed on the next attempt."""
+        mock_post.side_effect = [
+            self._make_response(500),
+            self._make_response(201),
+        ]
+        session = LivySession(self._make_credentials())
+
+        session.create_session({"kind": "sql"})
+
+        assert mock_post.call_count == 2
+        mock_sleep.assert_called_once_with(5)
+
+    @patch("dbt.adapters.fabricspark.livysession.get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.livysession.time.sleep")
+    @patch("dbt.adapters.fabricspark.livysession.requests.post")
+    def test_create_session_raises_after_all_retries_exhausted(
+        self, mock_post, mock_sleep, mock_headers
+    ):
+        """create_session should raise after all 5 retry attempts return 404."""
+        mock_post.return_value = self._make_response(404)
+        session = LivySession(self._make_credentials())
+
+        import pytest
+
+        with pytest.raises(Exception, match="Http Error"):
+            session.create_session({"kind": "sql"})
+
+        # 5 total attempts (initial + 4 retries)
+        assert mock_post.call_count == 5
+        # sleep called 4 times: 5, 10, 20, 40 seconds
+        assert mock_sleep.call_count == 4
+        mock_sleep.assert_any_call(5)
+        mock_sleep.assert_any_call(10)
+        mock_sleep.assert_any_call(20)
+        mock_sleep.assert_any_call(40)
+
+    @patch("dbt.adapters.fabricspark.livysession.get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.livysession.time.sleep")
+    @patch("dbt.adapters.fabricspark.livysession.requests.post")
+    def test_create_session_does_not_retry_on_401(self, mock_post, mock_sleep, mock_headers):
+        """create_session should NOT retry on 401 auth errors (non-transient)."""
+        mock_post.return_value = self._make_response(401)
+        session = LivySession(self._make_credentials())
+
+        import pytest
+
+        with pytest.raises(Exception, match="Http Error"):
+            session.create_session({"kind": "sql"})
+
+        assert mock_post.call_count == 1
+        mock_sleep.assert_not_called()
+
+
 class TestLivyCursor:
     """Tests for the LivyCursor class."""
 

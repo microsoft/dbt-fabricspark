@@ -1080,6 +1080,38 @@ class LivyCursor:
         """
         return self._rows
 
+    def fetchmany(self, size=None):
+        """
+        Fetch up to *size* rows.
+
+        Fabric's Livy statement-result API returns the entire result set in
+        one JSON response — there is no server-side cursor or streaming
+        primitive.  The full result set is therefore already materialised in
+        ``self._rows`` before this method is called.  Slicing locally is
+        faithful to the actual underlying behaviour.
+
+        Parameters
+        ----------
+        size : int | None
+            Maximum number of rows to return.  When ``None`` all rows are
+            returned (equivalent to ``fetchall``).
+
+        Returns
+        -------
+        out : list | None
+            Up to *size* rows, or ``None`` if the query produced no result
+            set.
+
+        Source
+        ------
+        https://github.com/mkleehammer/pyodbc/wiki/Cursor#fetchmany
+        """
+        if self._rows is None:
+            return None
+        if size is None:
+            return self._rows
+        return self._rows[:size]
+
     def fetchone(self):
         """
         Fetch the first output.
@@ -1419,6 +1451,9 @@ class LivySessionConnectionWrapper(object):
 
     def fetchall(self):
         return self._cursor.fetchall()
+
+    def fetchmany(self, size=None):
+        return self._cursor.fetchmany(size)
 
     def execute(self, sql, bindings=None):
         if sql.strip().endswith(";"):

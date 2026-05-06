@@ -708,3 +708,63 @@ class TestFixBinding:
             "(cast(1.0 as bigint),cast('Cote d\\'Ivoire' as string)),"
             "(cast(2.0 as bigint),cast('Tonga' as string))"
         )
+
+
+class TestFetchmany:
+    """Tests for LivyCursor.fetchmany and LivySessionConnectionWrapper.fetchmany."""
+
+    def _make_cursor(self, rows):
+        """Helper: return a LivyCursor with ``_rows`` pre-set."""
+        credentials = FabricSparkCredentials(
+            method="livy",
+            livy_mode="local",
+            spark_config={"name": "test-session"},
+        )
+        mock_session = MagicMock()
+        mock_session.session_id = "s1"
+        cursor = LivyCursor(credentials, mock_session)
+        cursor._rows = rows
+        return cursor
+
+    def test_fetchmany_size_less_than_total(self):
+        """fetchmany(2) returns first 2 rows from a 3-row result."""
+        rows = [(1,), (2,), (3,)]
+        cursor = self._make_cursor(rows)
+        assert cursor.fetchmany(2) == [(1,), (2,)]
+
+    def test_fetchmany_size_greater_than_total(self):
+        """fetchmany(10) returns all rows when fewer than 10 exist."""
+        rows = [(1,), (2,)]
+        cursor = self._make_cursor(rows)
+        assert cursor.fetchmany(10) == [(1,), (2,)]
+
+    def test_fetchmany_size_none_returns_all(self):
+        """fetchmany(None) returns all rows (same as fetchall)."""
+        rows = [(1,), (2,), (3,)]
+        cursor = self._make_cursor(rows)
+        assert cursor.fetchmany(None) == rows
+
+    def test_fetchmany_size_zero(self):
+        """fetchmany(0) returns an empty list."""
+        rows = [(1,), (2,)]
+        cursor = self._make_cursor(rows)
+        assert cursor.fetchmany(0) == []
+
+    def test_fetchmany_rows_none_returns_none(self):
+        """fetchmany returns None when the cursor has no result set."""
+        cursor = self._make_cursor(None)
+        assert cursor.fetchmany(5) is None
+
+    def test_wrapper_fetchmany_delegates_to_cursor(self):
+        """LivySessionConnectionWrapper.fetchmany delegates to the inner cursor."""
+        mock_cursor = MagicMock()
+        mock_cursor.fetchmany.return_value = [(1,), (2,)]
+        mock_handle = MagicMock()
+        mock_handle.cursor.return_value = mock_cursor
+
+        wrapper = LivySessionConnectionWrapper(mock_handle)
+        wrapper.cursor()  # sets self._cursor
+        result = wrapper.fetchmany(2)
+
+        mock_cursor.fetchmany.assert_called_once_with(2)
+        assert result == [(1,), (2,)]

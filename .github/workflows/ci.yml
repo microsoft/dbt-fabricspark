@@ -4,10 +4,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
-
 env:
   IS_GH_ACTION: "1"
   CLIENT_ID: ${{ secrets.APP_ID }}

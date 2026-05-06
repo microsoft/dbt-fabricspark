@@ -1455,6 +1455,9 @@ class LivySessionConnectionWrapper(object):
     def fetchmany(self, size=None):
         return self._cursor.fetchmany(size)
 
+    def fetchone(self):
+        return self._cursor.fetchone()
+
     def execute(self, sql, bindings=None):
         if sql.strip().endswith(";"):
             sql = sql.strip()[:-1]

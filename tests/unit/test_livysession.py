@@ -768,3 +768,17 @@ class TestFetchmany:
 
         mock_cursor.fetchmany.assert_called_once_with(2)
         assert result == [(1,), (2,)]
+
+    def test_wrapper_fetchone_delegates_to_cursor(self):
+        """LivySessionConnectionWrapper.fetchone delegates to the inner cursor."""
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = (1, "a")
+        mock_handle = MagicMock()
+        mock_handle.cursor.return_value = mock_cursor
+
+        wrapper = LivySessionConnectionWrapper(mock_handle)
+        wrapper.cursor()  # sets self._cursor
+        result = wrapper.fetchone()
+
+        mock_cursor.fetchone.assert_called_once_with()
+        assert result == (1, "a")

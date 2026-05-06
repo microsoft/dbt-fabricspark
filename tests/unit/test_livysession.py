@@ -6,6 +6,9 @@ import tempfile
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
+import pytest
+import requests
+
 from dbt.adapters.fabricspark.connections import LivySessionConnectionWrapper
 from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
 from dbt.adapters.fabricspark.livysession import (
@@ -121,8 +124,6 @@ class TestCreateSessionRetry:
         mock_resp.json.return_value = json_body or {"id": 42}
         mock_resp.raise_for_status.return_value = None
         if status_code >= 400:
-            import requests
-
             mock_resp.raise_for_status.side_effect = requests.exceptions.HTTPError(
                 response=mock_resp
             )
@@ -192,8 +193,6 @@ class TestCreateSessionRetry:
         mock_post.return_value = self._make_response(404)
         session = LivySession(self._make_credentials())
 
-        import pytest
-
         with pytest.raises(Exception, match="Http Error"):
             session.create_session({"kind": "sql"})
 
@@ -213,8 +212,6 @@ class TestCreateSessionRetry:
         """create_session should NOT retry on 401 auth errors (non-transient)."""
         mock_post.return_value = self._make_response(401)
         session = LivySession(self._make_credentials())
-
-        import pytest
 
         with pytest.raises(Exception, match="Http Error"):
             session.create_session({"kind": "sql"})

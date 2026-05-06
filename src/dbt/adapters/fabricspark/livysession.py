@@ -602,11 +602,26 @@ class LivySession:
                     f"Timeout ({self.credential.session_start_timeout}s) waiting for session "
                     f"{self.session_id} to start. Increase `session_start_timeout` in profiles.yml."
                 )
-            res = requests.get(
-                self.connect_url + "/sessions/" + self.session_id,
-                headers=get_headers(self.credential, False),
-                timeout=self.credential.http_timeout,
-            ).json()
+            try:
+                response = requests.get(
+                    self.connect_url + "/sessions/" + self.session_id,
+                    headers=get_headers(self.credential, False),
+                    timeout=self.credential.http_timeout,
+                )
+                res = response.json()
+            except (
+                requests.exceptions.RequestException,
+                requests.exceptions.JSONDecodeError,
+            ) as exc:
+                # Transient network error or non-JSON response (e.g. 429/5xx from Fabric
+                # under heavy load). Log and retry on the next poll interval rather than
+                # crashing the whole session-start wait.
+                logger.warning(
+                    f"Transient error polling session {self.session_id} status: {exc}; "
+                    f"will retry in {self.credential.poll_wait}s"
+                )
+                time.sleep(self.credential.poll_wait)
+                continue
 
             # Local Livy uses "state" directly, Fabric uses "livyInfo.currentState"
             if self.is_local_mode:

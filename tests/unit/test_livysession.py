@@ -220,6 +220,92 @@ class TestCreateSessionRetry:
         mock_sleep.assert_not_called()
 
 
+class TestWaitForSessionStartTransientErrors:
+    """Tests for transient error handling in LivySession.wait_for_session_start()."""
+
+    def _make_credentials(self):
+        return FabricSparkCredentials(
+            method="livy",
+            livy_mode="local",
+            livy_url="http://localhost:8998",
+            spark_config={"name": "test-session"},
+        )
+
+    def _make_idle_response(self):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"state": "idle"}
+        return mock_resp
+
+    @patch("dbt.adapters.fabricspark.livysession.get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.livysession.time.sleep")
+    @patch("dbt.adapters.fabricspark.livysession.time.time")
+    @patch("dbt.adapters.fabricspark.livysession.requests.get")
+    def test_wait_retries_on_request_exception(
+        self, mock_get, mock_time, mock_sleep, mock_headers
+    ):
+        """wait_for_session_start should retry when a transient RequestException occurs."""
+        mock_time.return_value = 0  # Always within deadline
+        mock_get.side_effect = [
+            requests.exceptions.ConnectionError("connection refused"),
+            self._make_idle_response(),
+        ]
+
+        session = LivySession(self._make_credentials())
+        session.session_id = "42"
+
+        session.wait_for_session_start()
+
+        assert mock_get.call_count == 2
+        # sleep called once for the retry after the transient error
+        mock_sleep.assert_called_once()
+
+    @patch("dbt.adapters.fabricspark.livysession.get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.livysession.time.sleep")
+    @patch("dbt.adapters.fabricspark.livysession.time.time")
+    @patch("dbt.adapters.fabricspark.livysession.requests.get")
+    def test_wait_retries_on_json_decode_error(
+        self, mock_get, mock_time, mock_sleep, mock_headers
+    ):
+        """wait_for_session_start should retry when the response body is not valid JSON."""
+        mock_time.return_value = 0  # Always within deadline
+
+        bad_resp = MagicMock()
+        bad_resp.json.side_effect = requests.exceptions.JSONDecodeError("not valid JSON", "", 0)
+
+        mock_get.side_effect = [
+            bad_resp,
+            self._make_idle_response(),
+        ]
+
+        session = LivySession(self._make_credentials())
+        session.session_id = "42"
+
+        session.wait_for_session_start()
+
+        assert mock_get.call_count == 2
+        mock_sleep.assert_called_once()
+
+    @patch("dbt.adapters.fabricspark.livysession.get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.livysession.time.sleep")
+    @patch("dbt.adapters.fabricspark.livysession.time.time")
+    @patch("dbt.adapters.fabricspark.livysession.requests.get")
+    def test_wait_succeeds_immediately_without_retries(
+        self, mock_get, mock_time, mock_sleep, mock_headers
+    ):
+        """wait_for_session_start should complete without sleeping when session is immediately idle."""
+        mock_time.return_value = 0  # Always within deadline
+
+        mock_get.return_value = self._make_idle_response()
+
+        session = LivySession(self._make_credentials())
+        session.session_id = "42"
+
+        session.wait_for_session_start()
+
+        assert mock_get.call_count == 1
+        mock_sleep.assert_not_called()
+
+
 class TestLivyCursor:
     """Tests for the LivyCursor class."""
 

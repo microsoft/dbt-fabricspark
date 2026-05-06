@@ -201,7 +201,7 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                     time.sleep(creds.connect_timeout)
                 elif creds.retry_all and creds.connect_retries > 0:
                     msg = (
-                        f"Warning: {getattr(exc, 'message', 'No message')}, "
+                        f"Warning: {str(exc) or 'No message'}, "
                         f"retrying due to 'retry_all' configuration "
                         f"set to true.\n\tRetrying in "
                         f"{creds.connect_timeout} seconds "
@@ -413,7 +413,9 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                 )
                 fire_event(
                     AdapterEventDebug(
-                        message=f"Got a retryable error ({retry_reason}) {type(e)}. {retry_limit - attempt} retries left. Retrying in {min(5 * (2 ** (attempt - 1)), 60)} seconds.\nError:\n{e}"
+                        name="FabricSpark",
+                        base_msg=f"Got a retryable error ({retry_reason}) {type(e)}. {retry_limit - attempt} retries left. Retrying in {min(5 * (2 ** (attempt - 1)), 60)} seconds.\nError:\n{e}",
+                        args=[],
                     )
                 )
                 time.sleep(min(5 * (2 ** (attempt - 1)), 60))
@@ -494,6 +496,7 @@ def _is_retryable_error(exc: Exception) -> str:
         "unable to fetch mwc token",
         "failed to get database metadata",
         "session not found",
+        "entitynotfound",
         "connection aborted",
         "broken pipe",
         "bad gateway",

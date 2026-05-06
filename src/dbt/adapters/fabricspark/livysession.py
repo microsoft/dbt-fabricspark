@@ -523,7 +523,9 @@ class LivySession:
         )
 
     def create_session(self, spark_config) -> str:
-        # Create sessions
+        # Create sessions with retry for transient 404 and 5xx errors.
+        # Fabric sometimes returns 404 on the /sessions endpoint right after
+        # a lakehouse is provisioned before the Livy feature becomes available.
         response = None
         logger.debug("Creating Livy session (this may take a few minutes)")
 
@@ -536,30 +538,45 @@ class LivySession:
         else:
             session_data = spark_config
 
-        try:
-            response = requests.post(
-                self.connect_url + "/sessions",
-                data=json.dumps(session_data),
-                headers=get_headers(self.credential, False),
-                timeout=self.credential.http_timeout,
-            )
-            if response.status_code == 200 or response.status_code == 201:
-                logger.debug("Initiated Livy Session...")
-            response.raise_for_status()
-        except requests.exceptions.ConnectionError as c_err:
-            err_detail = c_err.response.json() if c_err.response else str(c_err)
-            raise Exception("Connection Error :", err_detail)
-        except requests.exceptions.HTTPError as h_err:
-            err_detail = h_err.response.json() if h_err.response else str(h_err)
-            raise Exception("Http Error: ", err_detail)
-        except requests.exceptions.Timeout as t_err:
-            err_detail = t_err.response.json() if t_err.response else str(t_err)
-            raise Exception("Timeout Error: ", err_detail)
-        except requests.exceptions.RequestException as a_err:
-            err_detail = a_err.response.json() if a_err.response else str(a_err)
-            raise Exception("Authorization Error: ", err_detail)
-        except Exception as ex:
-            raise Exception(ex) from ex
+        max_create_retries = 5
+        for attempt in range(max_create_retries):
+            try:
+                response = requests.post(
+                    self.connect_url + "/sessions",
+                    data=json.dumps(session_data),
+                    headers=get_headers(self.credential, False),
+                    timeout=self.credential.http_timeout,
+                )
+                if response.status_code == 200 or response.status_code == 201:
+                    logger.debug("Initiated Livy Session...")
+                    break  # Success — exit retry loop
+                # Retry on 404 (Fabric Livy endpoint transiently unavailable)
+                # and 5xx server errors; give up on the last attempt.
+                if attempt < max_create_retries - 1 and (
+                    response.status_code == 404 or response.status_code >= 500
+                ):
+                    wait_time = 5 * (2**attempt)  # 5, 10, 20, 40 s
+                    logger.warning(
+                        f"Livy session create returned HTTP {response.status_code}, "
+                        f"retrying in {wait_time}s (attempt {attempt + 1}/{max_create_retries})"
+                    )
+                    time.sleep(wait_time)
+                    continue
+                response.raise_for_status()
+            except requests.exceptions.ConnectionError as c_err:
+                err_detail = c_err.response.json() if c_err.response else str(c_err)
+                raise Exception("Connection Error :", err_detail)
+            except requests.exceptions.HTTPError as h_err:
+                err_detail = h_err.response.json() if h_err.response else str(h_err)
+                raise Exception("Http Error: ", err_detail)
+            except requests.exceptions.Timeout as t_err:
+                err_detail = t_err.response.json() if t_err.response else str(t_err)
+                raise Exception("Timeout Error: ", err_detail)
+            except requests.exceptions.RequestException as a_err:
+                err_detail = a_err.response.json() if a_err.response else str(a_err)
+                raise Exception("Authorization Error: ", err_detail)
+            except Exception as ex:
+                raise Exception(ex) from ex
 
         if response is None:
             raise Exception("Invalid response from Livy server")
@@ -585,11 +602,26 @@ class LivySession:
                     f"Timeout ({self.credential.session_start_timeout}s) waiting for session "
                     f"{self.session_id} to start. Increase `session_start_timeout` in profiles.yml."
                 )
-            res = requests.get(
-                self.connect_url + "/sessions/" + self.session_id,
-                headers=get_headers(self.credential, False),
-                timeout=self.credential.http_timeout,
-            ).json()
+            try:
+                response = requests.get(
+                    self.connect_url + "/sessions/" + self.session_id,
+                    headers=get_headers(self.credential, False),
+                    timeout=self.credential.http_timeout,
+                )
+                res = response.json()
+            except (
+                requests.exceptions.RequestException,
+                requests.exceptions.JSONDecodeError,
+            ) as exc:
+                # Transient network error or non-JSON response (e.g. 429/5xx from Fabric
+                # under heavy load). Log and retry on the next poll interval rather than
+                # crashing the whole session-start wait.
+                logger.warning(
+                    f"Transient error polling session {self.session_id} status: {exc}; "
+                    f"will retry in {self.credential.poll_wait}s"
+                )
+                time.sleep(self.credential.poll_wait)
+                continue
 
             # Local Livy uses "state" directly, Fabric uses "livyInfo.currentState"
             if self.is_local_mode:
@@ -756,6 +788,9 @@ class LivyCursor:
     def _submitLivyCode(self, code) -> Response:
         if self.livy_session.is_new_session_required:
             LivySessionManager.connect(self.credential)
+            # connect() may replace livy_global_session with a new LivySession
+            # object; update our reference so session_id reflects the new session.
+            self.livy_session = LivySessionManager.livy_global_session
             self.session_id = self.livy_session.session_id
 
         # Submit code with retry for transient 5xx and 429 (rate-limit) errors
@@ -811,6 +846,11 @@ class LivyCursor:
                 time.sleep(wait_time)
 
         if res.status_code >= 400:
+            # A 404 on submit means the Livy session is gone; flag for reconnect
+            # so the next _execute_query_with_retry attempt gets a fresh session.
+            if res.status_code == 404 and LivySessionManager.livy_global_session is not None:
+                LivySessionManager.livy_global_session.is_new_session_required = True
+                logger.debug("Livy statement submit returned 404 — flagging session for reconnect")
             raise DbtRuntimeError(
                 f"Livy statement submit failed (HTTP {res.status_code}): {res.text}"
             )
@@ -928,6 +968,17 @@ class LivyCursor:
                 time.sleep(wait_time)
                 continue
             if poll_res.status_code >= 400:
+                # A 404 that survived all not-found retries means the session (not
+                # just the statement) is gone.  Flag for reconnect so that the outer
+                # _execute_query_with_retry creates a fresh session on the next attempt.
+                if (
+                    poll_res.status_code == 404
+                    and LivySessionManager.livy_global_session is not None
+                ):
+                    LivySessionManager.livy_global_session.is_new_session_required = True
+                    logger.debug(
+                        "Livy statement poll exhausted 404 retries — flagging session for reconnect"
+                    )
                 raise DbtRuntimeError(
                     f"Livy statement poll failed (HTTP {poll_res.status_code}): {poll_res.text}"
                 )
@@ -970,6 +1021,9 @@ class LivyCursor:
         """
         if len(parameters) > 0:
             sql = sql % parameters
+
+        # Reset fetch position for the new query
+        self._fetch_index = 0
 
         # TODO: handle parameterised sql
 
@@ -1028,6 +1082,38 @@ class LivyCursor:
         https://github.com/mkleehammer/pyodbc/wiki/Cursor#fetchall
         """
         return self._rows
+
+    def fetchmany(self, size=None):
+        """
+        Fetch up to *size* rows.
+
+        Fabric's Livy statement-result API returns the entire result set in
+        one JSON response — there is no server-side cursor or streaming
+        primitive.  The full result set is therefore already materialised in
+        ``self._rows`` before this method is called.  Slicing locally is
+        faithful to the actual underlying behaviour.
+
+        Parameters
+        ----------
+        size : int | None
+            Maximum number of rows to return.  When ``None`` all rows are
+            returned (equivalent to ``fetchall``).
+
+        Returns
+        -------
+        out : list | None
+            Up to *size* rows, or ``None`` if the query produced no result
+            set.
+
+        Source
+        ------
+        https://github.com/mkleehammer/pyodbc/wiki/Cursor#fetchmany
+        """
+        if self._rows is None:
+            return None
+        if size is None:
+            return self._rows
+        return self._rows[:size]
 
     def fetchone(self):
         """
@@ -1368,6 +1454,12 @@ class LivySessionConnectionWrapper(object):
 
     def fetchall(self):
         return self._cursor.fetchall()
+
+    def fetchmany(self, size=None):
+        return self._cursor.fetchmany(size)
+
+    def fetchone(self):
+        return self._cursor.fetchone()
 
     def execute(self, sql, bindings=None):
         if sql.strip().endswith(";"):

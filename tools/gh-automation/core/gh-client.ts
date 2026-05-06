@@ -58,7 +58,9 @@ export class GhClient {
 
         const result = spawnSync('gh', args, {
             encoding: 'utf-8',
-            stdio: ['inherit', 'pipe', 'pipe'],
+            stdio: ['pipe', 'pipe', 'pipe'],
+            maxBuffer: 10 * 1024 * 1024, // 10 MB
+            env: { ...process.env, GH_PROMPT_DISABLED: '1' },
         });
 
         if (result.status !== 0) {
@@ -76,14 +78,20 @@ export class GhClient {
         return result;
     }
 
-    /** Execute a `gh` CLI command and parse the JSON output. Returns `null` in dry-run mode. */
+    /** Execute a `gh` CLI command and parse the JSON output. Returns `null` in dry-run mode or on parse failure. */
     execJson<T>(args: string[]): T | null {
         if (this.dryRun) {
             this.exec(args);
             return null;
         }
         const result = this.exec(args);
-        return JSON.parse(result.stdout) as T;
+        try {
+            return JSON.parse(result.stdout) as T;
+        } catch (e) {
+            const preview = result.stdout?.slice(0, 200) ?? '';
+            this.logger.warn(`Failed to parse JSON from: gh ${args.join(' ')}\n         ${(e as Error).message}\n         Response preview: ${preview}…`);
+            return null;
+        }
     }
 
     /** Post a comment on a pull request. */

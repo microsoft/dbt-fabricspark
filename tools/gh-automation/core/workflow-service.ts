@@ -19,7 +19,7 @@ export class WorkflowService {
         const encoded = encodeURIComponent(branch);
         const response = this.client.execJson<WorkflowRunsResponse>([
             'api',
-            `repos/${this.client.owner}/${this.client.repoName}/actions/runs?branch=${encoded}&per_page=100`,
+            `repos/${this.client.owner}/${this.client.repoName}/actions/runs?branch=${encoded}&per_page=10`,
         ]);
 
         if (!response) return [];

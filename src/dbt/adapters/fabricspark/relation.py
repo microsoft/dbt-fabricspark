@@ -18,8 +18,10 @@ class FabricSparkQuotePolicy(Policy):
     # database must be quoted (True) so that dbt preserves original casing
     # through _make_match_kwargs; otherwise mixed-case lakehouse names like
     # 'DBTTest' get lowered to 'dbttest' and trigger ApproximateMatchError.
+    # Fabric Lakehouse stores names with their original casing, so case-sensitive
+    # matching is required for correct relation resolution.
     database: bool = True
-    schema: bool = False
+    schema: bool = True
     identifier: bool = False
 
 

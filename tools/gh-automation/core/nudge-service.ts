@@ -18,6 +18,10 @@ function buildNudgeComment(run: WorkflowRun): string {
         `- [${run.name}](${run.html_url}) — \`${run.conclusion}\``,
         '',
         'Read the logs, fix your code, and push again. Keep trying until CI is green.',
+        'Even if the failure appears as if it\`s not related to your changes, do **NOT**',
+        'dismiss as "transient" Fabric issue, do the due dilligence to make the necessary.',
+        'code changes to ensure this doesn\'t happen again by improving the CI suite for the',
+        'repository so that future runs are less likely to fail for the same reason.',
     ].join('\n');
 }
 
@@ -27,19 +31,26 @@ export class NudgeService {
         private readonly logger: Logger,
     ) {}
 
-    /** Get the latest failed/cancelled/timed-out workflow run for a branch. */
+    /** Get the latest failed/cancelled/timed-out workflow run for a branch, only if it's the most recent completed run. */
     getLatestFailedRun(branch: string): WorkflowRun | null {
         const encoded = encodeURIComponent(branch);
         const response = this.client.execJson<WorkflowRunsResponse>([
             'api',
-            `repos/${this.client.owner}/${this.client.repoName}/actions/runs?branch=${encoded}&per_page=100`,
+            `repos/${this.client.owner}/${this.client.repoName}/actions/runs?branch=${encoded}&per_page=10`,
         ]);
 
         if (!response) return null;
-        // API returns runs sorted by created_at desc; first match is the latest.
-        return response.workflow_runs.find(
-            (r) => r.conclusion !== null && NUDGE_CONCLUSIONS.has(r.conclusion),
-        ) ?? null;
+
+        // Find the most recent completed run (has a non-null conclusion).
+        const latestCompleted = response.workflow_runs.find((r) => r.conclusion !== null);
+        if (!latestCompleted) return null;
+
+        // Only nudge if that most recent completed run has a bad conclusion.
+        if (NUDGE_CONCLUSIONS.has(latestCompleted.conclusion!)) {
+            return latestCompleted;
+        }
+
+        return null;
     }
 
     /** Nudge all PRs with failed CI runs. */

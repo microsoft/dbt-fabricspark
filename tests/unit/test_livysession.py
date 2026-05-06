@@ -6,6 +6,9 @@ import tempfile
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
+import pytest
+import requests
+
 from dbt.adapters.fabricspark.connections import LivySessionConnectionWrapper
 from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
 from dbt.adapters.fabricspark.livysession import (
@@ -102,6 +105,205 @@ class TestLivySession:
         assert session.is_local_mode is False
         assert "workspaces/1de8390c-9aca-4790-bee8-72049109c0f4" in session.connect_url
         assert "lakehouses/8c5bc260-bc3a-4898-9ada-01e433d461ba" in session.connect_url
+
+
+class TestCreateSessionRetry:
+    """Tests for retry logic in LivySession.create_session()."""
+
+    def _make_credentials(self):
+        return FabricSparkCredentials(
+            method="livy",
+            livy_mode="local",
+            livy_url="http://localhost:8998",
+            spark_config={"name": "test-session"},
+        )
+
+    def _make_response(self, status_code, json_body=None):
+        mock_resp = MagicMock()
+        mock_resp.status_code = status_code
+        mock_resp.json.return_value = json_body or {"id": 42}
+        mock_resp.raise_for_status.return_value = None
+        if status_code >= 400:
+            mock_resp.raise_for_status.side_effect = requests.exceptions.HTTPError(
+                response=mock_resp
+            )
+        return mock_resp
+
+    @patch("dbt.adapters.fabricspark.livysession.get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.livysession.time.sleep")
+    @patch("dbt.adapters.fabricspark.livysession.requests.post")
+    @patch("dbt.adapters.fabricspark.livysession.LivySession.wait_for_session_start")
+    def test_create_session_succeeds_immediately(
+        self, mock_wait, mock_post, mock_sleep, mock_headers
+    ):
+        """create_session should succeed on the first attempt with no retries."""
+        mock_post.return_value = self._make_response(201)
+        session = LivySession(self._make_credentials())
+
+        session.create_session({"kind": "sql"})
+
+        assert mock_post.call_count == 1
+        mock_sleep.assert_not_called()
+
+    @patch("dbt.adapters.fabricspark.livysession.get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.livysession.time.sleep")
+    @patch("dbt.adapters.fabricspark.livysession.requests.post")
+    @patch("dbt.adapters.fabricspark.livysession.LivySession.wait_for_session_start")
+    def test_create_session_retries_on_404_then_succeeds(
+        self, mock_wait, mock_post, mock_sleep, mock_headers
+    ):
+        """create_session should retry on HTTP 404 and succeed on the next attempt."""
+        mock_post.side_effect = [
+            self._make_response(404),
+            self._make_response(201),
+        ]
+        session = LivySession(self._make_credentials())
+
+        session.create_session({"kind": "sql"})
+
+        assert mock_post.call_count == 2
+        mock_sleep.assert_called_once_with(5)  # 5 * 2**0 = 5s on first retry
+
+    @patch("dbt.adapters.fabricspark.livysession.get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.livysession.time.sleep")
+    @patch("dbt.adapters.fabricspark.livysession.requests.post")
+    @patch("dbt.adapters.fabricspark.livysession.LivySession.wait_for_session_start")
+    def test_create_session_retries_on_500_then_succeeds(
+        self, mock_wait, mock_post, mock_sleep, mock_headers
+    ):
+        """create_session should retry on HTTP 5xx and succeed on the next attempt."""
+        mock_post.side_effect = [
+            self._make_response(500),
+            self._make_response(201),
+        ]
+        session = LivySession(self._make_credentials())
+
+        session.create_session({"kind": "sql"})
+
+        assert mock_post.call_count == 2
+        mock_sleep.assert_called_once_with(5)
+
+    @patch("dbt.adapters.fabricspark.livysession.get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.livysession.time.sleep")
+    @patch("dbt.adapters.fabricspark.livysession.requests.post")
+    def test_create_session_raises_after_all_retries_exhausted(
+        self, mock_post, mock_sleep, mock_headers
+    ):
+        """create_session should raise after all 5 retry attempts return 404."""
+        mock_post.return_value = self._make_response(404)
+        session = LivySession(self._make_credentials())
+
+        with pytest.raises(Exception, match="Http Error"):
+            session.create_session({"kind": "sql"})
+
+        # 5 total attempts (initial + 4 retries)
+        assert mock_post.call_count == 5
+        # sleep called 4 times: 5, 10, 20, 40 seconds
+        assert mock_sleep.call_count == 4
+        mock_sleep.assert_any_call(5)
+        mock_sleep.assert_any_call(10)
+        mock_sleep.assert_any_call(20)
+        mock_sleep.assert_any_call(40)
+
+    @patch("dbt.adapters.fabricspark.livysession.get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.livysession.time.sleep")
+    @patch("dbt.adapters.fabricspark.livysession.requests.post")
+    def test_create_session_does_not_retry_on_401(self, mock_post, mock_sleep, mock_headers):
+        """create_session should NOT retry on 401 auth errors (non-transient)."""
+        mock_post.return_value = self._make_response(401)
+        session = LivySession(self._make_credentials())
+
+        with pytest.raises(Exception, match="Http Error"):
+            session.create_session({"kind": "sql"})
+
+        assert mock_post.call_count == 1
+        mock_sleep.assert_not_called()
+
+
+class TestWaitForSessionStartTransientErrors:
+    """Tests for transient error handling in LivySession.wait_for_session_start()."""
+
+    def _make_credentials(self):
+        return FabricSparkCredentials(
+            method="livy",
+            livy_mode="local",
+            livy_url="http://localhost:8998",
+            spark_config={"name": "test-session"},
+        )
+
+    def _make_idle_response(self):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"state": "idle"}
+        return mock_resp
+
+    @patch("dbt.adapters.fabricspark.livysession.get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.livysession.time.sleep")
+    @patch("dbt.adapters.fabricspark.livysession.time.time")
+    @patch("dbt.adapters.fabricspark.livysession.requests.get")
+    def test_wait_retries_on_request_exception(
+        self, mock_get, mock_time, mock_sleep, mock_headers
+    ):
+        """wait_for_session_start should retry when a transient RequestException occurs."""
+        mock_time.return_value = 0  # Always within deadline
+        mock_get.side_effect = [
+            requests.exceptions.ConnectionError("connection refused"),
+            self._make_idle_response(),
+        ]
+
+        session = LivySession(self._make_credentials())
+        session.session_id = "42"
+
+        session.wait_for_session_start()
+
+        assert mock_get.call_count == 2
+        # sleep called once for the retry after the transient error
+        mock_sleep.assert_called_once()
+
+    @patch("dbt.adapters.fabricspark.livysession.get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.livysession.time.sleep")
+    @patch("dbt.adapters.fabricspark.livysession.time.time")
+    @patch("dbt.adapters.fabricspark.livysession.requests.get")
+    def test_wait_retries_on_json_decode_error(
+        self, mock_get, mock_time, mock_sleep, mock_headers
+    ):
+        """wait_for_session_start should retry when the response body is not valid JSON."""
+        mock_time.return_value = 0  # Always within deadline
+
+        bad_resp = MagicMock()
+        bad_resp.json.side_effect = requests.exceptions.JSONDecodeError("not valid JSON", "", 0)
+
+        mock_get.side_effect = [
+            bad_resp,
+            self._make_idle_response(),
+        ]
+
+        session = LivySession(self._make_credentials())
+        session.session_id = "42"
+
+        session.wait_for_session_start()
+
+        assert mock_get.call_count == 2
+        mock_sleep.assert_called_once()
+
+    @patch("dbt.adapters.fabricspark.livysession.get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.livysession.time.sleep")
+    @patch("dbt.adapters.fabricspark.livysession.time.time")
+    @patch("dbt.adapters.fabricspark.livysession.requests.get")
+    def test_wait_succeeds_immediately_without_retries(
+        self, mock_get, mock_time, mock_sleep, mock_headers
+    ):
+        """wait_for_session_start should complete without sleeping when session is immediately idle."""
+        mock_time.return_value = 0  # Always within deadline
+
+        mock_get.return_value = self._make_idle_response()
+
+        session = LivySession(self._make_credentials())
+        session.session_id = "42"
+
+        session.wait_for_session_start()
+
+        assert mock_get.call_count == 1
+        mock_sleep.assert_not_called()
 
 
 class TestLivyCursor:
@@ -506,3 +708,123 @@ class TestFixBinding:
             "(cast(1.0 as bigint),cast('Cote d\\'Ivoire' as string)),"
             "(cast(2.0 as bigint),cast('Tonga' as string))"
         )
+
+
+class TestFetchmany:
+    """Tests for LivyCursor.fetchmany and LivySessionConnectionWrapper.fetchmany."""
+
+    def _make_cursor(self, rows):
+        """Helper: return a LivyCursor with ``_rows`` pre-set."""
+        credentials = FabricSparkCredentials(
+            method="livy",
+            livy_mode="local",
+            spark_config={"name": "test-session"},
+        )
+        mock_session = MagicMock()
+        mock_session.session_id = "s1"
+        cursor = LivyCursor(credentials, mock_session)
+        cursor._rows = rows
+        return cursor
+
+    def test_fetchmany_size_less_than_total(self):
+        """fetchmany(2) returns first 2 rows from a 3-row result."""
+        rows = [(1,), (2,), (3,)]
+        cursor = self._make_cursor(rows)
+        assert cursor.fetchmany(2) == [(1,), (2,)]
+
+    def test_fetchmany_size_greater_than_total(self):
+        """fetchmany(10) returns all rows when fewer than 10 exist."""
+        rows = [(1,), (2,)]
+        cursor = self._make_cursor(rows)
+        assert cursor.fetchmany(10) == [(1,), (2,)]
+
+    def test_fetchmany_size_none_returns_all(self):
+        """fetchmany(None) returns all rows (same as fetchall)."""
+        rows = [(1,), (2,), (3,)]
+        cursor = self._make_cursor(rows)
+        assert cursor.fetchmany(None) == rows
+
+    def test_fetchmany_size_zero(self):
+        """fetchmany(0) returns an empty list."""
+        rows = [(1,), (2,)]
+        cursor = self._make_cursor(rows)
+        assert cursor.fetchmany(0) == []
+
+    def test_fetchmany_rows_none_returns_none(self):
+        """fetchmany returns None when the cursor has no result set."""
+        cursor = self._make_cursor(None)
+        assert cursor.fetchmany(5) is None
+
+    def test_wrapper_fetchmany_delegates_to_cursor(self):
+        """LivySessionConnectionWrapper.fetchmany delegates to the inner cursor."""
+        mock_cursor = MagicMock()
+        mock_cursor.fetchmany.return_value = [(1,), (2,)]
+        mock_handle = MagicMock()
+        mock_handle.cursor.return_value = mock_cursor
+
+        wrapper = LivySessionConnectionWrapper(mock_handle)
+        wrapper.cursor()  # sets self._cursor
+        result = wrapper.fetchmany(2)
+
+        mock_cursor.fetchmany.assert_called_once_with(2)
+        assert result == [(1,), (2,)]
+
+    def test_wrapper_fetchone_delegates_to_cursor(self):
+        """LivySessionConnectionWrapper.fetchone delegates to the inner cursor."""
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = (1, "a")
+        mock_handle = MagicMock()
+        mock_handle.cursor.return_value = mock_cursor
+
+        wrapper = LivySessionConnectionWrapper(mock_handle)
+        wrapper.cursor()  # sets self._cursor
+        result = wrapper.fetchone()
+
+        mock_cursor.fetchone.assert_called_once_with()
+        assert result == (1, "a")
+
+    def test_fetchone_resets_on_new_execute(self):
+        """After execute() is called, _fetch_index resets so fetchone() returns
+        row 0 even if it was previously advanced."""
+        credentials = FabricSparkCredentials(
+            method="livy",
+            livy_mode="local",
+            spark_config={"name": "test-session"},
+        )
+        mock_session = MagicMock()
+        mock_session.session_id = "s1"
+        mock_session.is_new_session_required = False
+        cursor = LivyCursor(credentials, mock_session)
+
+        # Simulate a first execute result: two rows
+        first_rows = [("a",), ("b",)]
+        # Manually set _rows and advance the index (as if fetchone was called once)
+        cursor._rows = first_rows
+        cursor._fetch_index = 1
+
+        # Now simulate a second execute (single-row result) via patching
+        # the internal helpers that make remote calls.
+        second_rows = [("c",)]
+        second_result = {
+            "output": {
+                "status": "ok",
+                "data": {
+                    "application/json": {
+                        "data": second_rows,
+                        "schema": {"fields": []},
+                    }
+                },
+            }
+        }
+
+        with (
+            patch.object(cursor, "_getLivySQL", return_value="SELECT 1"),
+            patch.object(cursor, "_submitLivyCode", return_value=MagicMock()),
+            patch.object(cursor, "_getLivyResult", return_value=second_result),
+        ):
+            cursor.execute("SELECT 1")
+
+        # After execute(), _fetch_index must have been reset to 0
+        assert cursor._fetch_index == 0
+        # fetchone() should return the first (only) row of the new result
+        assert cursor.fetchone() == ("c",)

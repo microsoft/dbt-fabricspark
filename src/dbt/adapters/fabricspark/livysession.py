@@ -13,12 +13,12 @@ from typing import Any, Optional
 import requests
 from azure.core.credentials import AccessToken
 from azure.identity import AzureCliCredential, ClientSecretCredential
-from dbt.adapters.events.logging import AdapterLogger
-from dbt.adapters.exceptions import FailedToConnectError
 from dbt_common.exceptions import DbtDatabaseError, DbtRuntimeError
 from dbt_common.utils.encoding import DECIMALS
 from requests.models import Response
 
+from dbt.adapters.events.logging import AdapterLogger
+from dbt.adapters.exceptions import FailedToConnectError
 from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
 from dbt.adapters.fabricspark.shortcuts import ShortcutClient
 

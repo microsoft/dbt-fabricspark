@@ -506,3 +506,45 @@ class TestFixBinding:
             "(cast(1.0 as bigint),cast('Cote d\\'Ivoire' as string)),"
             "(cast(2.0 as bigint),cast('Tonga' as string))"
         )
+
+
+class TestFetchmany:
+    """Tests for LivySessionConnectionWrapper.fetchmany — DB-API 2.0 cursor method.
+
+    ``dbt-adapters``' ``get_result_from_cursor`` always calls
+    ``cursor.fetchmany(limit)``; without this method ``dbt show
+    --inline-direct`` (and any other inline-fetch flow) crashes with
+    ``AttributeError``.
+    """
+
+    def _wrapper_with_rows(self, rows):
+        """Build a wrapper whose underlying cursor returns ``rows`` from fetchall."""
+        wrapper = LivySessionConnectionWrapper(handle=MagicMock())
+        wrapper._cursor = MagicMock()
+        wrapper._cursor.fetchall.return_value = rows
+        return wrapper
+
+    def test_returns_first_n_rows_when_size_smaller_than_total(self):
+        wrapper = self._wrapper_with_rows([1, 2, 3, 4, 5])
+        assert wrapper.fetchmany(3) == [1, 2, 3]
+
+    def test_returns_all_rows_when_size_larger_than_total(self):
+        wrapper = self._wrapper_with_rows([1, 2])
+        assert wrapper.fetchmany(10) == [1, 2]
+
+    def test_size_none_returns_all_rows(self):
+        """PEP 249 contract: ``size=None`` returns all rows."""
+        wrapper = self._wrapper_with_rows([1, 2, 3])
+        assert wrapper.fetchmany() == [1, 2, 3]
+
+    def test_size_zero_returns_empty(self):
+        wrapper = self._wrapper_with_rows([1, 2, 3])
+        assert wrapper.fetchmany(0) == []
+
+    def test_none_rows_returns_empty(self):
+        """Defensive: if the underlying cursor reports ``fetchall() is None``
+        (e.g. statement returned no result set), surface an empty list rather
+        than crashing on the slice."""
+        wrapper = self._wrapper_with_rows(None)
+        assert wrapper.fetchmany(5) == []
+        assert wrapper.fetchmany() == []

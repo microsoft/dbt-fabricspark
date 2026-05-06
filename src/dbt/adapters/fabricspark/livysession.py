@@ -1369,6 +1369,28 @@ class LivySessionConnectionWrapper(object):
     def fetchall(self):
         return self._cursor.fetchall()
 
+    def fetchmany(self, size=None):
+        """Return up to ``size`` rows from the executed query result.
+
+        DB-API 2.0 / PEP 249 cursor method. ``dbt-adapters``'
+        ``get_result_from_cursor`` calls this with the configured fetch
+        limit (e.g. ``dbt show --inline-direct`` always invokes
+        ``cursor.fetchmany(limit)``); without this method the show /
+        inline-direct flow crashes with ``AttributeError``.
+
+        Implementation: delegate to ``fetchall`` (the underlying Livy
+        cursor materialises the entire result set anyway — there is no
+        true streaming chunk in the Livy statement-result protocol) and
+        slice. ``size=None`` returns all rows, matching the PEP 249
+        contract for cursors with ``arraysize`` unset.
+        """
+        rows = self._cursor.fetchall()
+        if rows is None:
+            return []
+        if size is not None:
+            return rows[:size]
+        return rows
+
     def execute(self, sql, bindings=None):
         if sql.strip().endswith(";"):
             sql = sql.strip()[:-1]

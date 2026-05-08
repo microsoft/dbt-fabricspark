@@ -1,0 +1,20 @@
+name: 'ws2_seed_fixture'
+version: '1.0.0'
+profile: 'ws2_seed_fixture'
+config-version: 2
+
+# Tiny project that exists solely to populate `cross_ws_fixture` in the
+# secondary Fabric workspace (WS2) so the cross-workspace functional tests
+# in WS1 can read it via 4-part naming. Invoked by
+# `tests/functional/orchestrator.py::cmd_seed_ws2`.
+
+seed-paths: ["seeds"]
+target-path: target
+
+seeds:
+  ws2_seed_fixture:
+    cross_ws_fixture:
+      +column_types:
+        id: int
+        name: string
+        price: double

@@ -54,6 +54,8 @@ dev = [
     "pytest-json-report~=1.5",
     #"dbt-tests-adapter @ git+https://github.com/dbt-labs/dbt-adapters.git@v1.10.0#egg=dbt-tests-adapter&subdirectory=dbt-tests-adapter",
     "dbt-tests-adapter",
+    # Functional test scheduler
+    "psutil>=5.9,<8.0",
     # Linting & formatting
     "ruff>=0.11.2",
     # Packaging

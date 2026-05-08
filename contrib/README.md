@@ -66,10 +66,21 @@
    gh auth login
    ```
 
-1. Create a `test.env` file with your personal Fabric workspace ID - you need `Contributor`:
+1. Create a `test.env` file with the two Fabric workspace IDs and display names — you need `Contributor` on both. The functional test suite uses **two** workspaces:
+
+    - **Workspace 1 (`WORKSPACE_ID_1` / `WORKSPACE_NAME_1`)** — the *primary* workspace where dbt models are materialized during tests.
+    - **Workspace 2 (`WORKSPACE_ID_2` / `WORKSPACE_NAME_2`)** — the *secondary* workspace that hosts a seeded fixture lakehouse, used to verify cross-workspace 4-part naming end-to-end.
 
    ```bash
    GIT_ROOT=$(git rev-parse --show-toplevel)
-   read -p "Enter your Fabric workspace ID where you have Contributor or Admin: " workspace_id
-   echo "WORKSPACE_ID=${workspace_id}" > "${GIT_ROOT}/test.env"
+   read -p "Enter Fabric workspace 1 ID: " ws1_id
+   read -p "Enter Fabric workspace 1 display name: " ws1_name
+   read -p "Enter Fabric workspace 2 ID: " ws2_id
+   read -p "Enter Fabric workspace 2 display name: " ws2_name
+   {
+       echo "WORKSPACE_ID_1=${ws1_id}"
+       echo "WORKSPACE_NAME_1=${ws1_name}"
+       echo "WORKSPACE_ID_2=${ws2_id}"
+       echo "WORKSPACE_NAME_2=${ws2_name}"
+   } > "${GIT_ROOT}/test.env"
    ```

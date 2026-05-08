@@ -484,6 +484,180 @@ class TestSparkAdapter(unittest.TestCase):
         finally:
             FabricSparkRelation._schemas_enabled = False
 
+    # -------------------------------------------------------------------- #
+    # Cross-workspace 4-part naming                                        #
+    # -------------------------------------------------------------------- #
+
+    def test_relation_four_part_mode(self):
+        """Setting `workspace` on a relation renders 4-part SQL.
+
+        Each segment is independently backtick-quoted so Spark/Livy parses
+        it as four distinct identifiers (per Fabric docs for cross-workspace
+        access against schema-enabled lakehouses).
+        """
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            rel = FabricSparkRelation.create(
+                database="silver_lh",
+                schema="dbo",
+                identifier="orders",
+                workspace="prod_ws",
+            )
+            assert rel.workspace == "prod_ws"
+            assert str(rel) == "`prod_ws`.`silver_lh`.`dbo`.orders"
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_relation_workspace_none_preserves_three_part(self):
+        """Relations without workspace render unchanged 3-part SQL (no regression)."""
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            rel = FabricSparkRelation.create(
+                database="silver_lh", schema="dbo", identifier="orders", workspace=None
+            )
+            assert rel.workspace is None
+            assert str(rel) == "`silver_lh`.`dbo`.orders"
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_relation_workspace_mixed_case_preserved(self):
+        """Workspace names like 'dbt Fabric Spark 1' (spaces, mixed case) are preserved."""
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            rel = FabricSparkRelation.create(
+                database="silver_lh",
+                schema="dbo",
+                identifier="orders",
+                workspace="dbt Fabric Spark 1",
+            )
+            # Mixed-case + space-bearing workspace round-trips through the cache
+            # match path (workspace is a render decoration, not a matching field).
+            assert rel.matches(database="silver_lh", schema="dbo", identifier="orders")
+            assert str(rel) == "`dbt Fabric Spark 1`.`silver_lh`.`dbo`.orders"
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_relation_workspace_temp_view_excludes_prefix(self):
+        """Temp views (.include(database=False, schema=False)) drop the workspace prefix.
+
+        Temp views are session-scoped — emitting a 4-part name would cause
+        Spark to complain about cross-namespace temporary views.  The render
+        gating on ``include_policy.database`` ensures workspace is only emitted
+        when the database segment is also included.
+        """
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            rel = FabricSparkRelation.create(
+                database="silver_lh",
+                schema="dbo",
+                identifier="my_temp",
+                workspace="prod_ws",
+            )
+            temp = rel.include(database=False, schema=False)
+            # Workspace remains on the dataclass (preserved through incorporate)
+            # but is not rendered when database is excluded.
+            assert temp.workspace == "prod_ws"
+            assert str(temp) == "my_temp"
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_relation_workspace_incorporate_preserves_field(self):
+        """``incorporate`` round-trips the workspace field via to_dict/from_dict."""
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            rel = FabricSparkRelation.create(
+                database="silver_lh",
+                schema="dbo",
+                identifier="orders",
+                workspace="prod_ws",
+            )
+            renamed = rel.incorporate(path={"identifier": "orders_renamed"})
+            assert renamed.workspace == "prod_ws"
+            assert str(renamed) == "`prod_ws`.`silver_lh`.`dbo`.orders_renamed"
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_validate_workspace_name_supported_runtime_schema_enabled(self):
+        """When the runtime flag says schema-enabled, workspace_name is allowed."""
+        config = self._get_target_livy(self.project_cfg)
+        adapter = FabricSparkAdapter(config, self.mp_context)
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            # Should not raise
+            adapter.validate_workspace_name_supported(
+                "prod_ws",
+                target_database="silver_lh",
+                target_schema="dbo",
+                target_lakehouse="bronze_lh",
+            )
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_validate_workspace_name_supported_parse_time_schema_enabled(self):
+        """Parse-time heuristic: schema != lakehouse implies schema-enabled, allowed."""
+        config = self._get_target_livy(self.project_cfg)
+        adapter = FabricSparkAdapter(config, self.mp_context)
+        FabricSparkRelation._schemas_enabled = False  # runtime not yet set
+        try:
+            # schema=dbo != lakehouse=bronze_lh → parse-time inference says schema-enabled
+            adapter.validate_workspace_name_supported(
+                "prod_ws",
+                target_database="silver_lh",
+                target_schema="dbo",
+                target_lakehouse="bronze_lh",
+            )
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_validate_workspace_name_supported_no_op_when_unset(self):
+        """When workspace_name is None or empty, validation is a no-op."""
+        config = self._get_target_livy(self.project_cfg)
+        adapter = FabricSparkAdapter(config, self.mp_context)
+        FabricSparkRelation._schemas_enabled = False
+        try:
+            adapter.validate_workspace_name_supported(
+                None, target_schema="lh", target_lakehouse="lh"
+            )
+            adapter.validate_workspace_name_supported(
+                "", target_schema="lh", target_lakehouse="lh"
+            )
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_validate_workspace_name_supported_blocks_no_schema_mode(self):
+        """workspace_name on a non-schema-enabled lakehouse raises a clear error."""
+        from dbt_common.exceptions import DbtRuntimeError
+
+        config = self._get_target_livy(self.project_cfg)
+        adapter = FabricSparkAdapter(config, self.mp_context)
+        FabricSparkRelation._schemas_enabled = False
+        try:
+            with self.assertRaises(DbtRuntimeError) as ctx:
+                adapter.validate_workspace_name_supported(
+                    "prod_ws",
+                    target_database="my_lh",
+                    target_schema="my_lh",  # schema == lakehouse → not schema-enabled
+                    target_lakehouse="my_lh",
+                )
+            msg = str(ctx.exception)
+            assert "workspace_name" in msg
+            assert "schema-enabled" in msg
+            assert "Cross-Workspace" in msg or "OneLake shortcut" in msg
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_workspace_name_registered_on_adapter_config(self):
+        """workspace_name is a first-class FabricSparkConfig key."""
+        from dataclasses import fields
+
+        from dbt.adapters.fabricspark.impl import FabricSparkConfig
+
+        field_names = {f.name for f in fields(FabricSparkConfig)}
+        assert "workspace_name" in field_names, (
+            "workspace_name must be registered on FabricSparkConfig so model "
+            "config() values flow through node.config rather than being silently ignored."
+        )
+
     def test_profile_with_schema(self):
         """Test that schema is accepted as user input and database is derived from lakehouse."""
         profile = {

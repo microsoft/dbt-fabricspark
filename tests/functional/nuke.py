@@ -103,12 +103,12 @@ def nuke_workspace_task(shared_state: dict[str, Any]) -> None:
         StaticTokenProvider,
     )
 
-    workspace_id = os.environ.get("WORKSPACE_ID")
-    api_endpoint = os.environ.get("LIVY_ENDPOINT", "https://api.fabric.microsoft.com/v1")
-
+    workspace_id = os.environ.get("WORKSPACE_ID_1")
     if not workspace_id:
-        logger.warning("WORKSPACE_ID not set, skipping nuke")
-        return
+        raise RuntimeError(
+            "WORKSPACE_ID_1 must be set in test.env or the environment for nuke_workspace_task."
+        )
+    api_endpoint = os.environ.get("LIVY_ENDPOINT", "https://api.fabric.microsoft.com/v1")
 
     token = os.environ.get("FABRIC_INTEGRATION_TESTS_TOKEN")
     provider = StaticTokenProvider(token) if token else AzureCliTokenProvider()

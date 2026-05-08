@@ -105,12 +105,67 @@ def pytest_collectreport(report):
         _write_fail_sentinel(report.nodeid)
 
 
+def _require_env(key: str) -> str:
+    """Return ``os.environ[key]`` or raise a clear ``RuntimeError``.
+
+    Mirrors the orchestrator's helper so a missing env var fails the test
+    session at fixture-resolution time rather than letting xdist workers
+    surface a confusing ``NoneType`` traceback later.
+    """
+    value = os.environ.get(key)
+    if not value:
+        raise RuntimeError(
+            f"{key} must be set in test.env or the environment for the functional test suite."
+        )
+    return value
+
+
 @pytest.fixture(scope="session")
 def workspace_id():
-    wid = os.getenv("WORKSPACE_ID")
-    if not wid:
-        pytest.skip("WORKSPACE_ID not set — cannot run functional tests")
-    return wid
+    """Primary Fabric workspace UUID. Raises if ``WORKSPACE_ID_1`` is unset."""
+    return _require_env("WORKSPACE_ID_1")
+
+
+@pytest.fixture(scope="session")
+def workspace_name():
+    """Display name of the primary Fabric workspace.
+
+    Required by the cross-workspace functional tests for 4-part rendering.
+    Raises if ``WORKSPACE_NAME_1`` is unset.
+    """
+    return _require_env("WORKSPACE_NAME_1")
+
+
+@pytest.fixture(scope="session")
+def ws2_workspace_id():
+    """Secondary (read-source) Fabric workspace UUID for cross-workspace tests."""
+    return _require_env("WORKSPACE_ID_2")
+
+
+@pytest.fixture(scope="session")
+def ws2_workspace_name():
+    """Display name of the secondary Fabric workspace."""
+    return _require_env("WORKSPACE_NAME_2")
+
+
+@pytest.fixture(scope="session")
+def ws2_lakehouse_name():
+    """Lakehouse name in WS2.
+
+    Populated by the orchestrator's ``provision --workspace ws2`` step. Raises
+    if it isn't set, which means the pipeline was invoked out of order.
+    """
+    return _require_env("WS2_LAKEHOUSE_NAME")
+
+
+@pytest.fixture(scope="session")
+def ws2_lakehouse_id():
+    """Lakehouse UUID in WS2.
+
+    Populated by the orchestrator's ``provision --workspace ws2`` step. Raises
+    if it isn't set.
+    """
+    return _require_env("WS2_LAKEHOUSE_ID")
 
 
 @pytest.fixture(scope="session")

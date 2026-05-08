@@ -21,6 +21,9 @@ logs/
 .env
 test.env
 
+# dbt local user state (auto-generated; not for VCS)
+.user.yml
+
 # Warehouse
 warehouse/
 

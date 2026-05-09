@@ -23,19 +23,29 @@ groups:
 
 tasks:
   - Command: uv run python -m tests.functional.orchestrator nuke
-    Name: Pre-test workspace nuke
+    Name: Pre-test workspace nuke (WS1 + WS2)
     Group: Pre-Test-Cleanup
     TimeoutInMinutes: 5
 
   - Command: uv run python -m tests.functional.orchestrator provision --schema-mode no_schema
-    Name: Provision no_schema lakehouse
+    Name: Provision no_schema lakehouse (WS1)
     Group: Provision-Infra
     TimeoutInMinutes: 5
 
   - Command: uv run python -m tests.functional.orchestrator provision --schema-mode with_schema
-    Name: Provision with_schema lakehouse
+    Name: Provision with_schema lakehouse (WS1)
     Group: Provision-Infra
     TimeoutInMinutes: 5
+
+  - Command: uv run python -m tests.functional.orchestrator provision --schema-mode with_schema --workspace ws2
+    Name: Provision with_schema lakehouse (WS2 cross-workspace read source)
+    Group: Provision-Infra
+    TimeoutInMinutes: 5
+
+  - Command: uv run python -m tests.functional.orchestrator seed-ws2
+    Name: Seed cross_ws_fixture into WS2 lakehouse
+    Group: Provision-Infra
+    TimeoutInMinutes: 25
 
   - Command: uv run python -m tests.functional.orchestrator create-session --schema-mode no_schema --count 4
     Name: Create Livy session (no_schema)
@@ -53,11 +63,11 @@ tasks:
     TimeoutInMinutes: 180
 
   - Command: uv run python -m tests.functional.orchestrator run-tests --schema-mode with_schema
-    Name: Functional tests (with_schema)
+    Name: Functional tests (with_schema, includes cross-workspace)
     Group: Integration-Tests
     TimeoutInMinutes: 180
 
   - Command: uv run python -m tests.functional.orchestrator nuke
-    Name: Post-test workspace nuke
+    Name: Post-test workspace nuke (WS1 + WS2)
     Group: Post-Test-Cleanup
     TimeoutInMinutes: 5

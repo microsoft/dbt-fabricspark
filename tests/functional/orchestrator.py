@@ -4,6 +4,7 @@ import argparse
 import logging
 import os
 import random
+import subprocess
 import sys
 import time
 
@@ -36,18 +37,61 @@ def _append_shared_env(key: str, value: str) -> None:
     os.environ[key] = value
 
 
-def _make_client():
+REQUIRED_ENV_VARS = (
+    "WORKSPACE_ID_1",
+    "WORKSPACE_NAME_1",
+    "WORKSPACE_ID_2",
+    "WORKSPACE_NAME_2",
+)
+
+
+def _require_env(key: str) -> str:
+    """Return ``os.environ[key]`` or raise a clear ``RuntimeError``.
+
+    Used by every workspace accessor below so a missing env var fails the
+    pipeline at the first command that touches it instead of letting the
+    process limp along with ``None`` and surface as a confusing
+    ``NoneType`` traceback later.
+    """
+    value = os.environ.get(key)
+    if not value:
+        raise RuntimeError(
+            f"{key} must be set in test.env or the environment. "
+            f"All four multi-workspace vars are required: {', '.join(REQUIRED_ENV_VARS)}."
+        )
+    return value
+
+
+def _ws1_id() -> str:
+    """Primary Fabric workspace UUID. Raises if ``WORKSPACE_ID_1`` is unset."""
+    return _require_env("WORKSPACE_ID_1")
+
+
+def _ws2_id() -> str:
+    """Secondary Fabric workspace UUID. Raises if ``WORKSPACE_ID_2`` is unset."""
+    return _require_env("WORKSPACE_ID_2")
+
+
+def _ws1_name() -> str:
+    """Display name of the primary Fabric workspace. Raises if unset."""
+    return _require_env("WORKSPACE_NAME_1")
+
+
+def _ws2_name() -> str:
+    """Display name of the secondary Fabric workspace. Raises if unset."""
+    return _require_env("WORKSPACE_NAME_2")
+
+
+def _make_client(workspace_id: str | None = None):
+    """Build a FabricClient for the given workspace."""
     from tests.functional.fabric_client import (
         AzureCliTokenProvider,
         FabricClient,
         StaticTokenProvider,
     )
 
-    workspace_id = os.environ.get("WORKSPACE_ID")
+    workspace_id = workspace_id or _ws1_id()
     api_endpoint = os.environ.get("LIVY_ENDPOINT", "https://api.fabric.microsoft.com/v1")
-    if not workspace_id:
-        logger.error("WORKSPACE_ID not set")
-        sys.exit(1)
     token = os.environ.get("FABRIC_INTEGRATION_TESTS_TOKEN")
     provider = StaticTokenProvider(token) if token else AzureCliTokenProvider()
     return FabricClient(
@@ -56,46 +100,128 @@ def _make_client():
 
 
 def cmd_nuke() -> None:
-    """Delete items from the workspace that match this branch or are stale (>24h)."""
+    """Delete items from the workspace(s) that match this branch or are stale (>24h).
+
+    Cleans both WS1 and WS2 so cross-workspace lakehouses
+    are also reaped. Each workspace is nuked independently with the same
+    branch/run filter.
+    """
     from tests.functional.nuke import current_branch_hash, current_run_id, nuke_workspace
 
-    client = _make_client()
     bhash = current_branch_hash()
     run_id = current_run_id()
-    logger.info(
-        "Nuking workspace items for branch hash '%s', run '%s', and stale items",
-        bhash,
-        run_id,
-    )
-    nuke_workspace(client, bhash, run_id)
+
+    workspaces: list[tuple[str, str]] = []  # (workspace_id, label)
+    workspaces.append((_ws1_id(), "WS1"))
+    workspaces.append((_ws2_id(), "WS2"))
+
+    for workspace_id, label in workspaces:
+        logger.info(
+            "Nuking %s (%s) — branch hash '%s', run '%s'",
+            label,
+            workspace_id,
+            bhash,
+            run_id,
+        )
+        client = _make_client(workspace_id)
+        nuke_workspace(client, bhash, run_id)
 
 
 def cmd_provision() -> None:
-    """Create a lakehouse and write its details to the shared env file."""
+    """Create a lakehouse and write its details to the shared env file.
+
+    By default provisions in WS1 (the test write target). Pass ``--workspace ws2``
+    to provision the secondary workspace's read-source lakehouse used by the
+    cross-workspace functional tests.
+    """
     from tests.functional.nuke import current_branch_hash, current_run_id
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--schema-mode", required=True, choices=("no_schema", "with_schema"))
+    parser.add_argument(
+        "--workspace",
+        choices=("ws1", "ws2"),
+        default="ws1",
+        help="Which Fabric workspace to provision into. ws2 is for cross-workspace tests.",
+    )
     args = parser.parse_args(sys.argv[2:])
 
-    client = _make_client()
+    if args.workspace == "ws2":
+        client = _make_client(_ws2_id())
+    else:
+        client = _make_client()
+
     enable_schemas = args.schema_mode == "with_schema"
     ts = int(time.time())
     bhash = current_branch_hash()
     run_id = current_run_id()
-    mode_suffix = "NoSchema" if args.schema_mode == "no_schema" else "WithSchema"
+    if args.workspace == "ws2":
+        mode_suffix = "CrossWs"
+    else:
+        mode_suffix = "NoSchema" if args.schema_mode == "no_schema" else "WithSchema"
     # Include the run ID so each CI run's nuke only removes its own lakehouses,
     # preventing concurrent runs for the same branch from interfering.
     name = f"dbt_{bhash}_r{run_id}_{ts}_{mode_suffix}"
 
-    logger.info("Creating lakehouse '%s' (schemas=%s)...", name, enable_schemas)
+    logger.info(
+        "Creating lakehouse '%s' in %s (schemas=%s)...",
+        name,
+        args.workspace.upper(),
+        enable_schemas,
+    )
     lh = client.create_lakehouse(name, enable_schemas=enable_schemas)
     logger.info("Created: %s (id=%s)", lh.name, lh.id)
 
-    prefix = args.schema_mode.upper()
-    _append_shared_env(f"{prefix}_LAKEHOUSE_ID", lh.id)
-    _append_shared_env(f"{prefix}_LAKEHOUSE_NAME", lh.name)
+    if args.workspace == "ws2":
+        _append_shared_env("WS2_LAKEHOUSE_ID", lh.id)
+        _append_shared_env("WS2_LAKEHOUSE_NAME", lh.name)
+        _append_shared_env("WS2_WORKSPACE_NAME", _ws2_name())
+    else:
+        prefix = args.schema_mode.upper()
+        _append_shared_env(f"{prefix}_LAKEHOUSE_ID", lh.id)
+        _append_shared_env(f"{prefix}_LAKEHOUSE_NAME", lh.name)
     logger.info("Written to %s", SHARED_ENV_FILE)
+
+
+def cmd_seed_ws2() -> None:
+    """Run ``dbt seed`` against WS2's lakehouse to populate the cross-workspace fixture.
+
+    The seed CSV lives at ``tests/functional/fixtures/ws2_seed/seeds/cross_ws_fixture.csv``;
+    the dbt profile uses env vars set by ``cmd_provision --workspace ws2``. Raises if
+    the WS2 provisioning step has not run (``WS2_LAKEHOUSE_ID`` / ``WS2_LAKEHOUSE_NAME``
+    will be missing from the shared env file).
+    """
+    _load_shared_env()
+
+    # ``_ws2_id()`` raises if ``WORKSPACE_ID_2`` is unset. The other two come from
+    # the orchestrator's ws2-provision step; missing them means the pipeline was
+    # invoked out of order.
+    _ws2_id()
+    for key in ("WS2_LAKEHOUSE_ID", "WS2_LAKEHOUSE_NAME"):
+        if not os.environ.get(key):
+            raise RuntimeError(
+                f"{key} is not set — run `provision --workspace ws2 --schema-mode "
+                f"with_schema` before `seed-ws2`."
+            )
+
+    fixture_dir = os.path.join("tests", "functional", "fixtures", "ws2_seed")
+    cmd = [
+        sys.executable,
+        "-m",
+        "dbt.cli.main",
+        "seed",
+        "--project-dir",
+        fixture_dir,
+        "--profiles-dir",
+        fixture_dir,
+        "--full-refresh",
+    ]
+    logger.info("Running: %s", " ".join(cmd))
+    rc = subprocess.run(cmd).returncode
+    if rc != 0:
+        logger.error("dbt seed against WS2 failed with exit code %s", rc)
+        sys.exit(rc)
+    logger.info("WS2 cross-workspace seed populated successfully.")
 
 
 def cmd_create_session() -> None:
@@ -127,7 +253,7 @@ def cmd_create_session() -> None:
     prefix = args.schema_mode.upper()
     lakehouse_id = os.environ.get(f"{prefix}_LAKEHOUSE_ID")
     lakehouse_name = os.environ.get(f"{prefix}_LAKEHOUSE_NAME")
-    workspace_id = os.environ.get("WORKSPACE_ID")
+    workspace_id = _ws1_id()
     api_endpoint = os.environ.get("LIVY_ENDPOINT", "https://api.fabric.microsoft.com/v1")
 
     if not all([lakehouse_id, lakehouse_name, workspace_id]):
@@ -414,6 +540,7 @@ def cmd_run_tests() -> None:
 COMMANDS = {
     "nuke": cmd_nuke,
     "provision": cmd_provision,
+    "seed-ws2": cmd_seed_ws2,
     "create-session": cmd_create_session,
     "run-tests": cmd_run_tests,
 }
@@ -423,6 +550,17 @@ def main() -> None:
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
         print(f"Usage: python -m tests.functional.orchestrator <{'|'.join(COMMANDS)}>")
         sys.exit(1)
+
+    # Fail-fast on missing required env vars before any command runs. CI sets all four;
+    # local developers will see a single clear error listing whatever's missing instead
+    # of a downstream ``NoneType`` traceback or a silently-skipped test.
+    missing = [k for k in REQUIRED_ENV_VARS if not os.environ.get(k)]
+    if missing:
+        raise RuntimeError(
+            "Multi-workspace functional tests require all four of "
+            f"{', '.join(REQUIRED_ENV_VARS)} to be set. Missing: {', '.join(missing)}."
+        )
+
     COMMANDS[sys.argv[1]]()
 
 

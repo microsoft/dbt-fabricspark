@@ -57,6 +57,17 @@ class FabricSparkRelation(BaseRelation):
     # TODO: make this a dict everywhere
     information: Optional[str] = None
 
+    # Cross-workspace 4-part naming. When set, ``render()`` prepends the
+    # workspace as a backtick-quoted prefix so the SQL becomes:
+    #   `workspace`.`lakehouse`.`schema`.identifier
+    # When None (default), rendering is unchanged (2-part or 3-part).
+    #
+    # Fabric Livy supports 4-part names *only* against schema-enabled lakehouses.
+    # The macro layer (``fabricspark__generate_database_name``) raises a
+    # ``DbtRuntimeError`` at parse time if a model sets ``workspace_name`` while
+    # the target lakehouse is non-schema-enabled.
+    workspace: Optional[str] = None
+
     @classmethod
     def create(cls, database=None, schema=None, identifier=None, **kwargs):
         skip_prefix = kwargs.pop("_skip_prefix", False)
@@ -71,6 +82,48 @@ class FabricSparkRelation(BaseRelation):
             if not is_cte and not identifier.startswith(prefix):
                 identifier = f"{prefix}{identifier}"
         return super().create(database=database, schema=schema, identifier=identifier, **kwargs)
+
+    @classmethod
+    def create_from(cls, quoting, relation_config, **kwargs):
+        """Pull ``workspace_name`` from the model's ``config()`` into the relation.
+
+        ``relation_config.config`` is a ``MaterializationConfig`` mapping that
+        carries adapter-specific keys (registered on ``FabricSparkConfig``).
+        For nodes whose config sets ``workspace_name`` (top-level config key),
+        we forward it as the ``workspace`` field on the resulting relation so
+        ``render()`` emits a 4-part name.
+        """
+        if "workspace" not in kwargs:
+            ws_name = None
+            cfg = getattr(relation_config, "config", None)
+            if cfg is not None:
+                try:
+                    ws_name = cfg.get("workspace_name")
+                except Exception:
+                    ws_name = None
+            if ws_name:
+                kwargs["workspace"] = ws_name
+        return super().create_from(quoting, relation_config, **kwargs)
+
+    def render(self) -> str:
+        base = super().render()
+        # Only emit the workspace prefix when the database segment is also
+        # included. This automatically excludes the workspace from temp views
+        # and CTEs which use ``.include(database=false, schema=false)`` to
+        # render as bare identifiers (those need to stay session-scoped).
+        # Workspace_name is only valid against schema-enabled lakehouses where
+        # ``include_policy.database`` defaults to True, so this check is a
+        # no-op in the supported configuration.
+        if self.workspace and self.include_policy.database:
+            # Workspace casing must be preserved (mixed-case workspace names
+            # like 'dbt Fabric Spark 1' are common). Quote it iff the database
+            # quote policy says so — they share the same quote rationale.
+            if self.quote_policy.database:
+                quoted_ws = self.quoted(self.workspace)
+            else:
+                quoted_ws = self.workspace
+            return f"{quoted_ws}.{base}" if base else quoted_ws
+        return base
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "FabricSparkRelation":

@@ -64,7 +64,25 @@
        `database` is init=False on credentials and not in `target`, so use `lakehouse`.
        In non-schema mode, include_policy.database=False excludes it from rendered SQL.
        In schema-enabled mode, include_policy.database=True renders three-part names.
-       If a model explicitly sets `database`, honour it for cross-lakehouse writes. --#}
+       If a model explicitly sets `database`, honour it for cross-lakehouse writes.
+
+       Cross-workspace 4-part naming: when a model sets `workspace_name`, validate
+       that the *write* target is a schema-enabled lakehouse. Fabric Livy only
+       supports 4-part names against schema-enabled lakehouses; using
+       `workspace_name` against a non-schema-enabled lakehouse is a parse-time
+       error with a clear remediation message. --#}
+  {%- set ws_name = none -%}
+  {%- if node is not none and node.config is not none -%}
+    {%- set ws_name = node.config.get('workspace_name') -%}
+  {%- endif -%}
+  {%- if ws_name -%}
+    {%- do adapter.validate_workspace_name_supported(
+        ws_name,
+        target_database=(custom_database_name or target.lakehouse),
+        target_schema=target.schema,
+        target_lakehouse=target.lakehouse,
+    ) -%}
+  {%- endif -%}
   {% if custom_database_name %}
     {% do return(custom_database_name) %}
   {% else %}

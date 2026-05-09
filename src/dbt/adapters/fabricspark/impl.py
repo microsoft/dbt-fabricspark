@@ -64,6 +64,13 @@ class FabricSparkConfig(AdapterConfig):
     buckets: Optional[int] = None
     options: Optional[Dict[str, str]] = None
     merge_update_columns: Optional[str] = None
+    # Cross-workspace 4-part naming. When set on a model's
+    # ``{{ config() }}``, the rendered relation becomes
+    # ``\`workspace_name\`.\`database\`.\`schema\`.identifier`` — enabling
+    # cross-workspace ``ref()``/source reads against schema-enabled lakehouses
+    # in another Fabric workspace. Allowed only when the target *write* lakehouse is
+    # schema-enabled; the macro layer raises a parse-time error otherwise.
+    workspace_name: Optional[str] = None
 
 
 class FabricSparkAdapter(SQLAdapter):
@@ -119,6 +126,54 @@ class FabricSparkAdapter(SQLAdapter):
         target.schema != target.lakehouse to infer schema-enabled mode.
         """
         return FabricSparkRelation._schemas_enabled
+
+    @available
+    def validate_workspace_name_supported(
+        self,
+        workspace_name: Optional[str],
+        target_database: Optional[str] = None,
+        target_schema: Optional[str] = None,
+        target_lakehouse: Optional[str] = None,
+    ) -> None:
+        """Parse-time guard for cross-workspace 4-part naming.
+
+        Raises ``DbtRuntimeError`` when ``workspace_name`` is set but the
+        *write* lakehouse is non-schema-enabled. Fabric Livy only supports
+        4-part naming against schema-enabled lakehouses.
+
+        Parameters
+        ----------
+        workspace_name : Optional[str]
+            The model's ``workspace_name`` config value (may be None / empty).
+        target_database : Optional[str]
+            The lakehouse the model writes to (post-resolution by
+            ``generate_database_name``). Currently informational.
+        target_schema : Optional[str]
+            The model's resolved schema (post ``generate_schema_name``).
+        target_lakehouse : Optional[str]
+            The profile's ``lakehouse`` value (``target.lakehouse``).
+        """
+        if not workspace_name:
+            return
+
+        if FabricSparkRelation._schemas_enabled:
+            return
+
+        if target_schema and target_lakehouse and target_schema != target_lakehouse:
+            return
+
+        raise DbtRuntimeError(
+            "config.workspace_name=" + repr(workspace_name) + " requires a "
+            "schema-enabled lakehouse for the model's write target. Fabric "
+            "Livy only supports 4-part naming against schema-enabled "
+            "lakehouses. Either:\n"
+            "  1. Use a schema-enabled lakehouse and set `schema` to a value "
+            "different from `lakehouse` in profiles.yml (e.g. schema: dbo); or\n"
+            "  2. Remove `workspace_name` from this model's config; or\n"
+            "  3. Use a OneLake shortcut to bring the cross-workspace data "
+            "into the current workspace.\n"
+            "See README → 'Cross-Workspace 4-Part Naming' for details."
+        )
 
     @available
     def is_local_mode(self) -> bool:
@@ -343,6 +398,8 @@ class FabricSparkAdapter(SQLAdapter):
             # Use database/schema from the input relation when available.
             # Schema-enabled lakehouses return a multi-part backtick-quoted
             # namespace that doesn't match the cache key.
+            # Workspace propagates from the input relation when set so that
+            # cross-workspace listings render 4-part consistently.
             relation: BaseRelation = self.Relation.create(
                 database=schema_relation.database if schema_relation else None,
                 schema=schema_relation.schema if schema_relation else _schema,
@@ -350,6 +407,7 @@ class FabricSparkAdapter(SQLAdapter):
                 type=rel_type,
                 information=information,
                 is_delta=is_delta,
+                workspace=getattr(schema_relation, "workspace", None) if schema_relation else None,
                 _skip_prefix=True,
             )
             # In no_schema mode, filter to only relations matching the active
@@ -376,6 +434,13 @@ class FabricSparkAdapter(SQLAdapter):
             schema_clause = schema_relation.schema
             if schema_relation.include_policy.database and schema_relation.database:
                 schema_clause = f"{schema_relation.database}.{schema_clause}"
+            # When the relation carries a workspace prefix (cross-workspace
+            # listing), prepend it as a backtick-quoted segment so Spark
+            # routes the SHOW TABLE EXTENDED to the correct workspace
+            # catalog, e.g. workspaces with spaces / mixed case.
+            ws = getattr(schema_relation, "workspace", None)
+            if ws:
+                schema_clause = f"`{ws}`.{schema_clause}"
             sql = f"show table extended in {schema_clause} like '{prefix}*'"
             try:
                 _, result = self.execute(sql, auto_begin=False, fetch=True)
@@ -539,7 +604,19 @@ class FabricSparkAdapter(SQLAdapter):
         return columns
 
     def _get_columns_for_catalog(self, relation: BaseRelation) -> Iterable[Dict[str, Any]]:
-        if relation.database:
+        ws = getattr(relation, "workspace", None)
+        if ws:
+            ws_q = f"`{ws}`"
+            db_q = f"`{relation.database}`" if relation.database else None
+            schema_q = f"`{relation.schema}`" if relation.schema else None
+            parts = [ws_q]
+            if db_q:
+                parts.append(db_q)
+            if schema_q:
+                parts.append(schema_q)
+            parts.append(relation.identifier)
+            table_name = ".".join(parts)
+        elif relation.database:
             table_name = f"{relation.database}.{relation.schema}.{relation.identifier}"
         else:
             table_name = f"{relation.schema}.{relation.identifier}"

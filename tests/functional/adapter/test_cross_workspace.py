@@ -416,3 +416,154 @@ class TestCrossWorkspace4PartWriteCTAS:
             "expected the WS2 cross-workspace target to still hold 4 rows after "
             "an idempotent re-run"
         )
+
+
+# ---------------------------------------------------------------------------
+# Positive: cross-workspace WRITE via incremental materialization
+# (initial CTAS + subsequent MERGE INTO across the workspace boundary)
+# ---------------------------------------------------------------------------
+
+
+# Incremental model whose physical relation lives in WS2. The body is
+# toggled by ``is_incremental()``:
+#   * First run / full-refresh → 4 rows (id 1-4).
+#   * Subsequent incremental runs → 2 new rows (id 5-6) that get
+#     MERGE-INTO-ed via the unique_key.
+# After the first run the target table holds 4 rows; after the second
+# run it holds 6 rows. After ``--full-refresh`` it's back to 4 rows.
+#
+# ``file_format='delta'`` is required for ``incremental_strategy='merge'``
+# to work and for the full-refresh path to emit ``CREATE OR REPLACE TABLE``.
+CROSS_WS_WRITE_INCREMENTAL_SQL = """
+{{ config(
+    materialized='incremental',
+    incremental_strategy='merge',
+    unique_key='id',
+    file_format='delta',
+    workspace_name=var('ws2_workspace_name'),
+    database=var('ws2_lakehouse_name'),
+    schema=var('ws2_write_schema')
+) }}
+
+{% if is_incremental() %}
+  select 5 as id, 'epsilon' as name, cast(50.5 as double) as price union all
+  select 6 as id, 'zeta'    as name, cast(60.0 as double) as price
+{% else %}
+  select 1 as id, 'alpha' as name, cast(10.5 as double) as price union all
+  select 2 as id, 'beta'  as name, cast(20.0 as double) as price union all
+  select 3 as id, 'gamma' as name, cast(30.25 as double) as price union all
+  select 4 as id, 'delta' as name, cast(40.75 as double) as price
+{% endif %}
+"""
+
+
+class TestCrossWorkspace4PartWriteIncremental:
+    """End-to-end cross-workspace WRITE via incremental materialization.
+
+    Validates that ``incremental_strategy='merge'`` against a 4-part
+    relation works for both the first-run CTAS and subsequent MERGE INTO,
+    and that ``--full-refresh`` correctly drops + recreates the
+    cross-workspace target.
+
+    Flow:
+      1. First ``dbt run``: ``is_incremental()`` is False, so the model
+         emits a 4-row SELECT and the materialization takes the
+         ``existing_relation is none`` branch → ``CREATE TABLE AS SELECT``.
+         Same cross-workspace path as ``TestCrossWorkspace4PartWriteCTAS``,
+         but routed through the incremental materialization.
+      2. Second ``dbt run`` (no flag): ``is_incremental()`` is True, the
+         body returns 2 new rows, and the materialization issues a
+         ``MERGE INTO \\`WS2\\`.\\`lh\\`.\\`schema\\`.\\`cross_ws_write_target_inc\\``` against
+         a staging view (also created cross-workspace). Result: 6 rows.
+      3. ``dbt run --full-refresh``: drops the existing relation and
+         re-runs the first-run path → 4 rows again.
+      4. The cross_ws_write schema in WS2 is auto-created by the adapter
+         on first-run pre-pass (shared with TestCrossWorkspace4PartWriteCTAS
+         since both classes use the same schema). Cleanup is handled by
+         the post-test workspace nuke.
+    """
+
+    @pytest.fixture(scope="class", autouse=True)
+    def _skip_unless_schema_enabled(self, is_schema_enabled):
+        if not is_schema_enabled:
+            pytest.skip(
+                "Cross-workspace 4-part naming is only supported on schema-enabled "
+                "lakehouses (Fabric Livy limitation)."
+            )
+
+    @pytest.fixture(scope="class")
+    def project_config_update(self, ws2_workspace_name, ws2_lakehouse_name):
+        return {
+            "name": "cross_workspace_4part_write_incremental",
+            "vars": {
+                "ws2_workspace_name": ws2_workspace_name,
+                "ws2_lakehouse_name": ws2_lakehouse_name,
+                "ws2_write_schema": _WS2_WRITE_SCHEMA,
+            },
+        }
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {
+            "cross_ws_write_target_inc.sql": CROSS_WS_WRITE_INCREMENTAL_SQL,
+        }
+
+    def _count_rows(self, project, ws2_workspace_name, ws2_lakehouse_name) -> int:
+        sql = (
+            "select count(*) as n "
+            f"from `{ws2_workspace_name}`.`{ws2_lakehouse_name}`."
+            f"`{_WS2_WRITE_SCHEMA}`.cross_ws_write_target_inc"
+        )
+        rows = project.run_sql(sql, fetch="all")
+        return int(rows[0][0])
+
+    def test_renders_four_part(self, project, ws2_workspace_name, ws2_lakehouse_name):
+        compile_results = run_dbt(["compile", "--select", "cross_ws_write_target_inc"])
+        assert len(compile_results) == 1
+        node = compile_results[0].node
+        rendered_target = node.relation_name or ""
+        assert f"`{ws2_workspace_name}`" in rendered_target, (
+            f"expected WS2 name in rendered relation, got: {rendered_target}"
+        )
+        assert f"`{ws2_lakehouse_name}`" in rendered_target, (
+            f"expected WS2 lakehouse in rendered relation, got: {rendered_target}"
+        )
+        assert f"`{_WS2_WRITE_SCHEMA}`" in rendered_target, (
+            f"expected WS2 write schema in rendered relation, got: {rendered_target}"
+        )
+
+    def test_first_run_creates_table_with_4_rows(
+        self, project, ws2_workspace_name, ws2_lakehouse_name
+    ):
+        # First run goes through the incremental materialization's
+        # ``existing_relation is none`` branch → CTAS.
+        run_results = run_dbt(["run", "--select", "cross_ws_write_target_inc"])
+        assert len(run_results) == 1
+
+        n = self._count_rows(project, ws2_workspace_name, ws2_lakehouse_name)
+        assert n == 4, f"expected 4 rows after initial cross-workspace incremental CTAS, got {n}"
+
+    def test_second_run_merges_2_new_rows(self, project, ws2_workspace_name, ws2_lakehouse_name):
+        # Second run: is_incremental() is True, body emits ids 5+6,
+        # MERGE INTO targets the cross-workspace 4-part relation.
+        run_results = run_dbt(["run", "--select", "cross_ws_write_target_inc"])
+        assert len(run_results) == 1
+
+        n = self._count_rows(project, ws2_workspace_name, ws2_lakehouse_name)
+        assert n == 6, (
+            "expected 6 rows after cross-workspace incremental MERGE INTO "
+            f"(4 original + 2 new), got {n}"
+        )
+
+    def test_full_refresh_resets_table(self, project, ws2_workspace_name, ws2_lakehouse_name):
+        # --full-refresh drops the existing relation and re-runs the
+        # first-run path. Validates the cross-workspace DROP + CTAS path
+        # in the incremental materialization.
+        run_results = run_dbt(["run", "--select", "cross_ws_write_target_inc", "--full-refresh"])
+        assert len(run_results) == 1
+
+        n = self._count_rows(project, ws2_workspace_name, ws2_lakehouse_name)
+        assert n == 4, (
+            "expected 4 rows after cross-workspace --full-refresh "
+            f"(reset to first-run body), got {n}"
+        )

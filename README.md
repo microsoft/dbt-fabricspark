@@ -274,6 +274,8 @@ The target schema (`marts` in `shared_lh` of `SharedWorkspace`) is created autom
 
 > **Use `file_format='delta'` for idempotent re-runs.** The adapter emits `CREATE OR REPLACE TABLE` for delta tables, which re-materializes cleanly. Non-delta cross-workspace writes will fail on the second run with `TABLE_ALREADY_EXISTS` because `adapter.get_relation` is workspace-unaware and cannot detect the existing remote relation to drop it first.
 
+> **Materializations validated end-to-end:** `table` (full CTAS) and `incremental` (initial CTAS + `MERGE INTO` + `--full-refresh`). Other materializations (`view`, `seed`, `snapshot`, `materialized_lake_view`) share the same render and `ensure_database_exists` plumbing and should work cross-workspace, but are not exercised by functional tests in this repo.
+
 > **Schema-enabled lakehouses only.** Fabric Livy supports 4-part naming only against schema-enabled lakehouses. Setting `workspace_name` against a non-schema-enabled target raises a parse-time error.
 
 #### How it works

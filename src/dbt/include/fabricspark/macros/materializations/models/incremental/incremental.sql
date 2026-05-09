@@ -26,8 +26,11 @@
     {%- set tmp_relation = tmp_relation.include(database=false, schema=false) -%}
   {%- endif -%}
 
-  {#-- Ensure the database/schema exists before creating the table --#}
-  {% do ensure_database_exists(target_relation.schema, database=target_relation.database) %}
+  {#-- Ensure the database/schema exists before creating the table.
+       For cross-workspace writes the workspace is forwarded so the
+       rendered DDL is workspace-qualified
+       (``CREATE DATABASE IF NOT EXISTS \`WS2\`.\`lh\`.\`schema\```). --#}
+  {% do ensure_database_exists(target_relation.schema, database=target_relation.database, workspace=config.get('workspace_name')) %}
 
   {#-- Set Overwrite Mode --#}
   {%- if strategy in ['insert_overwrite', 'microbatch'] and partition_by -%}

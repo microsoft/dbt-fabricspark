@@ -1,17 +1,5 @@
 # Changelog
 
-## v1.10.0 (Unreleased)
-
-### New Features
-
-- Added cross-workspace 4-part naming for **reads**. Set `workspace_name` on a model's `config()` (alongside `database` + `schema`) to render the relation as `` `workspace`.`lakehouse`.`schema`.identifier ``; consumer models then `ref()` the stub and Fabric Livy federates the SELECT across workspace boundaries. Schema-enabled lakehouses only — non-schema-enabled targets fail at parse time with a clear error. Cross-workspace **writes** are not supported by Fabric Livy and the documentation calls this out. (#162, #165)
-
-### Infrastructure
-
-- Functional test suite now exercises a second Fabric workspace via `WORKSPACE_ID_2` / `WORKSPACE_NAME_2`. The orchestrator provisions a schema-enabled lakehouse in WS2, seeds a fixture, runs cross-workspace tests, and nukes both workspaces.
-
----
-
 ## v1.9.6
 
 ### Bug Fixes

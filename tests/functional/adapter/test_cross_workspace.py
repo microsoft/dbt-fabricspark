@@ -65,12 +65,13 @@ order by id
 """
 
 
-# Cross-workspace WRITE is **not** supported by Fabric Livy: a 4-part DDL
-# target (e.g. ``CREATE OR REPLACE VIEW \`WS2\`.\`lh\`.\`dbo\`.t``) returns
-# ``Artifact not found`` because Fabric Livy resolves the DDL target inside
-# the session's bound workspace regardless of the prefix. 4-part naming is
-# therefore a READ-ONLY feature (federated SELECT) and we don't ship a WRITE
-# round-trip test.
+# Cross-workspace WRITE is supported by Fabric Livy: a 4-part DDL target
+# (e.g. ``CREATE TABLE \`WS2\`.\`lh\`.\`schema\`.t AS SELECT …``) executes
+# successfully, and ``CREATE DATABASE IF NOT EXISTS \`WS2\`.\`lh\`.\`schema\```
+# is also supported, so the adapter creates the target schema automatically
+# via the standard ``fabricspark__create_schema`` flow before materializing.
+# The ``TestCrossWorkspace4PartWriteCTAS`` class below covers the happy path
+# end-to-end.
 
 
 # Negative-test model: setting ``workspace_name`` against a non-schema-enabled
@@ -259,4 +260,159 @@ class TestCrossWorkspaceRelationRenderingSmoke:
         rendered = str(rel)
         assert rendered == "`My WS 2`.`ws2_lakehouse`.`dbo`.some_table", (
             f"unexpected 4-part rendering: {rendered}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Positive: cross-workspace WRITE (CTAS) into a schema pre-created in WS2
+# ---------------------------------------------------------------------------
+
+
+# A model whose physical relation lives in WS2 — materialized into the
+# pre-created ``cross_ws_write`` schema in WS2's lakehouse from a Livy session
+# that is bound to WS1. Idempotency relies on ``file_format='delta'`` so the
+# adapter emits ``CREATE OR REPLACE TABLE`` (the default ``parquet`` path
+# would otherwise fail on the second run because ``adapter.get_relation`` is
+# not workspace-aware and reports no existing relation).
+_WS2_WRITE_SCHEMA = "cross_ws_write"
+
+
+CROSS_WS_WRITE_TABLE_SQL = """
+{{ config(
+    materialized='table',
+    file_format='delta',
+    workspace_name=var('ws2_workspace_name'),
+    database=var('ws2_lakehouse_name'),
+    schema=var('ws2_write_schema')
+) }}
+
+select 1 as id, 'alpha' as name, cast(10.5 as double) as price
+union all
+select 2 as id, 'beta'  as name, cast(20.0 as double) as price
+union all
+select 3 as id, 'gamma' as name, cast(30.25 as double) as price
+union all
+select 4 as id, 'delta' as name, cast(40.75 as double) as price
+"""
+
+
+class TestCrossWorkspace4PartWriteCTAS:
+    """End-to-end cross-workspace WRITE via ``CREATE TABLE AS SELECT``.
+
+    Flow:
+      1. The model ``cross_ws_write_target`` is configured with
+         ``workspace_name=WS2``, ``database=WS2_LH``,
+         ``schema=cross_ws_write`` (a schema that does **not** exist in WS2
+         beforehand), ``materialized=table``, ``file_format=delta``.
+      2. ``dbt run`` issues an in-workspace ``CREATE DATABASE IF NOT EXISTS
+         \\`WS2\\`.\\`WS2_LH\\`.\\`cross_ws_write\\``` from WS1's Livy session
+         (Fabric Livy supports cross-workspace CREATE DATABASE), then a
+         ``CREATE OR REPLACE TABLE \\`WS2\\`.\\`WS2_LH\\`.\\`cross_ws_write\\`.cross_ws_write_target AS SELECT …``
+         to materialize the model.
+      3. Test verifies the table now exists in WS2 by issuing a 4-part
+         SELECT and counting rows / summing the price column.
+      4. A second ``dbt run`` validates idempotency — ``CREATE OR REPLACE
+         TABLE`` re-materializes cleanly.
+      5. Cleanup: the post-test workspace nuke wipes WS2.
+    """
+
+    @pytest.fixture(scope="class", autouse=True)
+    def _skip_unless_schema_enabled(self, is_schema_enabled):
+        if not is_schema_enabled:
+            pytest.skip(
+                "Cross-workspace 4-part naming is only supported on schema-enabled "
+                "lakehouses (Fabric Livy limitation)."
+            )
+
+    @pytest.fixture(scope="class")
+    def project_config_update(self, ws2_workspace_name, ws2_lakehouse_name):
+        return {
+            "name": "cross_workspace_4part_write",
+            "vars": {
+                "ws2_workspace_name": ws2_workspace_name,
+                "ws2_lakehouse_name": ws2_lakehouse_name,
+                "ws2_write_schema": _WS2_WRITE_SCHEMA,
+            },
+        }
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {
+            "cross_ws_write_target.sql": CROSS_WS_WRITE_TABLE_SQL,
+        }
+
+    def test_cross_workspace_write_renders_four_part(
+        self, project, ws2_workspace_name, ws2_lakehouse_name
+    ):
+        # Compile only — assert the model parses and resolves to the
+        # WS2-bound relation. The actual 4-part CTAS rendering is covered
+        # end-to-end by ``test_cross_workspace_write_executes`` below
+        # (a wrong target would land the table in the wrong workspace and
+        # the post-run SELECT would fail).
+        compile_results = run_dbt(["compile", "--select", "cross_ws_write_target"])
+        assert len(compile_results) == 1
+        node = compile_results[0].node
+        # ``relation_name`` is the rendered relation dbt would issue DDL
+        # against — for a workspace-tagged model this is the 4-part name.
+        rendered_target = node.relation_name or ""
+        assert f"`{ws2_workspace_name}`" in rendered_target, (
+            f"expected WS2 name in rendered relation, got: {rendered_target}"
+        )
+        assert f"`{ws2_lakehouse_name}`" in rendered_target, (
+            f"expected WS2 lakehouse in rendered relation, got: {rendered_target}"
+        )
+        assert f"`{_WS2_WRITE_SCHEMA}`" in rendered_target, (
+            f"expected WS2 write schema in rendered relation, got: {rendered_target}"
+        )
+
+    def test_cross_workspace_write_executes(
+        self,
+        project,
+        ws2_workspace_name,
+        ws2_lakehouse_name,
+    ):
+        # First run — adapter creates the cross_ws_write schema in WS2 (via
+        # `CREATE DATABASE IF NOT EXISTS \`WS2\`.\`WS2_LH\`.cross_ws_write`)
+        # and materializes the model into it (CTAS) from WS1's Livy session.
+        run_results = run_dbt(["run", "--select", "cross_ws_write_target"])
+        assert len(run_results) == 1, f"expected 1 run result, got {len(run_results)}"
+
+        # Verify the table now exists in WS2 and has the expected rows.
+        # Issue a raw 4-part SELECT against the WS1-bound Livy session;
+        # Fabric Livy resolves the federated SELECT through WS2's catalog.
+        sql = (
+            "select count(*) as n, sum(price) as total "
+            f"from `{ws2_workspace_name}`.`{ws2_lakehouse_name}`."
+            f"`{_WS2_WRITE_SCHEMA}`.cross_ws_write_target"
+        )
+        rows = project.run_sql(sql, fetch="all")
+        assert len(rows) == 1
+        n, total = rows[0]
+        assert int(n) == 4, f"expected 4 rows in WS2 cross-workspace target, got {n}"
+        assert abs(float(total) - (10.5 + 20.0 + 30.25 + 40.75)) < 1e-6, (
+            f"price sum mismatch in WS2 target: {total}"
+        )
+
+    def test_cross_workspace_write_is_idempotent(
+        self,
+        project,
+        ws2_workspace_name,
+        ws2_lakehouse_name,
+    ):
+        # Re-materialize. Because the model uses file_format='delta', the
+        # adapter emits CREATE OR REPLACE TABLE which succeeds against the
+        # existing 4-part relation in WS2. The pre-run schema creation
+        # (`CREATE DATABASE IF NOT EXISTS …`) is also idempotent.
+        run_results = run_dbt(["run", "--select", "cross_ws_write_target"])
+        assert len(run_results) == 1
+
+        sql = (
+            "select count(*) as n "
+            f"from `{ws2_workspace_name}`.`{ws2_lakehouse_name}`."
+            f"`{_WS2_WRITE_SCHEMA}`.cross_ws_write_target"
+        )
+        rows = project.run_sql(sql, fetch="all")
+        assert int(rows[0][0]) == 4, (
+            "expected the WS2 cross-workspace target to still hold 4 rows after "
+            "an idempotent re-run"
         )

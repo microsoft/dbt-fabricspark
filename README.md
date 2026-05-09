@@ -208,9 +208,11 @@ In this example:
 - Gold models write to `gold.dbo.*` via `database='gold'`
 - All three lakehouses must exist in the same Fabric workspace and have schemas enabled
 
-### Cross-Workspace 4-Part Naming (Read-only)
+### Cross-Workspace 4-Part Naming
 
-For multi-workspace topologies — e.g. dev workspace reading shared marts from a prod workspace, or a single dbt project orchestrating bronze/silver/gold across separate workspaces — set `workspace_name` on a model's `config()`. The adapter renders the relation as a backtick-quoted four-part name so Fabric Spark routes the **read** to the correct workspace catalog:
+For multi-workspace topologies — e.g. dev workspace reading shared marts from a prod workspace, or a single dbt project orchestrating bronze/silver/gold across separate workspaces — set `workspace_name` on a model's `config()`. The adapter renders the relation as a backtick-quoted four-part name so Fabric Spark routes the statement to the correct workspace catalog. **Both reads (federated `SELECT`) and writes (cross-workspace `CREATE TABLE AS SELECT`) are supported** against schema-enabled lakehouses.
+
+#### Reads — stub-and-`ref` pattern
 
 ```sql
 -- models/silver/from_prod_orders.sql
@@ -244,24 +246,48 @@ dbt renders the cross-workspace reference as:
 `ProdWorkspace`.`prod_silver_lh`.`dbo`.orders
 ```
 
+#### Writes — cross-workspace CTAS
+
+A model can also be **materialized into another workspace** by setting `workspace_name` directly on the target model. The Livy session stays bound to your profile's workspace; Fabric routes the `CREATE TABLE` against the remote workspace's catalog:
+
+```sql
+-- models/marts/shared_orders.sql
+{{ config(
+    materialized='table',
+    file_format='delta',
+    workspace_name='SharedWorkspace',
+    database='shared_lh',
+    schema='marts'
+) }}
+
+select * from {{ ref('orders') }}
+```
+
+dbt emits:
+
+```
+create or replace table `SharedWorkspace`.`shared_lh`.`marts`.shared_orders as
+select * from …
+```
+
+The target schema (`marts` in `shared_lh` of `SharedWorkspace`) is created automatically by the adapter's standard schema pre-create flow — Fabric Livy supports cross-workspace `CREATE DATABASE IF NOT EXISTS \`SharedWorkspace\`.\`shared_lh\`.\`marts\``, so no manual setup is required.
+
+> **Use `file_format='delta'` for idempotent re-runs.** The adapter emits `CREATE OR REPLACE TABLE` for delta tables, which re-materializes cleanly. Non-delta cross-workspace writes will fail on the second run with `TABLE_ALREADY_EXISTS` because `adapter.get_relation` is workspace-unaware and cannot detect the existing remote relation to drop it first.
+
 > **Schema-enabled lakehouses only.** Fabric Livy supports 4-part naming only against schema-enabled lakehouses. Setting `workspace_name` against a non-schema-enabled target raises a parse-time error.
 
 #### How it works
 
-Your profile binds to **one workspace + lakehouse** — that's where the Livy session lives, and _every_ SQL statement is issued from that session. `workspace_name` is purely a rendering decoration applied to the relation; Fabric Livy then federates **reads** through its metastore so a `SELECT … FROM \`OtherWS\`.\`lh\`.\`dbo\`.t` returns rows from the other workspace.
-
-#### Read-only
-
-`workspace_name` is a **read-side** feature. Fabric Livy resolves DDL targets (`CREATE OR REPLACE …`) inside the session's bound workspace, so attempting to materialize a model directly into another workspace fails at runtime with `Artifact not found`. Use the stub-and-`ref` pattern shown above to expose remote tables to the rest of your dbt DAG.
+Your profile binds to **one workspace + lakehouse** — that's where the Livy session lives, and _every_ SQL statement is issued from that session. `workspace_name` is a rendering decoration applied to the relation; Fabric Livy then federates the statement through its metastore so a `SELECT` returns rows from the other workspace and a `CREATE TABLE AS SELECT` writes into the other workspace's lakehouse.
 
 #### When to use it
 
 - **Cross-workspace reads** — A dev workspace references shared dimensions, regulatory data, or prod marts without copying via OneLake shortcuts.
-- **Multi-workspace project topologies** — One dbt project that needs to read from several upstream workspaces.
+- **Cross-workspace writes** — A consolidation pipeline that aggregates data from one workspace into a shared analytics workspace, without spinning up a second dbt project / profile per target workspace.
+- **Multi-workspace project topologies** — One dbt project that needs to read from and/or write to several workspaces.
 
 #### When _not_ to use it
 
-- **Cross-workspace writes** — Not supported by Fabric Livy. Materialize within your bound workspace and surface to other workspaces via OneLake shortcuts or Fabric data shares.
 - **Non-schema-enabled lakehouses** — Use OneLake shortcuts instead; the adapter errors at parse time to surface the constraint.
 
 #### Permissions

@@ -62,6 +62,13 @@ class FabricSparkRelation(BaseRelation):
     #   `workspace`.`lakehouse`.`schema`.identifier
     # When None (default), rendering is unchanged (2-part or 3-part).
     #
+    # Supports both reads and writes against schema-enabled lakehouses:
+    #   * ``SELECT … FROM `WS2`.`lh`.`schema`.t``  (cross-workspace read)
+    #   * ``CREATE TABLE `WS2`.`lh`.`schema`.t AS SELECT …`` (cross-workspace
+    #     CTAS — the target schema is auto-created via the standard
+    #     ``CREATE DATABASE IF NOT EXISTS \`WS2\`.\`lh\`.\`schema\``` flow,
+    #     which Fabric Livy supports cross-workspace).
+    #
     # Fabric Livy supports 4-part names *only* against schema-enabled lakehouses.
     # The macro layer (``fabricspark__generate_database_name``) raises a
     # ``DbtRuntimeError`` at parse time if a model sets ``workspace_name`` while

@@ -2,6 +2,11 @@
   {%- set language = model['language'] -%}
   {%- set identifier = model['alias'] -%}
   {%- set grant_config = config.get('grants') -%}
+  {#-- Cross-workspace 4-part naming: when the model sets `workspace_name`,
+       carry it through to the target relation so all downstream rendering
+       (CTAS, drop_relation, schema pre-create, etc.) emits the 4-part name
+       and Fabric Livy routes the DDL to the correct workspace catalog. --#}
+  {%- set workspace_name = config.get('workspace_name') -%}
 
   {%- set old_relation = adapter.get_relation(database=database, schema=schema, identifier=identifier) -%}
 
@@ -13,10 +18,15 @@
                                                 schema=schema,
                                                 database=database,
                                                 type='table',
-                                                is_delta=is_delta) -%}
+                                                is_delta=is_delta,
+                                                workspace=workspace_name) -%}
 
-  {#-- Ensure the database/schema exists before creating the table --#}
-  {% do ensure_database_exists(schema, database=database) %}
+  {#-- Ensure the database/schema exists before creating the table. For
+       cross-workspace writes the ``workspace_name`` is forwarded so the
+       rendered DDL is workspace-qualified
+       (``CREATE DATABASE IF NOT EXISTS \`WS2\`.\`lh\`.\`schema\```), which
+       Fabric Livy supports cross-workspace. --#}
+  {% do ensure_database_exists(schema, database=database, workspace=workspace_name) %}
 
   {{ run_hooks(pre_hooks) }}
 

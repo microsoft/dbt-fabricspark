@@ -62,6 +62,8 @@ uv run pytest tests/unit/test_adapter.py::TestSparkAdapter::test_profile_with_da
 
 ## Robust CI tests are non-negotiable
 
+- **Full Fabric CI suite must run locally** For validation, you must run `npx nx run test`.
+  The secrets should already be hydrated locally in the git repo under `test.env` by the human user during [repo setup](../contrib/README.md).
 - **Every change must keep `lint`, `build`, `test` (all targets) green.** Do not gate features on flaky assumptions about Fabric availability — wrap external calls with the retry/backoff and timeout knobs already on `FabricSparkCredentials` (`http_timeout`, `session_start_timeout`, `statement_timeout`, `poll_wait`, `poll_statement_wait`, `connect_retries`, `retry_all`).
 - **Functional tests run in parallel across two lakehouses** (`no_schema` and `with_schema`) and across multiple Livy sessions via xdist — see `tests/functional/test_config.yaml` and `tests/functional/conftest.py`. New tests must be xdist-safe and must not assume which session they land on. Use the existing fail-fast sentinel (`--fail-fast-sentinel`) instead of inventing new abort mechanisms.
 - **Unit tests should cover any branch in `impl.py`/`connections.py`/`livysession.py`/`mlv_api.py` you touch**, including the schema-detection heuristic (parse-time `schema != lakehouse`) and credential masking.

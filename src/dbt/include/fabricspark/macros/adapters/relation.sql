@@ -1,6 +1,6 @@
 {% macro fabricspark__list_relations_without_caching(relation) %}
   {% call statement('list_relations_without_caching', fetch_result=True) -%}
-    show table extended in {% if relation.include_policy.database and relation.database %}{{ relation.database }}.{% endif %}{{ relation.schema }} like '*'
+    show table extended in {% if relation.workspace %}`{{ relation.workspace }}`.{% endif %}{% if relation.include_policy.database and relation.database %}{{ relation.database }}.{% endif %}{{ relation.schema }} like '*'
   {% endcall %}
 
   {% do return(load_result('list_relations_without_caching').table) %}
@@ -11,7 +11,7 @@
   {#-- V2 iceberg tables #}
   {#-- https://issues.apache.org/jira/browse/SPARK-33393 #}
   {% call statement('list_relations_without_caching_show_tables', fetch_result=True) -%}
-    show tables in {% if schema_relation.include_policy.database and schema_relation.database %}{{ schema_relation.database }}.{% endif %}{{ schema_relation.schema }} like '*'
+    show tables in {% if schema_relation.workspace %}`{{ schema_relation.workspace }}`.{% endif %}{% if schema_relation.include_policy.database and schema_relation.database %}{{ schema_relation.database }}.{% endif %}{{ schema_relation.schema }} like '*'
   {% endcall %}
 
   {% do return(load_result('list_relations_without_caching_show_tables').table) %}

@@ -1,4 +1,8 @@
 {% macro fabricspark__create_schema(relation) -%}
+  {#-- Cross-workspace 4-part naming: when the relation carries a `workspace`,
+       `relation.without_identifier()` renders as
+       `\`workspace\`.\`lakehouse\`.\`schema\``, which Fabric Livy executes as
+       a cross-workspace CREATE DATABASE. No special gating needed. --#}
   {% if adapter.is_lakehouse_schemas_enabled() or adapter.is_local_mode() %}
     {%- call statement('create_schema') -%}
       create database if not exists {{ relation.without_identifier() }}
@@ -26,11 +30,19 @@
      For schema-enabled lakehouses the schema_name must be database-qualified
      (e.g. lakehouse.schema) so Spark creates it under the correct catalog
      namespace.  Callers that only have a bare schema name should pass the
-     database explicitly via the optional second argument. --#}
-{% macro fabricspark__ensure_database_exists(schema_name, database=none) -%}
+     database explicitly via the optional second argument.
+
+     For cross-workspace writes, the optional ``workspace`` parameter is
+     prepended as a backtick-quoted segment so the rendered DDL becomes
+     ``CREATE DATABASE IF NOT EXISTS \`workspace\`.\`lakehouse\`.\`schema\```,
+     which Fabric Livy resolves through the remote workspace's catalog. --#}
+{% macro fabricspark__ensure_database_exists(schema_name, database=none, workspace=none) -%}
   {% if adapter.is_lakehouse_schemas_enabled() or adapter.is_local_mode() %}
     {%- if database is not none and '.' not in schema_name and adapter.is_lakehouse_schemas_enabled() %}
       {%- set schema_name = database ~ '.' ~ schema_name -%}
+    {%- endif -%}
+    {%- if workspace -%}
+      {%- set schema_name = '`' ~ workspace ~ '`.' ~ schema_name -%}
     {%- endif -%}
     {%- call statement('ensure_database_exists') -%}
       create database if not exists {{ schema_name }}
@@ -42,8 +54,8 @@
   {% endif %}
 {% endmacro %}
 
-{% macro ensure_database_exists(schema_name, database=none) %}
-  {{ return(adapter.dispatch('ensure_database_exists', 'dbt')(schema_name, database=database)) }}
+{% macro ensure_database_exists(schema_name, database=none, workspace=none) %}
+  {{ return(adapter.dispatch('ensure_database_exists', 'dbt')(schema_name, database=database, workspace=workspace)) }}
 {% endmacro %}
 
 {% macro drop_materialized_lake_view(relation) %}
@@ -67,10 +79,11 @@
        If a model explicitly sets `database`, honour it for cross-lakehouse writes.
 
        Cross-workspace 4-part naming: when a model sets `workspace_name`, validate
-       that the *write* target is a schema-enabled lakehouse. Fabric Livy only
-       supports 4-part names against schema-enabled lakehouses; using
-       `workspace_name` against a non-schema-enabled lakehouse is a parse-time
-       error with a clear remediation message. --#}
+       that the *session-bound* lakehouse is schema-enabled. Fabric Livy only
+       supports 4-part names against schema-enabled lakehouses (the constraint
+       applies to both reads and writes); using `workspace_name` against a
+       non-schema-enabled lakehouse is a parse-time error with a clear
+       remediation message. --#}
   {%- set ws_name = none -%}
   {%- if node is not none and node.config is not none -%}
     {%- set ws_name = node.config.get('workspace_name') -%}

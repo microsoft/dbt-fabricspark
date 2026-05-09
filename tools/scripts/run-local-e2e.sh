@@ -50,7 +50,7 @@ cat > "${JAFFLE_SHOP_DIR}/macros/local_overrides.sql" <<'MACROEOF'
   {% do return(none) %}
 {%- endmacro %}
 
-{% macro ensure_database_exists(schema_name, database=none) -%}
+{% macro ensure_database_exists(schema_name, database=none, workspace=none) -%}
   {%- call statement('ensure_database_exists') -%}
     create database if not exists {{ schema_name }}
   {%- endcall -%}

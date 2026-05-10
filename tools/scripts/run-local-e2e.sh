@@ -30,27 +30,10 @@ echo "============================================"
 
 source "${SCRIPT_DIR}/run-livy.sh"
 
-# ---------------------------------------------------------------------------
-# Clean-slate reset — every run starts from a known-empty state to avoid
-# metastore/warehouse drift. Without this the Hive metastore (SQL Server
-# container) remembers tables whose underlying delta files we then wipe,
-# producing flakes like ``[DELTA_TABLE_NOT_FOUND]`` on the next run.
-#
-# Order matters:
-#   1. Stop Livy first so it releases its metastore connection.
-#   2. ``docker compose down --volumes`` wipes the SQL Server data volume,
-#      destroying every table the metastore knew about.
-#   3. Wipe the entire ``warehouse/`` so no stale delta tables remain on
-#      disk for any schema (the previous version only wiped one schema).
-#   4. Bring the metastore back up + re-initialise the Hive 4.0.0 schema
-#      via ``init-metastore.sh`` (idempotent).
-#   5. Restart Livy so it attaches to the freshly initialised metastore.
-# ---------------------------------------------------------------------------
 echo "  [reset] Stopping Livy..."
 stop_livy
 echo "  [reset] Tearing down Hive metastore (docker compose down --volumes)..."
-docker compose -f "${ADAPTER_DIR}/docker/Compose.sqlserver.metastore.yaml" \
-    down --volumes --remove-orphans
+docker compose -f "${ADAPTER_DIR}/docker/Compose.sqlserver.metastore.yaml" down --volumes --remove-orphans
 echo "  [reset] Wiping local warehouse delta tables (${WAREHOUSE_DIR})..."
 rm -rf "${WAREHOUSE_DIR:?}"/* 2>/dev/null || true
 echo "  [reset] Bringing metastore back up + initialising Hive schema..."

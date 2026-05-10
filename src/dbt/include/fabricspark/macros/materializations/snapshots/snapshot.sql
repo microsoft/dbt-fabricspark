@@ -108,7 +108,7 @@
   {% endif %}
 
   {#-- Ensure the database/schema exists before creating the snapshot table --#}
-  {% do ensure_database_exists(model.schema, database=model.database) %}
+  {% do ensure_database_exists(model.schema, database=model.database, workspace=model.config.get('workspace_name')) %}
 
   {%- if not target_relation.is_table -%}
     {% do exceptions.relation_wrong_type(target_relation, 'table') %}

@@ -149,7 +149,7 @@
   {%- set quote_seed_column = model['config'].get('quote_columns', None) -%}
 
   {#-- Ensure the database/schema exists before creating the seed table --#}
-  {% do ensure_database_exists(model['schema'], database=model.get('database')) %}
+  {% do ensure_database_exists(model['schema'], database=model.get('database'), workspace=model.config.get('workspace_name')) %}
 
   {#-- Drop any stale catalog entry first. This handles DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE
        errors where a table exists in the catalog but its Delta log is missing. --#}

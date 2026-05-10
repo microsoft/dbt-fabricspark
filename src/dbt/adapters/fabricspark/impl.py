@@ -67,9 +67,13 @@ class FabricSparkConfig(AdapterConfig):
     # Cross-workspace 4-part naming. When set on a model's
     # ``{{ config() }}``, the rendered relation becomes
     # ``\`workspace_name\`.\`database\`.\`schema\`.identifier`` — enabling
-    # cross-workspace ``ref()``/source reads against schema-enabled lakehouses
-    # in another Fabric workspace. Allowed only when the target *write* lakehouse is
-    # schema-enabled; the macro layer raises a parse-time error otherwise.
+    # cross-workspace reads (``SELECT``) and writes (``CREATE TABLE AS
+    # SELECT``) against schema-enabled lakehouses in another Fabric workspace.
+    # Allowed only when the target *write* lakehouse is schema-enabled; the
+    # macro layer raises a parse-time error otherwise. The target schema is
+    # auto-created via the standard ``fabricspark__create_schema`` flow, which
+    # Fabric Livy supports cross-workspace via 3-part
+    # ``CREATE DATABASE IF NOT EXISTS \`WS2\`.\`lh\`.\`schema\``` DDL.
     workspace_name: Optional[str] = None
 
 
@@ -138,8 +142,10 @@ class FabricSparkAdapter(SQLAdapter):
         """Parse-time guard for cross-workspace 4-part naming.
 
         Raises ``DbtRuntimeError`` when ``workspace_name`` is set but the
-        *write* lakehouse is non-schema-enabled. Fabric Livy only supports
-        4-part naming against schema-enabled lakehouses.
+        session-bound lakehouse is non-schema-enabled. Fabric Livy only
+        supports 4-part naming against schema-enabled lakehouses, and that
+        constraint applies symmetrically to both cross-workspace reads
+        (``SELECT``) and cross-workspace writes (``CREATE TABLE AS SELECT``).
 
         Parameters
         ----------

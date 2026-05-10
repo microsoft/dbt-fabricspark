@@ -88,7 +88,7 @@
          ===================================================================== --#}
 
     {#-- Ensure the database/schema exists --#}
-    {% do ensure_database_exists(model.schema, database=model.database) %}
+    {% do ensure_database_exists(model.schema, database=model.database, workspace=model.config.get('workspace_name')) %}
 
     {{ run_hooks(pre_hooks) }}
 

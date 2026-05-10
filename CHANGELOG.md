@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.10.0
+
+### New Features
+
+- **Cross-workspace 4-part naming** — models can now read and write to relations in another Fabric workspace via `workspace.lakehouse.schema.identifier`. Set `workspace_name` in a model's `config()` to read across workspaces (#167) or to materialize `table` and `incremental` models cross-workspace via CTAS and `MERGE INTO` (#168). Requires schema-enabled lakehouses; the adapter auto-creates the remote schema on first run.
+
+### Bug Fixes
+
+- Fixed `dbt run --full-refresh` on incremental Delta models failing with `TABLE_OR_VIEW_ALREADY_EXISTS` when `file_format` was not explicitly set — incremental now always drops the existing relation before recreating on full-refresh (#156)
+- Fixed mixed-case schema names being lowercased during relation rendering by quoting `schema` in `FabricSparkQuotePolicy` (#159)
+- Fixed Livy session death (HTTP 404) during query execution to trigger transparent reconnect instead of a hard failure (#159)
+- Added missing `LivyCursor.fetchmany()` and `LivySessionConnectionWrapper.fetchone()` to complete the DBAPI 2.0 cursor interface, and reset `_fetch_index` on `execute()` so re-used cursors no longer return `None` after the first query (#159)
+- Added retry/backoff to `create_session()` for transient HTTP 404/5xx (Livy not yet available right after lakehouse provisioning) and tolerate transient `RequestException`/`JSONDecodeError` in `wait_for_session_start()` polling (#159)
+- Fixed retry warning logs that were silently dropping error details due to an invalid `message=` kwarg (#159)
+- Added `REFRESH TABLE` before assertions to prevent metastore flake in tests (2772fda)
+
+---
+
 ## v1.9.6
 
 ### Bug Fixes

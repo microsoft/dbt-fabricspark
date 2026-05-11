@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.10.1
+
+### Bug Fixes
+
+- Fixed `dbt debug` creating multiple Livy sessions on first connect by treating HTTP `202 Accepted` from `POST /sessions` as a successful creation instead of a retryable failure (#171)
+
 ## v1.10.0
 
 ### New Features

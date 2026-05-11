@@ -149,6 +149,22 @@ class TestCreateSessionRetry:
     @patch("dbt.adapters.fabricspark.livysession.time.sleep")
     @patch("dbt.adapters.fabricspark.livysession.requests.post")
     @patch("dbt.adapters.fabricspark.livysession.LivySession.wait_for_session_start")
+    def test_create_session_accepts_202_without_retry(
+        self, mock_wait, mock_post, mock_sleep, mock_headers
+    ):
+        """create_session should treat HTTP 202 as successful initiation."""
+        mock_post.return_value = self._make_response(202)
+        session = LivySession(self._make_credentials())
+
+        session.create_session({"kind": "sql"})
+
+        assert mock_post.call_count == 1
+        mock_sleep.assert_not_called()
+
+    @patch("dbt.adapters.fabricspark.livysession.get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.livysession.time.sleep")
+    @patch("dbt.adapters.fabricspark.livysession.requests.post")
+    @patch("dbt.adapters.fabricspark.livysession.LivySession.wait_for_session_start")
     def test_create_session_retries_on_404_then_succeeds(
         self, mock_wait, mock_post, mock_sleep, mock_headers
     ):

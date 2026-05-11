@@ -547,7 +547,7 @@ class LivySession:
                     headers=get_headers(self.credential, False),
                     timeout=self.credential.http_timeout,
                 )
-                if response.status_code == 200 or response.status_code == 201:
+                if response.status_code in (200, 201, 202):
                     logger.debug("Initiated Livy Session...")
                     break  # Success — exit retry loop
                 # Retry on 404 (Fabric Livy endpoint transiently unavailable)

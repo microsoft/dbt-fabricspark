@@ -75,6 +75,110 @@ def pytest_configure(config):
         _fail_fast_sentinel = Path(sentinel).resolve()
 
 
+def _expected_cached_session_ids(config) -> set[str]:
+    """Read the warmed/cached Livy session IDs the orchestrator wrote.
+
+    The dbt-fabricspark adapter must reuse these session IDs (one per shard)
+    rather than starting fresh sessions. We collect the IDs by reading the
+    files referenced by ``--session-id-file`` / ``--session-id-files`` so the
+    post-test assertion can compare them against the active sessions on the
+    lakehouse via ``GET /sessions``.
+    """
+    expected: set[str] = set()
+    sif = config.getoption("--session-id-file", default=None)
+    sifs = config.getoption("--session-id-files", default=None)
+
+    paths: list[str] = []
+    if sifs:
+        try:
+            with open(sifs) as f:
+                paths.extend(ln.strip() for ln in f if ln.strip())
+        except OSError:
+            pass
+    if sif:
+        paths.append(sif)
+
+    for p in paths:
+        try:
+            sid = Path(p).read_text().strip()
+        except OSError:
+            continue
+        if sid:
+            expected.add(sid)
+    return expected
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _assert_only_cached_livy_sessions(request):
+    """Assert the adapter reuses the cached Livy session(s) per Lakehouse.
+
+    For a given Lakehouse the adapter must ALWAYS reuse the cached session(s)
+    written to ``livy-session-id.txt`` by the orchestrator. Any extra Livy
+    session observed on the lakehouse after the test run indicates the adapter
+    started a session of its own instead of attaching to the warmed one.
+
+    After the test session completes, list the lakehouse's active Livy
+    sessions via the Fabric REST API and assert the active set is a subset of
+    the warmed/cached IDs. Skipped when no cached IDs are available (ad-hoc
+    local runs without the orchestrator).
+    """
+    yield
+
+    expected_ids = _expected_cached_session_ids(request.config)
+    if not expected_ids:
+        logger.info(
+            "Skipping single-session assertion: no cached Livy session IDs "
+            "(test was not driven by the orchestrator)."
+        )
+        return
+
+    lakehouse_id = os.environ.get("LAKEHOUSE_ID")
+    workspace_id = os.environ.get("WORKSPACE_ID_1")
+    api_endpoint = os.environ.get("LIVY_ENDPOINT", "https://api.fabric.microsoft.com/v1")
+    if not lakehouse_id or not workspace_id:
+        logger.warning("Skipping single-session assertion: LAKEHOUSE_ID / WORKSPACE_ID_1 not set.")
+        return
+
+    # Build the Fabric REST client lazily so unit-test imports of this module
+    # don't pull in azure-identity unnecessarily.
+    from tests.functional.fabric_client import (
+        AzureCliTokenProvider,
+        FabricClient,
+        StaticTokenProvider,
+        TokenProvider,
+    )
+
+    token_str = os.environ.get("FABRIC_INTEGRATION_TESTS_TOKEN")
+    token_provider: TokenProvider = (
+        StaticTokenProvider(token_str) if token_str else AzureCliTokenProvider()
+    )
+    client = FabricClient(workspace_id, api_endpoint, token_provider)
+
+    try:
+        active_sessions = client.list_livy_sessions(lakehouse_id)
+    except Exception as exc:  # noqa: BLE001 — best-effort post-test guard
+        logger.warning(
+            "Single-session assertion skipped: failed to list Livy sessions on lakehouse %s: %s",
+            lakehouse_id,
+            exc,
+        )
+        return
+
+    active_ids = {str(s["id"]) for s in active_sessions if "id" in s}
+    extras = active_ids - expected_ids
+    assert not extras, (
+        f"dbt-fabricspark started extra Livy sessions on lakehouse {lakehouse_id}: "
+        f"unexpected={sorted(extras)} expected={sorted(expected_ids)} "
+        f"all_active={sorted(active_ids)}. The adapter must reuse the cached "
+        f"session(s) from livy-session-id.txt."
+    )
+    logger.info(
+        "Single-session assertion passed: active=%s expected=%s",
+        sorted(active_ids),
+        sorted(expected_ids),
+    )
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item):
     """Abort test session if a prior test has failed (cross-worker, cross-session).

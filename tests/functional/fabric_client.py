@@ -257,3 +257,40 @@ class FabricClient:
             logger.info("Deleted environment %s", environment_id)
         except Exception:
             logger.warning("Failed to delete environment %s", environment_id, exc_info=True)
+
+    # Terminal Livy session states — sessions in these states no longer
+    # consume a session slot and should not be counted as "active".
+    _LIVY_TERMINAL_STATES = frozenset({"dead", "killed", "error", "shutting_down", "success"})
+
+    def list_livy_sessions(
+        self,
+        lakehouse_id: str,
+        *,
+        livy_api_version: str = "2023-12-01",
+        active_only: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Return Livy sessions for a lakehouse via the Fabric REST API.
+
+        Calls ``GET /workspaces/{ws}/lakehouses/{lh}/livyApi/versions/{v}/sessions``.
+
+        Parameters
+        ----------
+        lakehouse_id : str
+            Target Lakehouse UUID.
+        livy_api_version : str
+            Livy API version segment of the URL. Defaults to the version the
+            adapter itself uses (see ``FabricSparkCredentials.lakehouse_endpoint``).
+        active_only : bool
+            When True (default), filters out sessions in terminal states
+            (``dead``, ``killed``, ``error``, ``shutting_down``, ``success``).
+        """
+        path = f"lakehouses/{lakehouse_id}/livyApi/versions/{livy_api_version}/sessions"
+        resp = self._request("GET", path, expected_status=(200,))
+        sessions = resp.json().get("sessions", []) or []
+        if not active_only:
+            return sessions
+        return [
+            s
+            for s in sessions
+            if str(s.get("state", "")).lower() not in self._LIVY_TERMINAL_STATES
+        ]

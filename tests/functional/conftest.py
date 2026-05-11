@@ -110,7 +110,7 @@ def _expected_cached_session_ids(config) -> set[str]:
 
 @pytest.fixture(scope="session", autouse=True)
 def _assert_only_cached_livy_sessions(request):
-    """Guard against the v1.10.0 multi-session regression (issue #XXX, PR #159).
+    """Guard against the v1.10.0 multi-session regression (PR #159).
 
     For a given Lakehouse the adapter must ALWAYS reuse the cached session(s)
     written to ``livy-session-id.txt`` by the orchestrator. Any extra Livy

@@ -110,13 +110,12 @@ def _expected_cached_session_ids(config) -> set[str]:
 
 @pytest.fixture(scope="session", autouse=True)
 def _assert_only_cached_livy_sessions(request):
-    """Guard against the v1.10.0 multi-session regression (PR #159).
+    """Assert the adapter reuses the cached Livy session(s) per Lakehouse.
 
     For a given Lakehouse the adapter must ALWAYS reuse the cached session(s)
     written to ``livy-session-id.txt`` by the orchestrator. Any extra Livy
-    session created during the run indicates the adapter started a session of
-    its own — the bug we just fixed (HTTP 202 treated as failure) was exactly
-    that, and started up to 5 sessions per ``dbt debug``.
+    session observed on the lakehouse after the test run indicates the adapter
+    started a session of its own instead of attaching to the warmed one.
 
     After the test session completes, list the lakehouse's active Livy
     sessions via the Fabric REST API and assert the active set is a subset of
@@ -171,8 +170,7 @@ def _assert_only_cached_livy_sessions(request):
         f"dbt-fabricspark started extra Livy sessions on lakehouse {lakehouse_id}: "
         f"unexpected={sorted(extras)} expected={sorted(expected_ids)} "
         f"all_active={sorted(active_ids)}. The adapter must reuse the cached "
-        f"session(s) from livy-session-id.txt — see PR #159 / the v1.10.0 "
-        "multi-session regression."
+        f"session(s) from livy-session-id.txt."
     )
     logger.info(
         "Single-session assertion passed: active=%s expected=%s",

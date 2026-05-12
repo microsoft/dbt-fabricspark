@@ -14,13 +14,17 @@ prompts:
         default: https://api.fabric.microsoft.com/v1
       auth:
         default: CLI
-        hint: Use CLI (az login) for interactive execution or SPN for automation
+        hint: One of CLI (az login), SPN (client_id/secret/tenant), fabric_notebook, or token_credential (custom TokenCredential)
       client_id:
         hint: Use when SPN auth is used.
       client_secret:
         hint: Use when SPN auth is used.
       tenant_id:
         hint: Use when SPN auth is used.
+      credential_class:
+        hint: Use when token_credential auth is used. Dotted path to a class implementing azure.core.credentials.TokenCredential (e.g. my_pkg.auth.ExternalTokenCredential).
+      credential_kwargs:
+        hint: Use when token_credential auth is used. Mapping of kwargs passed to credential_class on instantiation.
       connect_retries:
         default: 0
         type: 'int'

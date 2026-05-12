@@ -354,6 +354,16 @@ def dbt_profile_target(request, workspace_id, api_endpoint, schema_mode):
     if profile_type == "int_tests":
         base["authentication"] = "int_tests"
         base["accessToken"] = os.getenv("FABRIC_INTEGRATION_TESTS_TOKEN")
+    elif profile_type == "token_credential":
+        # End-to-end smoke for discussion #166. The dotted path points at a
+        # thin wrapper around AzureCliCredential declared in the test module,
+        # so it produces a real Fabric token locally without requiring a
+        # separate broker.
+        base["authentication"] = "token_credential"
+        base["credential_class"] = (
+            "tests.functional.adapter.test_token_credential.AzureCliBackedCredential"
+        )
+        base["credential_kwargs"] = {}
     else:
         base["authentication"] = "CLI"
 

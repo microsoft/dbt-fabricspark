@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import atexit
 import datetime as dt
+import importlib
 import json
 import os
 import re
@@ -11,7 +12,7 @@ from types import TracebackType
 from typing import Any, Optional
 
 import requests
-from azure.core.credentials import AccessToken
+from azure.core.credentials import AccessToken, TokenCredential
 from azure.identity import AzureCliCredential, ClientSecretCredential
 from dbt_common.exceptions import DbtDatabaseError, DbtRuntimeError
 from dbt_common.utils.encoding import DECIMALS
@@ -42,6 +43,18 @@ _token_lock = threading.Lock()
 # Process-level cache for lakehouse properties (avoids repeated API calls per connection open)
 _lakehouse_props_cache: dict[tuple[str, str, str], dict] = {}
 _lakehouse_props_lock = threading.Lock()
+
+# Process-level cache for user-supplied TokenCredential instances, keyed by
+# the (dotted_path, repr-of-sorted-kwargs) tuple. Lets refresh-on-expiry
+# reuse the same instance without re-importing on every header build. Using
+# repr() of the sorted kwargs makes the key stable even when kwargs contain
+# unhashable values (nested dicts, lists from YAML).
+_custom_credential_cache: dict[tuple[str, str], Any] = {}
+_custom_credential_lock = threading.Lock()
+
+# Dotted-path identifier validation (defence-in-depth — importlib won't
+# execute shell, but rejecting non-identifier chars gives clearer errors).
+_DOTTED_PATH_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$")
 
 
 def read_session_id_from_file(file_path: str) -> Optional[str]:
@@ -185,6 +198,81 @@ def get_default_access_token(credentials: FabricSparkCredentials) -> AccessToken
     return accessToken
 
 
+def _load_custom_credential(credentials: FabricSparkCredentials) -> Any:
+    """Import and instantiate the user-supplied TokenCredential.
+
+    The instance is cached per (dotted_path, kwargs) tuple so that refresh
+    cycles reuse the same object (matching how azure-identity credentials
+    are typically held).
+    """
+    dotted = credentials.credential_class
+    if not dotted:
+        raise DbtRuntimeError("authentication='token_credential' requires `credential_class`.")
+    if not _DOTTED_PATH_PATTERN.match(dotted):
+        raise DbtRuntimeError(
+            f"credential_class must be a dotted path like 'pkg.module.ClassName', got: {dotted!r}"
+        )
+    kwargs = credentials.credential_kwargs or {}
+    # repr() of sorted items keeps the cache key hashable even when kwargs
+    # contain nested dicts/lists from YAML.
+    cache_key = (dotted, repr(sorted(kwargs.items(), key=lambda kv: kv[0])))
+
+    with _custom_credential_lock:
+        if cache_key in _custom_credential_cache:
+            return _custom_credential_cache[cache_key]
+
+        module_path, _, class_name = dotted.rpartition(".")
+        try:
+            module = importlib.import_module(module_path)
+        except ImportError as exc:
+            raise DbtRuntimeError(
+                f"Could not import module for credential_class={dotted!r}: {exc}"
+            ) from exc
+        try:
+            cls = getattr(module, class_name)
+        except AttributeError as exc:
+            raise DbtRuntimeError(
+                f"Module {module_path!r} has no attribute {class_name!r} "
+                f"(from credential_class={dotted!r})"
+            ) from exc
+
+        try:
+            instance = cls(**kwargs)
+        except TypeError as exc:
+            raise DbtRuntimeError(
+                f"Failed to instantiate {dotted!r} with credential_kwargs: {exc}"
+            ) from exc
+
+        # TokenCredential is a @runtime_checkable Protocol — isinstance does
+        # the structural get_token check, so any class exposing get_token
+        # passes whether or not it inherits from TokenCredential.
+        if not isinstance(instance, TokenCredential):
+            raise DbtRuntimeError(
+                f"{dotted!r} must implement azure.core.credentials.TokenCredential "
+                f"(missing callable get_token)."
+            )
+
+        _custom_credential_cache[cache_key] = instance
+        return instance
+
+
+def get_token_credential_access_token(credentials: FabricSparkCredentials) -> AccessToken:
+    """Get an access token from a user-supplied TokenCredential class.
+
+    Loaded by dotted path from ``credentials.credential_class`` and
+    instantiated with ``credentials.credential_kwargs``. See discussion
+    https://github.com/microsoft/dbt-fabricspark/discussions/166.
+    """
+    credential = _load_custom_credential(credentials)
+    result = credential.get_token(AZURE_CREDENTIAL_SCOPE)
+    if not isinstance(result, AccessToken):
+        raise DbtRuntimeError(
+            f"{credentials.credential_class!r}.get_token() must return an "
+            f"azure.core.credentials.AccessToken, got {type(result).__name__}."
+        )
+    return result
+
+
 def get_fabric_notebook_access_token(credentials: FabricSparkCredentials) -> AccessToken:
     """
     Get an Azure access token using notebookutils.
@@ -250,6 +338,12 @@ def get_headers(credentials: FabricSparkCredentials, tokenPrint: bool = False) -
             ):
                 logger.info("Using Fabric Notebook auth")
                 accessToken = get_fabric_notebook_access_token(credentials)
+            elif (
+                credentials.authentication
+                and credentials.authentication.lower() == "token_credential"
+            ):
+                logger.info(f"Using token_credential auth ({credentials.credential_class})")
+                accessToken = get_token_credential_access_token(credentials)
             else:
                 logger.info("Using SPN auth")
                 accessToken = get_sp_access_token(credentials)

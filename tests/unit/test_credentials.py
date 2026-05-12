@@ -344,3 +344,87 @@ def test_permanent_error_case_insensitive() -> None:
         "Error while executing query: [schema_not_found] The schema `foo` cannot be found."
     )
     assert _is_permanent_error(exc) is True
+
+
+# --- Tests for token_credential auth (discussion #166) ---
+
+
+def _base_fabric_kwargs() -> dict:
+    return {
+        "method": "livy",
+        "lakehouse": "tests",
+        "workspaceid": "1de8390c-9aca-4790-bee8-72049109c0f4",
+        "lakehouseid": "8c5bc260-bc3a-4898-9ada-01e433d461ba",
+        "spark_config": {"name": "test-session"},
+    }
+
+
+def test_token_credential_requires_credential_class() -> None:
+    """authentication=token_credential without credential_class must raise."""
+    with pytest.raises(DbtRuntimeError, match="credential_class"):
+        FabricSparkCredentials(
+            authentication="token_credential",
+            **_base_fabric_kwargs(),
+        )
+
+
+def test_token_credential_accepts_dotted_path() -> None:
+    credentials = FabricSparkCredentials(
+        authentication="token_credential",
+        credential_class="my_pkg.auth.ExternalTokenCredential",
+        credential_kwargs={"token_url": "https://broker.internal/token", "user_id": "alice"},
+        **_base_fabric_kwargs(),
+    )
+    assert credentials.credential_class == "my_pkg.auth.ExternalTokenCredential"
+    assert credentials.credential_kwargs == {
+        "token_url": "https://broker.internal/token",
+        "user_id": "alice",
+    }
+
+
+def test_token_credential_case_insensitive() -> None:
+    """authentication value should be matched case-insensitively."""
+    credentials = FabricSparkCredentials(
+        authentication="Token_Credential",
+        credential_class="my_pkg.auth.Cred",
+        **_base_fabric_kwargs(),
+    )
+    assert credentials.credential_class == "my_pkg.auth.Cred"
+
+
+def test_credential_class_with_non_token_auth_raises() -> None:
+    """credential_class set but authentication != token_credential must raise."""
+    with pytest.raises(DbtRuntimeError, match="token_credential"):
+        FabricSparkCredentials(
+            authentication="CLI",
+            credential_class="my_pkg.auth.Cred",
+            **_base_fabric_kwargs(),
+        )
+
+
+def test_credential_kwargs_with_non_token_auth_raises() -> None:
+    """credential_kwargs set but authentication != token_credential must raise."""
+    with pytest.raises(DbtRuntimeError, match="token_credential"):
+        FabricSparkCredentials(
+            authentication="CLI",
+            credential_kwargs={"token_url": "https://x"},
+            **_base_fabric_kwargs(),
+        )
+
+
+def test_repr_masks_credential_kwargs_values() -> None:
+    """__repr__ must not leak credential_kwargs values (broker URLs, user ids)."""
+    secret_value = "secret-broker.internal/token"
+    credentials = FabricSparkCredentials(
+        authentication="token_credential",
+        credential_class="my_pkg.auth.Cred",
+        credential_kwargs={"token_url": secret_value, "user_id": "alice"},
+        **_base_fabric_kwargs(),
+    )
+    rendered = repr(credentials)
+    assert secret_value not in rendered
+    assert "alice" not in rendered
+    # Keys should still appear so operators can debug shape mismatches.
+    assert "token_url" in rendered
+    assert "user_id" in rendered
+    assert "my_pkg.auth.Cred" in rendered

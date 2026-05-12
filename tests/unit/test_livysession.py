@@ -844,3 +844,209 @@ class TestFetchmany:
         assert cursor._fetch_index == 0
         # fetchone() should return the first (only) row of the new result
         assert cursor.fetchone() == ("c",)
+
+
+# --- Tests for token_credential auth path (discussion #166) ---
+
+
+class _StaticFakeCredential:
+    """Module-level fake TokenCredential so the dotted path can be imported."""
+
+    last_kwargs: dict = {}
+    call_count: int = 0
+
+    def __init__(self, **kwargs):
+        type(self).last_kwargs = kwargs
+
+    def get_token(self, *scopes, **kwargs):
+        from azure.core.credentials import AccessToken
+
+        type(self).call_count += 1
+        return AccessToken(token="fake-token", expires_on=9999999999)
+
+
+class _NotACredential:
+    """Class without get_token — should be rejected by the loader."""
+
+    def __init__(self, **kwargs):
+        pass
+
+
+def _reset_token_state():
+    """Wipe the module-level access token and credential cache between tests."""
+    import dbt.adapters.fabricspark.livysession as livysession_module
+
+    livysession_module.accessToken = None
+    livysession_module._custom_credential_cache.clear()
+    _StaticFakeCredential.call_count = 0
+    _StaticFakeCredential.last_kwargs = {}
+
+
+def _make_token_credential_creds(credential_class: str, kwargs: dict | None = None):
+    from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
+
+    return FabricSparkCredentials(
+        method="livy",
+        livy_mode="fabric",
+        authentication="token_credential",
+        credential_class=credential_class,
+        credential_kwargs=kwargs or {},
+        lakehouse="tests",
+        workspaceid="1de8390c-9aca-4790-bee8-72049109c0f4",
+        lakehouseid="8c5bc260-bc3a-4898-9ada-01e433d461ba",
+        spark_config={"name": "test-session"},
+    )
+
+
+class TestTokenCredentialAuth:
+    def test_get_headers_uses_custom_credential(self):
+        _reset_token_state()
+        from dbt.adapters.fabricspark.livysession import get_headers
+
+        credentials = _make_token_credential_creds(
+            "tests.unit.test_livysession._StaticFakeCredential",
+            {"token_url": "https://broker.example/token"},
+        )
+        headers = get_headers(credentials)
+
+        assert headers["Authorization"] == "Bearer fake-token"
+        assert _StaticFakeCredential.last_kwargs == {"token_url": "https://broker.example/token"}
+        assert _StaticFakeCredential.call_count == 1
+
+    def test_credential_instance_is_cached_across_calls(self):
+        _reset_token_state()
+        from dbt.adapters.fabricspark.livysession import _load_custom_credential
+
+        credentials = _make_token_credential_creds(
+            "tests.unit.test_livysession._StaticFakeCredential",
+            {"token_url": "https://broker.example/token"},
+        )
+        first = _load_custom_credential(credentials)
+        second = _load_custom_credential(credentials)
+        assert first is second
+
+    def test_unknown_module_raises_runtime_error(self):
+        _reset_token_state()
+        from dbt_common.exceptions import DbtRuntimeError
+
+        from dbt.adapters.fabricspark.livysession import _load_custom_credential
+
+        credentials = _make_token_credential_creds("nonexistent_pkg.module.Cls")
+        with pytest.raises(DbtRuntimeError, match="Could not import module"):
+            _load_custom_credential(credentials)
+
+    def test_missing_attribute_raises_runtime_error(self):
+        _reset_token_state()
+        from dbt_common.exceptions import DbtRuntimeError
+
+        from dbt.adapters.fabricspark.livysession import _load_custom_credential
+
+        credentials = _make_token_credential_creds(
+            "tests.unit.test_livysession.DoesNotExistOnModule",
+        )
+        with pytest.raises(DbtRuntimeError, match="has no attribute"):
+            _load_custom_credential(credentials)
+
+    def test_non_dotted_path_raises_runtime_error(self):
+        _reset_token_state()
+        from dbt_common.exceptions import DbtRuntimeError
+
+        from dbt.adapters.fabricspark.livysession import _load_custom_credential
+
+        credentials = _make_token_credential_creds("notdotted")
+        with pytest.raises(DbtRuntimeError, match="dotted path"):
+            _load_custom_credential(credentials)
+
+    def test_instance_without_get_token_raises_runtime_error(self):
+        _reset_token_state()
+        from dbt_common.exceptions import DbtRuntimeError
+
+        from dbt.adapters.fabricspark.livysession import _load_custom_credential
+
+        credentials = _make_token_credential_creds(
+            "tests.unit.test_livysession._NotACredential",
+        )
+        with pytest.raises(DbtRuntimeError, match="get_token"):
+            _load_custom_credential(credentials)
+
+    def test_get_token_must_return_access_token(self):
+        """A credential whose get_token returns a non-AccessToken must fail loud."""
+        _reset_token_state()
+        from dbt_common.exceptions import DbtRuntimeError
+
+        from dbt.adapters.fabricspark.livysession import get_token_credential_access_token
+
+        credentials = _make_token_credential_creds(
+            "tests.unit.test_livysession._BadReturnTypeCredential",
+        )
+        with pytest.raises(DbtRuntimeError, match="AccessToken"):
+            get_token_credential_access_token(credentials)
+
+    def test_dotted_path_with_invalid_chars_rejected(self):
+        """Defence-in-depth: dotted path is validated against an identifier regex."""
+        _reset_token_state()
+        from dbt_common.exceptions import DbtRuntimeError
+
+        from dbt.adapters.fabricspark.livysession import _load_custom_credential
+
+        for bad in [
+            "pkg.module;os.system",
+            "pkg/module.Cls",
+            "pkg..Cls",
+            ".pkg.Cls",
+            "pkg.Cls.",
+            "1pkg.Cls",
+        ]:
+            credentials = _make_token_credential_creds(bad)
+            with pytest.raises(DbtRuntimeError, match="dotted path"):
+                _load_custom_credential(credentials)
+
+    def test_kwargs_with_unhashable_values_cache_correctly(self):
+        """Nested dict/list kwargs (from YAML) must not break the cache key."""
+        _reset_token_state()
+        from dbt.adapters.fabricspark.livysession import _load_custom_credential
+
+        credentials = _make_token_credential_creds(
+            "tests.unit.test_livysession._StaticFakeCredential",
+            {"opts": {"nested": "x"}, "tags": ["a", "b"]},
+        )
+        first = _load_custom_credential(credentials)
+        second = _load_custom_credential(credentials)
+        assert first is second
+
+    def test_token_refresh_reinvokes_get_token(self):
+        """When the cached AccessToken is near expiry, get_headers must refetch."""
+        _reset_token_state()
+        import dbt.adapters.fabricspark.livysession as livysession_module
+        from dbt.adapters.fabricspark.livysession import get_headers
+
+        credentials = _make_token_credential_creds(
+            "tests.unit.test_livysession._StaticFakeCredential",
+        )
+
+        # First call: cold — fetches a token.
+        get_headers(credentials)
+        assert _StaticFakeCredential.call_count == 1
+
+        # Second call: token still valid — no refresh.
+        get_headers(credentials)
+        assert _StaticFakeCredential.call_count == 1
+
+        # Force expiry: set the module-global token to one that's already
+        # expired so is_token_refresh_necessary fires.
+        from azure.core.credentials import AccessToken
+
+        livysession_module.accessToken = AccessToken(token="stale", expires_on=0)
+
+        get_headers(credentials)
+        assert _StaticFakeCredential.call_count == 2
+
+
+class _BadReturnTypeCredential:
+    """Returns a plain string instead of AccessToken — caught by isinstance guard."""
+
+    def __init__(self, **kwargs):
+        pass
+
+    def get_token(self, *scopes, **kwargs):
+        return "not-an-access-token"

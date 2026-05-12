@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### New Features
+
+- Added `token_credential` authentication method — load a user-supplied `azure.core.credentials.TokenCredential` implementation via dotted path (`credential_class` + `credential_kwargs`). Lets callers plug in tokens minted by their own OAuth flow, Workload Identity Federation, Vault, etc. without going through `az login` or SPN config (#166). **Security note:** `credential_kwargs` values are passed verbatim to the credential class and may contain secrets — prefer `{{ env_var(...) }}` over inline values and ensure `profiles.yml` has restricted file permissions. The dotted path is INFO-logged on each connect for forensic visibility.
+
 ## v1.10.1
 
 ### Bug Fixes

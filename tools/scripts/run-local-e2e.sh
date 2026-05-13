@@ -127,7 +127,22 @@ dbt compile --target "${TARGET}"
 dbt ls --target "${TARGET}"
 dbt show --select customers --limit 5 --target "${TARGET}"
 dbt parse --target "${TARGET}"
+
+echo ""
+echo "--- [catalog] dbt docs generate (regression guard: foreign-schema SCHEMA_NOT_FOUND retry storm) ---"
+echo "    sources.yml includes 'nonexistent_foreign_schema' which does not exist in the local metastore."
+echo "    With retry_all:true and connect_retries:25, the pre-fix adapter wasted >120s per missing schema."
+echo "    This timing check detects if the regression reappears."
+DOCS_START=$(date +%s)
 dbt docs generate --target "${TARGET}"
+DOCS_ELAPSED=$(( $(date +%s) - DOCS_START ))
+if [ "${DOCS_ELAPSED}" -gt 60 ]; then
+  echo ""
+  echo "FAIL: dbt docs generate took ${DOCS_ELAPSED}s — suspected [SCHEMA_NOT_FOUND] retry storm regression."
+  echo "      Check list_relations_without_caching / is_retry_all_fallback in connections.py and impl.py."
+  exit 1
+fi
+echo "  OK: dbt docs generate completed in ${DOCS_ELAPSED}s (well under the 60s guard)"
 
 echo ""
 echo "============================================"

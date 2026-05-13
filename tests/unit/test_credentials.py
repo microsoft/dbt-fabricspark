@@ -2,7 +2,7 @@ import pytest
 from dbt_common.exceptions import DbtDatabaseError, DbtRuntimeError
 
 from dbt.adapters.fabricspark import FabricSparkCredentials
-from dbt.adapters.fabricspark.connections import _is_retryable_error
+from dbt.adapters.fabricspark.connections import _is_permanent_error, _is_retryable_error
 
 
 def test_credentials_fabric_mode_defaults_schema_to_lakehouse() -> None:
@@ -293,3 +293,54 @@ def test_other_retryable_keywords_still_work() -> None:
     for keyword in ["throttling", "service busy", "rate limit", "unavailable"]:
         exc = Exception(f"The server returned: {keyword}")
         assert _is_retryable_error(exc) != "", f"Expected '{keyword}' to be retryable"
+
+
+# --- Tests for _is_permanent_error (SCHEMA_NOT_FOUND retry-storm regression) ---
+
+
+def test_schema_not_found_is_permanent_error() -> None:
+    """[SCHEMA_NOT_FOUND] must be classified as a permanent error.
+
+    Regression: dbt docs generate fans out catalog queries to foreign source
+    schemas. When Spark returns [SCHEMA_NOT_FOUND] and retry_all:true is set,
+    the pre-fix adapter retried the query 24 times (~120s per schema) before
+    finally returning [].  _is_permanent_error must short-circuit that storm.
+    """
+    exc = DbtDatabaseError(
+        "Error while executing query: [SCHEMA_NOT_FOUND] "
+        "The schema `nonexistent_foreign_schema` cannot be found. "
+        "Verify the spelling and correctness of the schema and catalog."
+    )
+    assert _is_permanent_error(exc) is True
+
+
+def test_table_or_view_not_found_is_permanent_error() -> None:
+    """[TABLE_OR_VIEW_NOT_FOUND] must also be classified as permanent."""
+    exc = DbtDatabaseError(
+        "Error while executing query: [TABLE_OR_VIEW_NOT_FOUND] "
+        "The table or view `my_table` cannot be found."
+    )
+    assert _is_permanent_error(exc) is True
+
+
+def test_schema_not_found_is_not_retryable() -> None:
+    """[SCHEMA_NOT_FOUND] must not match retryable keywords either."""
+    exc = DbtDatabaseError(
+        "Error while executing query: [SCHEMA_NOT_FOUND] The schema `foo_db` cannot be found."
+    )
+    assert _is_retryable_error(exc) == ""
+
+
+def test_transient_error_is_not_permanent() -> None:
+    """Regular transient errors must not be falsely classified as permanent."""
+    for msg in ["service busy", "throttling", "gateway timeout", "connection reset"]:
+        exc = Exception(f"The server returned: {msg}")
+        assert _is_permanent_error(exc) is False, f"'{msg}' should not be permanent"
+
+
+def test_permanent_error_case_insensitive() -> None:
+    """_is_permanent_error matching is case-insensitive."""
+    exc = DbtRuntimeError(
+        "Error while executing query: [schema_not_found] The schema `foo` cannot be found."
+    )
+    assert _is_permanent_error(exc) is True

@@ -457,7 +457,10 @@ class FabricSparkAdapter(SQLAdapter):
                 )
             except DbtRuntimeError as e:
                 errmsg = getattr(e, "msg", "")
-                if f"Database '{schema_relation}' not found" in errmsg:
+                if (
+                    f"Database '{schema_relation}' not found" in errmsg
+                    or "[SCHEMA_NOT_FOUND]" in errmsg
+                ):
                     return []
                 logger.debug(
                     f"Error while retrieving information about {schema_relation}: {errmsg}"
@@ -476,7 +479,10 @@ class FabricSparkAdapter(SQLAdapter):
             )
         except DbtRuntimeError as e:
             errmsg = getattr(e, "msg", "")
-            if f"Database '{schema_relation}' not found" in errmsg:
+            if (
+                f"Database '{schema_relation}' not found" in errmsg
+                or "[SCHEMA_NOT_FOUND]" in errmsg
+            ):
                 return []
             # Iceberg compute engine behavior: show table
             elif "SHOW TABLE EXTENDED is not supported for v2 tables" in errmsg:

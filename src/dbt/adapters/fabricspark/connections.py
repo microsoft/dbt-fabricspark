@@ -391,12 +391,15 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                 # retry_all: fall back to retrying even if the error message
                 # doesn't match a known retryable pattern.  Statement-timeout
                 # errors are still excluded (they are already filtered out by
-                # _is_retryable_error returning "").
+                # _is_retryable_error returning "").  Permanent Spark structured
+                # errors (e.g. [SCHEMA_NOT_FOUND]) are also excluded — they will
+                # never succeed on retry and would cause a multi-minute stall.
                 is_retry_all_fallback = (
                     not is_type_retryable
                     and not retryable_message
                     and getattr(connection.credentials, "retry_all", False)
                     and "increase `statement_timeout` in profiles.yml" not in str(e).lower()
+                    and not _is_permanent_error(e)
                 )
 
                 if not is_type_retryable and not retryable_message and not is_retry_all_fallback:
@@ -507,3 +510,24 @@ def _is_retryable_error(exc: Exception) -> str:
         if keyword in message:
             return str(exc)
     return ""
+
+
+# Spark structured error codes (Spark 3.3+) that signal a permanent,
+# deterministic failure.  Retrying these under ``retry_all`` is pointless and
+# causes multi-minute stalls (e.g. 24 retries × 5 s each) with screenfuls of
+# log noise.  ``dbt docs generate`` triggers this when it fans out catalog
+# queries to source schemas that live in foreign lakehouses / catalogs.
+_PERMANENT_SPARK_ERROR_CODES = (
+    "[schema_not_found]",
+    "[table_or_view_not_found]",
+)
+
+
+def _is_permanent_error(exc: Exception) -> bool:
+    """Return True if *exc* carries a known-permanent Spark structured error code.
+
+    Permanent errors will never succeed on retry regardless of the ``retry_all``
+    setting, so they must be excluded from the retry loop immediately.
+    """
+    msg = str(exc).lower()
+    return any(code in msg for code in _PERMANENT_SPARK_ERROR_CODES)

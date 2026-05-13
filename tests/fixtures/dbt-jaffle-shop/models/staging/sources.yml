@@ -14,3 +14,19 @@ sources:
       - name: raw_payments
         description: "Raw payment data (seeded from seeds/raw_payments.csv)"
         identifier: raw_payments
+
+  - name: foreign_src
+    description: >
+      Intentionally-foreign source whose schema does not exist in the local
+      metastore.  Present only to exercise the regression path in
+      get_catalog / list_relations_without_caching where dbt docs generate
+      fans out SHOW TABLE EXTENDED queries to every source schema, including
+      those in foreign lakehouses.  With retry_all:true and connect_retries:25
+      the pre-fix adapter would stall for >120 s per missing schema before
+      returning [].  The local e2e test validates this stays fast.
+    schema: nonexistent_foreign_schema
+    tables:
+      - name: placeholder
+        description: >
+          Never materialized — only here so the schema appears in
+          manifest.sources and triggers a catalog lookup during dbt docs generate.

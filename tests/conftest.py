@@ -44,6 +44,8 @@ def dbt_profile_target(request):
         target = _profile_azure_spn_target()
     elif profile_type == "int_tests":
         target = _profile_int_tests_target()
+    elif profile_type == "token_credential":
+        target = _profile_token_credential_target()
     else:
         raise ValueError(f"Invalid profile type '{profile_type}'")
     return target
@@ -170,6 +172,34 @@ def _profile_azure_spn_target():
             "client_id": os.getenv("DBT_AZURE_SP_NAME"),
             "client_secret": os.getenv("DBT_AZURE_SP_SECRET"),
             "tenant_id": os.getenv("DBT_AZURE_TENANT"),
+        },
+        **{"spark_config": spark_config},
+    }
+
+
+def _profile_token_credential_target():
+    """Profile that exercises the token_credential auth path end-to-end.
+
+    Uses a thin wrapper around AzureCliCredential (declared in the test
+    module) so the dotted path is importable and we still get a real Fabric
+    token locally. CI doesn't run this profile — it's for local smoke tests
+    against the contributor's own Fabric workspace.
+    """
+    spark_config = {
+        "name": os.getenv("SESSION_NAME", "example-session"),
+        "tags": {
+            "project": os.getenv("SESSION_NAME", "example-session"),
+            "user": "pvenkat@microsoft.com",
+        },
+    }
+    return {
+        **_all_profiles_base(),
+        **{
+            "authentication": "token_credential",
+            "credential_class": (
+                "tests.functional.adapter.test_token_credential.AzureCliBackedCredential"
+            ),
+            "credential_kwargs": {},
         },
         **{"spark_config": spark_config},
     }

@@ -48,6 +48,10 @@ class FabricSparkCredentials(Credentials):
     client_secret: Optional[str] = None
     tenant_id: Optional[str] = None
     authentication: str = "CLI"
+    # Dotted path to a TokenCredential implementation loaded via importlib
+    # when authentication='token_credential'.
+    credential_class: Optional[str] = None
+    credential_kwargs: Dict[str, Any] = field(default_factory=dict)
     connect_retries: int = 1
     connect_timeout: int = 10
     create_shortcuts: Optional[bool] = False
@@ -83,6 +87,8 @@ class FabricSparkCredentials(Credentials):
             f"authentication={self.authentication!r}, "
             f"client_id={self.client_id!r}, "
             f"client_secret='***', "
+            f"credential_class={self.credential_class!r}, "
+            f"credential_kwargs_keys={sorted(map(str, self.credential_kwargs.keys()))!r}, "
             f"accessToken='***')"
         )
 
@@ -159,6 +165,24 @@ class FabricSparkCredentials(Credentials):
         for key in required_keys:
             if key not in self.spark_config:
                 raise ValueError(f"Missing required key: {key}")
+
+        # token_credential auth requires a dotted-path credential_class.
+        # Conversely, credential_class/credential_kwargs are only valid with
+        # authentication=token_credential — fail fast on mis-wired profiles.
+        is_token_credential_auth = (
+            isinstance(self.authentication, str)
+            and self.authentication.lower() == "token_credential"
+        )
+        if is_token_credential_auth and not self.credential_class:
+            raise DbtRuntimeError(
+                "authentication='token_credential' requires `credential_class` "
+                "(dotted path to an azure.core.credentials.TokenCredential)."
+            )
+        if not is_token_credential_auth and (self.credential_class or self.credential_kwargs):
+            raise DbtRuntimeError(
+                "`credential_class` and `credential_kwargs` are only valid when "
+                "authentication='token_credential'."
+            )
 
     def apply_lakehouse_properties(self, lakehouse_properties: dict) -> None:
         """Apply lakehouse properties after fetching them from the Fabric REST API.

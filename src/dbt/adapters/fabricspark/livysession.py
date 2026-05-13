@@ -199,11 +199,23 @@ def get_default_access_token(credentials: FabricSparkCredentials) -> AccessToken
 
 
 def _load_custom_credential(credentials: FabricSparkCredentials) -> Any:
-    """Import and instantiate the user-supplied TokenCredential.
+    """
+    Import and instantiate the user-supplied TokenCredential.
 
     The instance is cached per (dotted_path, kwargs) tuple so that refresh
     cycles reuse the same object (matching how azure-identity credentials
     are typically held).
+
+    Parameters
+    ----------
+    credentials : FabricSparkCredentials
+        Credentials carrying ``credential_class`` (dotted path) and
+        ``credential_kwargs``.
+
+    Returns
+    -------
+    out : Any
+        An instance of the user-supplied TokenCredential implementation.
     """
     dotted = credentials.credential_class
     if not dotted:
@@ -257,11 +269,21 @@ def _load_custom_credential(credentials: FabricSparkCredentials) -> Any:
 
 
 def get_token_credential_access_token(credentials: FabricSparkCredentials) -> AccessToken:
-    """Get an access token from a user-supplied TokenCredential class.
+    """
+    Get an Azure access token from a user-supplied TokenCredential class.
 
-    Loaded by dotted path from ``credentials.credential_class`` and
-    instantiated with ``credentials.credential_kwargs``. See discussion
-    https://github.com/microsoft/dbt-fabricspark/discussions/166.
+    The class is loaded by dotted path from ``credentials.credential_class``
+    and instantiated with ``credentials.credential_kwargs``.
+
+    Parameters
+    ----------
+    credentials : FabricSparkCredentials
+        Credentials.
+
+    Returns
+    -------
+    out : AccessToken
+        The access token returned by the user-supplied credential.
     """
     credential = _load_custom_credential(credentials)
     result = credential.get_token(AZURE_CREDENTIAL_SCOPE)

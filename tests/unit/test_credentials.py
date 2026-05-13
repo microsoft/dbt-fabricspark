@@ -346,15 +346,15 @@ def test_permanent_error_case_insensitive() -> None:
     assert _is_permanent_error(exc) is True
 
 
-# --- Tests for token_credential auth (discussion #166) ---
+# --- Tests for token_credential auth ---
 
 
 def _base_fabric_kwargs() -> dict:
     return {
         "method": "livy",
         "lakehouse": "tests",
-        "workspaceid": "1de8390c-9aca-4790-bee8-72049109c0f4",
-        "lakehouseid": "8c5bc260-bc3a-4898-9ada-01e433d461ba",
+        "workspaceid": "00000000-0000-0000-0000-000000000000",
+        "lakehouseid": "00000000-0000-0000-0000-000000000001",
         "spark_config": {"name": "test-session"},
     }
 
@@ -418,12 +418,15 @@ def test_repr_masks_credential_kwargs_values() -> None:
     credentials = FabricSparkCredentials(
         authentication="token_credential",
         credential_class="my_pkg.auth.Cred",
-        credential_kwargs={"token_url": secret_value, "user_id": "alice"},
+        # Two value shapes: a URL-like string and a plain scalar. We want
+        # both kinds masked so the redaction isn't accidentally only
+        # matching things that look like URLs.
+        credential_kwargs={"token_url": secret_value, "user_id": "user-123"},
         **_base_fabric_kwargs(),
     )
     rendered = repr(credentials)
     assert secret_value not in rendered
-    assert "alice" not in rendered
+    assert "user-123" not in rendered
     # Keys should still appear so operators can debug shape mismatches.
     assert "token_url" in rendered
     assert "user_id" in rendered

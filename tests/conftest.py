@@ -183,7 +183,7 @@ def _profile_token_credential_target():
     Uses a thin wrapper around AzureCliCredential (declared in the test
     module) so the dotted path is importable and we still get a real Fabric
     token locally. CI doesn't run this profile — it's for local smoke tests
-    against the contributor's own Fabric workspace (see discussion #166).
+    against the contributor's own Fabric workspace.
     """
     spark_config = {
         "name": os.getenv("SESSION_NAME", "example-session"),

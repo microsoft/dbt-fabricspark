@@ -6,7 +6,7 @@ Run locally against your own Fabric workspace:
         tests/functional/adapter/test_token_credential.py
 
 CI does not exercise this profile — it's intended for contributor smoke
-testing per the contrib workflow (discussion #166).
+testing per the contrib workflow.
 """
 
 import pytest

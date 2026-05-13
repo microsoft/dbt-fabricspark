@@ -48,8 +48,8 @@ class FabricSparkCredentials(Credentials):
     client_secret: Optional[str] = None
     tenant_id: Optional[str] = None
     authentication: str = "CLI"
-    # token_credential auth: dotted path to a TokenCredential implementation
-    # loaded via importlib at connect time. See discussion #166.
+    # Dotted path to a TokenCredential implementation loaded via importlib
+    # when authentication='token_credential'.
     credential_class: Optional[str] = None
     credential_kwargs: Dict[str, Any] = field(default_factory=dict)
     connect_retries: int = 1

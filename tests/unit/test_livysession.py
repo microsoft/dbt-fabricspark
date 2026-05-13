@@ -846,7 +846,7 @@ class TestFetchmany:
         assert cursor.fetchone() == ("c",)
 
 
-# --- Tests for token_credential auth path (discussion #166) ---
+# --- Tests for token_credential auth path ---
 
 
 class _StaticFakeCredential:
@@ -892,8 +892,8 @@ def _make_token_credential_creds(credential_class: str, kwargs: dict | None = No
         credential_class=credential_class,
         credential_kwargs=kwargs or {},
         lakehouse="tests",
-        workspaceid="1de8390c-9aca-4790-bee8-72049109c0f4",
-        lakehouseid="8c5bc260-bc3a-4898-9ada-01e433d461ba",
+        workspaceid="00000000-0000-0000-0000-000000000000",
+        lakehouseid="00000000-0000-0000-0000-000000000001",
         spark_config={"name": "test-session"},
     )
 

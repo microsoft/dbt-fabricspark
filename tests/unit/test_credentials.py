@@ -414,20 +414,24 @@ def test_credential_kwargs_with_non_token_auth_raises() -> None:
 
 def test_repr_masks_credential_kwargs_values() -> None:
     """__repr__ must not leak credential_kwargs values (broker URLs, user ids)."""
-    secret_value = "secret-broker.internal/token"
+    # Bind both fixture values to named constants so any future change to
+    # the fixture stays in lockstep with the assertions below.
+    SECRET_URL = "secret-broker.internal/token"
+    SECRET_USER_ID = "user-123"
     credentials = FabricSparkCredentials(
         authentication="token_credential",
         credential_class="my_pkg.auth.Cred",
         # Two value shapes: a URL-like string and a plain scalar. We want
         # both kinds masked so the redaction isn't accidentally only
         # matching things that look like URLs.
-        credential_kwargs={"token_url": secret_value, "user_id": "user-123"},
+        credential_kwargs={"token_url": SECRET_URL, "user_id": SECRET_USER_ID},
         **_base_fabric_kwargs(),
     )
     rendered = repr(credentials)
-    assert secret_value not in rendered
-    assert "user-123" not in rendered
-    # Keys should still appear so operators can debug shape mismatches.
+    # Values must be redacted; keys must still appear so operators can
+    # debug shape mismatches.
+    assert SECRET_URL not in rendered
+    assert SECRET_USER_ID not in rendered
     assert "token_url" in rendered
     assert "user_id" in rendered
     assert "my_pkg.auth.Cred" in rendered

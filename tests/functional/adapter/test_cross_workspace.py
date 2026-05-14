@@ -570,7 +570,7 @@ class TestCrossWorkspace4PartWriteIncremental:
 
 
 # ---------------------------------------------------------------------------
-# Positive: cross-workspace WRITE via VIEW materialization (issue #172)
+# Positive: cross-workspace WRITE via VIEW materialization
 # ---------------------------------------------------------------------------
 
 

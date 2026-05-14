@@ -22,7 +22,7 @@ command -v gh &>/dev/null || PACKAGES="$PACKAGES gh"
 if ! [ -x "$(command -v docker)" ]; then
   echo "docker is not installed on your devbox, installing..."
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-  sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+  sudo add-apt-repository -y "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
   sudo apt-get update -q
   sudo apt-get install -y apt-transport-https ca-certificates curl
   sudo apt-get install -y --allow-downgrades docker-ce="$DOCKER_VERSION" docker-ce-cli="$DOCKER_VERSION" containerd.io

@@ -51,6 +51,8 @@ The `dbt-fabricspark` package contains all of the code enabling dbt to work with
 - [Install dbt](https://docs.getdbt.com/docs/installation)
 - Read the [introduction](https://docs.getdbt.com/docs/introduction/) and [viewpoint](https://docs.getdbt.com/docs/about/viewpoint/)
 
+> To contribute to this adapter codebase, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ### Installation
 
 ```bash

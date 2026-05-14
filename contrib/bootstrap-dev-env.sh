@@ -22,7 +22,7 @@ command -v gh &>/dev/null || PACKAGES="$PACKAGES gh"
 if ! [ -x "$(command -v docker)" ]; then
   echo "docker is not installed on your devbox, installing..."
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-  sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+  sudo add-apt-repository -y "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
   sudo apt-get update -q
   sudo apt-get install -y apt-transport-https ca-certificates curl
   sudo apt-get install -y --allow-downgrades docker-ce="$DOCKER_VERSION" docker-ce-cli="$DOCKER_VERSION" containerd.io
@@ -40,10 +40,14 @@ if grep -q "$ACR_URL" ~/.docker/config.json 2>/dev/null; then
     if [ -n "$ACR_PASSWORD" ]; then
         docker_password="$ACR_PASSWORD"
     else
-        read -sp "Enter Docker Admin password for ${ACR_URL}: " docker_password
+        read -sp "If you are a Microsoft Employee and you plan on contributing to the Devcontainer image, please ping @mdrrahman and enter Docker Admin password for ${ACR_URL} - otherwise, leave blank and press [ENTER]: " docker_password
         echo
     fi
-    echo "$docker_password" | docker login "$ACR_URL" --username "$ACR_NAME" --password-stdin
+    if [ -z "$docker_password" ]; then
+        echo "You left the password empty, skipping docker login"
+    else
+        echo "$docker_password" | docker login "$ACR_URL" --username "$ACR_NAME" --password-stdin
+    fi
 fi
 
 export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "/mnt/c" | tr '\n' ':' | sed 's/:$//')

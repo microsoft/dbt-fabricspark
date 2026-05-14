@@ -1,107 +1,100 @@
-# Contributing to `dbt-fabricspark`
+# Contributing
 
-1. [About this document](#about-this-document)
-3. [Getting the code](#getting-the-code)
-5. [Running `dbt-fabricspark` in development](#running-dbt-fabricspark-in-development)
-6. [Testing](#testing)
-7. [Updating Docs](#updating-docs)
-7. [Submitting a Pull Request](#submitting-a-pull-request)
+[![Deep-dive Walkthrough](https://rakirahman.blob.core.windows.net/public/images/Misc/dbt-fabricspark-contrib.png)](https://rakirahman.blob.core.windows.net/public/videos/dbt-fabricspark-local-development-deep-dive.mp4)
 
-## About this document
-This document is a guide intended for folks interested in contributing to `dbt-fabricspark`. Below, we document the process by which members of the community should create issues and submit pull requests (PRs) in this repository. It is not intended as a guide for using `dbt-fabricspark`, and it assumes a certain level of familiarity with Python concepts such as virtualenvs, `pip`, Python modules, and so on. This guide assumes you are using macOS or Linux and are comfortable with the command line.
+If you're a windows user, we only use windows to get into WSL - everything is Linux from there.
 
-For those wishing to contribute we highly suggest reading the dbt-core's [contribution guide](https://github.com/dbt-labs/dbt-core/blob/HEAD/CONTRIBUTING.md) if you haven't already. Almost all of the information there is applicable to contributing here, too!
+Spark and Livy are notoriously hard to run on Windows.
+Therefore, the development environment we support is Linux, using [VSCode Devcontainer](https://code.visualstudio.com/docs/devcontainers/containers).
+This repo's CI runs the exact same devcontainer.
 
-## Getting the code
+Therefore, if the tests pass locally, they are highly likely to pass in CI as well.
 
-You will need `git` in order to download and modify the `dbt-fabricspark` source code. You can find directions [here](https://github.com/git-guides/install-git) on how to install `git`.
+## How to use, on a Linux machine
 
-### External contributors
+1. Windows pre-reqs
 
-If you are not a member of the `Microsoft` GitHub organization, you can contribute to `dbt-fabricspark` by forking the `dbt-fabricspark` repository. For a detailed overview on forking, check out the [GitHub docs on forking](https://help.github.com/en/articles/fork-a-repo). In short, you will need to:
+   ```powershell
+   winget install -e --id Microsoft.VisualStudioCode
+   ```
 
-1. fork the `dbt-fabricspark` repository
-2. clone your fork locally
-3. check out a new branch for your proposed changes
-4. push changes to your fork
-5. open a pull request against `microsoft/dbt-fabricspark` from your forked repository
+1. Get a fresh new WSL machine up:
 
-### Microsoft Org contributors
+   ```powershell
+   $GIT_ROOT = git rev-parse --show-toplevel
+   & "$GIT_ROOT\contrib\bootstrap-dev-env.ps1"
+   ```
 
-If you are a member of the `Microsoft` GitHub organization, you will have push access to the `dbt-fabricspark` repo. Rather than forking `dbt-fabricspark` to make your changes, just clone the repository, check out a new branch, and push directly to that branch.
+1. Clone the repo, and open VSCode in it:
 
+   ```bash
+   sudo mkdir -p /workspaces && sudo chmod 777 /workspaces && cd /workspaces
 
-## Running `dbt-fabricspark` in development
+   read -p "Enter your name (e.g. 'FirstName LastName'): " user_name
+   read -p "Enter your email (e.g. 'your-alias@foo.com'): " user_email
+   read -p "Enter your git fork (e.g. 'https://github.com/microsoft/dbt-fabricspark.git'): " git_fork_url
+   read -p "Enter the existing branch to switch to: (e.g. 'main'): " branch_name
+   
+   git config --global user.name "$user_name"
+   git config --global user.email "$user_email"
+   git clone "$git_fork_url"
 
-### Installation
+   cd /workspaces/dbt-fabricspark
+   git checkout "$branch_name"
 
-First make sure that you set up your `virtualenv` as described in [Setting up an environment](https://github.com/dbt-labs/dbt-core/blob/HEAD/CONTRIBUTING.md#setting-up-an-environment).  Ensure you have the uv installed with `pip install uv` or via curl. 
+   code .
+   ```
 
-Next, if this is first time installation of `dbt-fabricspark` with latest dependencies:
+1. Run the bootstrapper script, that installs all tools idempotently:
 
-```sh
-uv pip install -e . --group dev
-```
+   ```bash
+   GIT_ROOT=$(git rev-parse --show-toplevel)
+   chmod +x ${GIT_ROOT}/contrib/bootstrap-dev-env.sh && ${GIT_ROOT}/contrib/bootstrap-dev-env.sh
+   ```
 
-If have installed packages locally using uv pip install, make sure to run uv sync to update the uv.lock file from your environment.
-```sh 
-uv pip install <package>
-```
+1. Launch the devcontainer:
 
-When `dbt-fabricspark` is installed this way, any changes you make to the `dbt-fabricspark` source code will be reflected immediately in your next `dbt-fabricspark` run.
+   ```bash
+   cd /workspaces/dbt-fabricspark
+   HEX=$(printf '%s' "$(wslpath -w .)" | xxd -ps -c 256)
+   code --folder-uri "vscode-remote://dev-container+${HEX}/workspaces/dbt-fabricspark"
+   ```
 
-To confirm you have correct version of `dbt-core` installed please run `dbt --version` and `which dbt`.
+1. Install recommended developer tooling (optional):
 
+  ```bash
+  curl -fsSL https://gh.io/copilot-install | bash
+  $HOME/.local/bin/copilot --yolo
+  ```
 
-## Testing
+1. Login to github and ensure to authorize `Microsoft` if you're an employee (optional):
 
-### Initial Setup
+   ```bash
+   gh auth login
+   ```
 
-`dbt-fabricspark` uses test credentials specified in a `test.env` file in the root of the repository. This `test.env` file is git-ignored, but please be _extra_ careful to never check in credentials or other sensitive information when developing. To create your `test.env` file, copy the provided example file, then supply your relevant credentials.
+1. Create a `test.env` file with the two Fabric workspace IDs and display names — you need `Contributor` on both. The functional test suite uses **two** workspaces:
 
-```
-cp test.env.example test.env
-$EDITOR test.env
-```
+    - **Workspace 1 (`WORKSPACE_ID_1` / `WORKSPACE_NAME_1`)** — the *primary* workspace where dbt models are materialized during tests.
+    - **Workspace 2 (`WORKSPACE_ID_2` / `WORKSPACE_NAME_2`)** — the *secondary* workspace that hosts a seeded fixture lakehouse, used to verify cross-workspace 4-part naming end-to-end.
 
-### Test commands
-There are a few methods for running tests locally.
+   ```bash
+   GIT_ROOT=$(git rev-parse --show-toplevel)
+   read -p "Enter Fabric workspace 1 ID: " ws1_id
+   read -p "Enter Fabric workspace 1 display name: " ws1_name
+   read -p "Enter Fabric workspace 2 ID: " ws2_id
+   read -p "Enter Fabric workspace 2 display name: " ws2_name
+   {
+       echo "WORKSPACE_ID_1=${ws1_id}"
+       echo "WORKSPACE_NAME_1=${ws1_name}"
+       echo "WORKSPACE_ID_2=${ws2_id}"
+       echo "WORKSPACE_NAME_2=${ws2_name}"
+   } > "${GIT_ROOT}/test.env"
+   ```
 
-#### `tox`
-`tox` takes care of managing Python virtualenvs and installing dependencies in order to run tests. You can also run tests in parallel, for example you can run unit tests for Python 3.8, Python 3.9, and `flake8` checks in parallel with `tox -p`. Also, you can run unit tests for specific python versions with `tox -e <env>`. The configuration of these tests are located in `tox.ini`.
+1. All build and tests should now run green:
 
-#### `pytest`
-Finally, you can also run a specific test or group of tests using `pytest` directly. With a Python virtualenv active and dev dependencies installed you can do things like:
-
-```sh
-# run all functional tests
-uv run pytest --profile az_cli tests/functional/
-# run specific functional tests
-uv run pytest --profile az_cli tests/functional/adapter/basic/*
-# run all unit tests in a file
-uv run pytest tests/unit/test_adapter.py
-# run a specific unit test
-uv run pytest test/unit/test_adapter.py::TestSparkAdapter::test_profile_with_database
-```
-## Updating Docs
-
-Many changes will require and update to the `dbt-fabricspark` docs here are some useful resources.
-
-- Docs are [here](https://docs.getdbt.com/).
-- The docs repo for making changes is located [here]( https://github.com/dbt-labs/docs.getdbt.com).
-- The changes made are likely to impact one or both of [Fabric Spark Profile](https://docs.getdbt.com/reference/warehouse-profiles/fabricspark-profile), or [Saprk Configs](https://docs.getdbt.com/reference/resource-configs/spark-configs).
-- We ask every community member who makes a user-facing change to open an issue or PR regarding doc changes.
-
-## Adding CHANGELOG Entry
-
-Changelogs are managed manually for now. As you raise a PR, provide the changes made in your commits.
-
-## Submitting a Pull Request
-
-Microsoft provides a CI environment to test changes to the `dbt-fabricspark` adapter, and periodic checks against the development version of `dbt-core` through Github Actions.
-
-A `dbt-fabricspark` maintainer will review your PR. They may suggest code revision for style or clarity, or request that you add unit or functional test(s). These are good things! We believe that, with a little bit of help, anyone can contribute high-quality code.
-
-Once all requests and answers have been answered the `dbt-fabricspark` maintainer can trigger CI testing.
-
-Once all tests are passing and your PR has been approved, a `dbt-fabricspark` maintainer will merge your changes into the active development branch. And that's it! Happy developing :tada:
+   ```bash
+   npx nx run dbt-fabricspark:build
+   npx nx run dbt-fabricspark:test --output-style=stream
+   ```

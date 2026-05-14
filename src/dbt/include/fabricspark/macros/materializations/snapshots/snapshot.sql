@@ -39,9 +39,7 @@
     {% set tmp_identifier = target_relation.identifier ~ '__dbt_tmp' %}
 
     {#-- Persisted view (non-temp) so that its columns can be ascertained via `describe`.
-         Inherits database/schema/workspace from target_relation so cross-workspace
-         snapshots (workspace_name set in config) emit a 4-part staging view that
-         lives in the same workspace catalog as the MERGE target. --#}
+         Inherits database/schema from target_relation for proper 2-part or 3-part naming. --#}
     {%- set tmp_relation = api.Relation.create(identifier=tmp_identifier,
                                               schema=target_relation.schema,
                                               database=target_relation.database,
@@ -86,10 +84,6 @@
   {%- set unique_key = config.get('unique_key') %}
   {%- set file_format = config.get('file_format') or 'delta' -%}
   {%- set grant_config = config.get('grants') -%}
-  {#-- Cross-workspace 4-part naming: when the snapshot sets `workspace_name`,
-       forward it onto the target_relation so the rendered CTAS / MERGE INTO
-       emits the 4-part name and Fabric Livy routes the DDL to the correct
-       workspace catalog. Mirrors the table/incremental materializations. --#}
   {%- set workspace_name = config.get('workspace_name') -%}
 
   {% set target_relation_exists, target_relation = get_or_create_relation(
@@ -98,12 +92,6 @@
           identifier=target_table,
           type='table') -%}
 
-  {#-- ``get_or_create_relation`` (default dispatch) returns a relation that
-       carries no ``workspace`` field — neither the cache lookup nor the
-       fallback ``api.Relation.create`` propagate it. Re-incorporate workspace
-       so downstream CTAS / MERGE / staging-view rendering emits the 4-part
-       name. ``incorporate`` round-trips through ``from_dict`` which preserves
-       the ``workspace`` field on ``FabricSparkRelation``. --#}
   {%- if workspace_name -%}
     {% set target_relation = target_relation.incorporate(workspace=workspace_name) %}
   {%- endif -%}

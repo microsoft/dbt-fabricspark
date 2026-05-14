@@ -574,12 +574,6 @@ class TestCrossWorkspace4PartWriteIncremental:
 # ---------------------------------------------------------------------------
 
 
-# A model whose physical view lives in WS2. Mirrors ``CROSS_WS_WRITE_TABLE_SQL``
-# but materialized as ``view``. Regression coverage for issue #172 where
-# ``workspace_name`` was not forwarded from the model config to
-# ``target_relation``, so the rendered DDL emitted only a 3-part name and
-# Fabric Livy returned ``Artifact not found`` because it tried to resolve the
-# lakehouse inside the *current* workspace.
 CROSS_WS_WRITE_VIEW_SQL = """
 {{ config(
     materialized='view',
@@ -599,29 +593,6 @@ select 4 as id, 'delta' as name, cast(40.75 as double) as price
 
 
 class TestCrossWorkspace4PartWriteView:
-    """End-to-end cross-workspace WRITE via ``CREATE OR REPLACE VIEW``.
-
-    Regression test for #172. Before the fix, the view materialization
-    delegated to the default ``create_or_replace_view()`` macro, which built
-    the target relation via ``api.Relation.create(...)`` without forwarding
-    ``workspace_name``. The rendered DDL was a 3-part name and Fabric Livy
-    failed with ``Artifact not found: \\`<current_ws>\\`.\\`<other_lh>\\```.
-
-    Flow:
-      1. The model ``cross_ws_write_view`` is configured with
-         ``workspace_name=WS2``, ``database=WS2_LH``,
-         ``schema=cross_ws_write`` (auto-created by the prior write tests),
-         ``materialized=view``.
-      2. ``dbt run`` issues a 4-part
-         ``CREATE OR REPLACE VIEW \\`WS2\\`.\\`WS2_LH\\`.\\`cross_ws_write\\`.cross_ws_write_view AS SELECT …``
-         from WS1's Livy session.
-      3. Test verifies the view exists in WS2 by issuing a 4-part SELECT
-         and counting rows / summing the price column.
-      4. A second ``dbt run`` validates idempotency — ``CREATE OR REPLACE
-         VIEW`` re-materializes cleanly.
-      5. Cleanup is handled by the post-test workspace nuke.
-    """
-
     @pytest.fixture(scope="class", autouse=True)
     def _skip_unless_schema_enabled(self, is_schema_enabled):
         if not is_schema_enabled:
@@ -650,12 +621,6 @@ class TestCrossWorkspace4PartWriteView:
     def test_cross_workspace_view_renders_four_part(
         self, project, ws2_workspace_name, ws2_lakehouse_name
     ):
-        # Compile-only check that ``relation_name`` resolves to the 4-part
-        # form. Note: this matches ``this``/``create_from`` rendering, which
-        # was already workspace-aware before #172. The real regression
-        # signal is the runtime ``test_cross_workspace_view_executes`` below
-        # — without the fix the materialization-time DDL omits the
-        # workspace prefix and the ``dbt run`` fails outright.
         compile_results = run_dbt(["compile", "--select", "cross_ws_write_view"])
         assert len(compile_results) == 1
         node = compile_results[0].node
@@ -676,19 +641,9 @@ class TestCrossWorkspace4PartWriteView:
         ws2_workspace_name,
         ws2_lakehouse_name,
     ):
-        # First run — adapter creates the cross_ws_write schema in WS2 (or
-        # finds it already created by the sibling write tests) and emits
-        # ``CREATE OR REPLACE VIEW `WS2`.`WS2_LH`.`cross_ws_write`.cross_ws_write_view``
-        # from WS1's Livy session. Without the #172 fix, the rendered DDL
-        # omits the workspace prefix and Fabric Livy returns
-        # ``Artifact not found: `<ws1_name>`.`WS2_LH``` — this assertion is
-        # the primary regression signal.
         run_results = run_dbt(["run", "--select", "cross_ws_write_view"])
         assert len(run_results) == 1, f"expected 1 run result, got {len(run_results)}"
 
-        # Verify the view now exists in WS2 by issuing a raw 4-part SELECT
-        # against WS1's Livy session. Fabric Livy resolves the SELECT
-        # through WS2's catalog.
         sql = (
             "select count(*) as n, sum(price) as total "
             f"from `{ws2_workspace_name}`.`{ws2_lakehouse_name}`."
@@ -708,8 +663,6 @@ class TestCrossWorkspace4PartWriteView:
         ws2_workspace_name,
         ws2_lakehouse_name,
     ):
-        # Re-materialize. ``CREATE OR REPLACE VIEW`` re-executes cleanly
-        # against the existing 4-part relation in WS2.
         run_results = run_dbt(["run", "--select", "cross_ws_write_view"])
         assert len(run_results) == 1
 
@@ -730,14 +683,6 @@ class TestCrossWorkspace4PartWriteView:
 # ---------------------------------------------------------------------------
 
 
-# Source table in WS1 (the test write target's home lakehouse) that the
-# snapshot reads from via ``ref()``. We need a mutable source to exercise
-# both the snapshot CTAS (first run) and the MERGE-INTO path (subsequent
-# runs); the source is configured with ``materialized=table`` (no
-# ``workspace_name``) so it lives in WS1 alongside the test's main schema.
-#
-# The body is parameterised by a project var so we can rebuild the source
-# with mutated rows between snapshot runs without rewriting the model file.
 CROSS_WS_SNAPSHOT_SOURCE_SQL = """
 {{ config(materialized='table', file_format='delta') }}
 
@@ -750,12 +695,6 @@ select 4 as id, 'delta_v{{ bump }}' as name, cast(40.75 as double) as price
 """
 
 
-# Snapshot defined in SQL (``{% snapshot %}`` block) — matches the
-# convention of the existing functional snapshot tests in this repo
-# (``tests/functional/adapter/basic/test_snapshot_timestamp.py``). Both the
-# SQL block form and the YAML form (used in the issue's repro repo) compile
-# to the same materialization, so this exercises the exact code path the
-# bug report covers.
 CROSS_WS_SNAPSHOT_SQL = """
 {% snapshot cross_ws_write_snapshot %}
     {{ config(
@@ -773,30 +712,6 @@ CROSS_WS_SNAPSHOT_SQL = """
 
 
 class TestCrossWorkspace4PartWriteSnapshot:
-    """End-to-end cross-workspace WRITE via the ``snapshot`` materialization.
-
-    Regression test for #172. The snapshot materialization built its target
-    relation through ``get_or_create_relation(...)`` which doesn't forward
-    ``workspace_name`` to the resulting relation; the staging view created by
-    ``spark_build_snapshot_staging_table`` also dropped the workspace. Both
-    paths emitted 3-part DDL against a 4-part target → ``Artifact not found``.
-
-    Flow:
-      1. A regular WS1 table ``cross_ws_snapshot_source`` is materialized
-         with 4 rows.
-      2. First ``dbt snapshot`` issues a cross-workspace CTAS to create the
-         SCD2 table in WS2 (the ``not target_relation_exists`` branch).
-         Validates that the target_relation now carries workspace and
-         renders 4-part.
-      3. The source is then mutated (one row's ``name`` is bumped) by
-         re-running the source model with a project-var override.
-      4. Second ``dbt snapshot`` exercises the MERGE INTO path: a staging
-         view is created in WS2 (the staging fix), and a MERGE INTO targets
-         the WS2 snapshot. SCD2 history grows by 1 row (5 rows total).
-      5. The mutated row's prior SCD2 record now has a non-null
-         ``dbt_valid_to``.
-    """
-
     @pytest.fixture(scope="class", autouse=True)
     def _skip_unless_schema_enabled(self, is_schema_enabled):
         if not is_schema_enabled:
@@ -839,8 +754,6 @@ class TestCrossWorkspace4PartWriteSnapshot:
 
     def test_snapshot_renders_four_part(self, project, ws2_workspace_name, ws2_lakehouse_name):
         compile_results = run_dbt(["compile", "--select", "cross_ws_write_snapshot"])
-        # compile may return >1 result if upstream models are touched; find
-        # the snapshot node explicitly.
         snapshot_results = [r for r in compile_results if r.node.name == "cross_ws_write_snapshot"]
         assert len(snapshot_results) == 1, (
             f"expected exactly 1 snapshot compile result, got {len(snapshot_results)}"
@@ -860,13 +773,9 @@ class TestCrossWorkspace4PartWriteSnapshot:
     def test_snapshot_first_run_ctas_into_ws2(
         self, project, ws2_workspace_name, ws2_lakehouse_name
     ):
-        # Build the WS1 source table first (4 rows, name='delta_v0' for id=4).
         run_results = run_dbt(["run", "--select", "cross_ws_snapshot_source"])
         assert len(run_results) == 1
 
-        # First snapshot — target doesn't exist yet → CTAS path in
-        # snapshot.sql. Without the #172 fix the CTAS would render a
-        # 3-part name and fail with ``Artifact not found``.
         snap_results = run_dbt(["snapshot", "--select", "cross_ws_write_snapshot"])
         assert len(snap_results) == 1
 
@@ -876,9 +785,6 @@ class TestCrossWorkspace4PartWriteSnapshot:
     def test_snapshot_second_run_merges_into_ws2(
         self, project, ws2_workspace_name, ws2_lakehouse_name
     ):
-        # Rebuild the source with id=4's name bumped from ``delta_v0`` to
-        # ``delta_v1``. Rerunning the source model is the simplest way to
-        # mutate the upstream input that the snapshot will detect.
         run_results = run_dbt(
             [
                 "run",
@@ -890,10 +796,6 @@ class TestCrossWorkspace4PartWriteSnapshot:
         )
         assert len(run_results) == 1
 
-        # Second snapshot — target exists → MERGE INTO path. This exercises
-        # both the workspace-qualified target_relation AND the staging
-        # tmp_relation (``spark_build_snapshot_staging_table``) which the fix
-        # also patches to carry workspace.
         snap_results = run_dbt(["snapshot", "--select", "cross_ws_write_snapshot"])
         assert len(snap_results) == 1
 
@@ -903,9 +805,6 @@ class TestCrossWorkspace4PartWriteSnapshot:
             f"(4 original incl. 1 closed-out + 1 new current), got {n}"
         )
 
-        # Verify SCD2 semantics: exactly one historical row for id=4 has a
-        # non-null ``dbt_valid_to`` (the prior version), and one current
-        # row has ``dbt_valid_to is null``.
         scd_sql = (
             "select dbt_valid_to is null as is_current, count(*) as n "
             f"from `{ws2_workspace_name}`.`{ws2_lakehouse_name}`."

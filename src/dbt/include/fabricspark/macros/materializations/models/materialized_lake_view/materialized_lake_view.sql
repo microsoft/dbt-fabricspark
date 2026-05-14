@@ -33,13 +33,20 @@
 
 {% materialization materialized_lake_view, adapter='fabricspark' -%}
     {%- set identifier = model['alias'] -%}
+    {#-- Cross-workspace 4-part naming: forward `workspace_name` onto the
+         target relation so the rendered CREATE/REPLACE/DROP DDL emits the
+         4-part name (parity with table/view/incremental/snapshot). The MLV
+         REST API path resolves lakehouse IDs against the profile workspace;
+         cross-workspace MLV via REST is a separate concern. --#}
+    {%- set workspace_name = config.get('workspace_name') -%}
 
     {%- set old_relation = adapter.get_relation(database=database, schema=schema, identifier=identifier) -%}
     {%- set target_relation = api.Relation.create(
             identifier=identifier,
             schema=schema,
             database=database,
-            type='materialized_view') -%}
+            type='materialized_view',
+            workspace=workspace_name) -%}
 
     {#-- Config --#}
     {%- set partitioned_by = config.get('partitioned_by', none) -%}

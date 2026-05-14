@@ -40,10 +40,14 @@ if grep -q "$ACR_URL" ~/.docker/config.json 2>/dev/null; then
     if [ -n "$ACR_PASSWORD" ]; then
         docker_password="$ACR_PASSWORD"
     else
-        read -sp "Enter Docker Admin password for ${ACR_URL}: " docker_password
+        read -sp "If you are a Microsoft Employee and you plan on contributing to the Devcontainer image, please ping @mdrrahman and enter Docker Admin password for ${ACR_URL} - otherwise, leave blank and press [ENTER]: " docker_password
         echo
     fi
-    echo "$docker_password" | docker login "$ACR_URL" --username "$ACR_NAME" --password-stdin
+    if [ -z "$docker_password" ]; then
+        echo "You left the password empty, skipping docker login"
+    else
+        echo "$docker_password" | docker login "$ACR_URL" --username "$ACR_NAME" --password-stdin
+    fi
 fi
 
 export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "/mnt/c" | tr '\n' ':' | sed 's/:$//')

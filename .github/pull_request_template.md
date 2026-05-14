@@ -1,5 +1,5 @@
 > [!NOTE]
-> Thank you for making change! Please consider filling this template for your pull request to improve quality of checkin message.
+> Thank you for making change! Please fill this template for your pull request to improve quality of check-in message.
 
 > [!TIP]
 > This repo uses [Conventional Commit conventions](https://www.conventionalcommits.org/en/v1.0.0/) - please try to rename your PR headline to match it.

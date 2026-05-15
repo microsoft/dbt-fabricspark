@@ -43,6 +43,7 @@
     {%- set tmp_relation = api.Relation.create(identifier=tmp_identifier,
                                               schema=target_relation.schema,
                                               database=target_relation.database,
+                                              workspace=target_relation.workspace,
                                               type='view') -%}
 
     {% set select = snapshot_staging_table(strategy, sql, target_relation) %}
@@ -83,12 +84,17 @@
   {%- set unique_key = config.get('unique_key') %}
   {%- set file_format = config.get('file_format') or 'delta' -%}
   {%- set grant_config = config.get('grants') -%}
+  {%- set workspace_name = config.get('workspace_name') -%}
 
   {% set target_relation_exists, target_relation = get_or_create_relation(
           database=model.database,
           schema=model.schema,
           identifier=target_table,
           type='table') -%}
+
+  {%- if workspace_name -%}
+    {% set target_relation = target_relation.incorporate(workspace=workspace_name) %}
+  {%- endif -%}
 
   {%- if file_format not in ['delta'] -%}
     {% set invalid_format_msg -%}

@@ -33,13 +33,15 @@
 
 {% materialization materialized_lake_view, adapter='fabricspark' -%}
     {%- set identifier = model['alias'] -%}
+    {%- set workspace_name = config.get('workspace_name') -%}
 
     {%- set old_relation = adapter.get_relation(database=database, schema=schema, identifier=identifier) -%}
     {%- set target_relation = api.Relation.create(
             identifier=identifier,
             schema=schema,
             database=database,
-            type='materialized_view') -%}
+            type='materialized_view',
+            workspace=workspace_name) -%}
 
     {#-- Config --#}
     {%- set partitioned_by = config.get('partitioned_by', none) -%}

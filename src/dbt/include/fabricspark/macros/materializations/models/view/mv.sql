@@ -1,7 +1,33 @@
 {% materialization view, adapter='fabricspark' -%}
-    {#-- Ensure the database/schema exists before creating the view --#}
-    {% do ensure_database_exists(model.schema, database=model.database, workspace=model.config.get('workspace_name')) %}
-    {{ return(create_or_replace_view()) }}
+    {%- set identifier = model['alias'] -%}
+    {%- set grant_config = config.get('grants') -%}
+    {%- set workspace_name = config.get('workspace_name') -%}
+
+    {%- set old_relation = adapter.get_relation(database=database, schema=schema, identifier=identifier) -%}
+    {%- set exists_as_view = (old_relation is not none and old_relation.is_view) -%}
+
+    {%- set target_relation = api.Relation.create(
+        identifier=identifier, schema=schema, database=database,
+        type='view', workspace=workspace_name) -%}
+
+    {% do ensure_database_exists(schema, database=database, workspace=workspace_name) %}
+
+    {{ run_hooks(pre_hooks) }}
+
+    {%- if old_relation is not none and old_relation.is_table -%}
+      {{ fabricspark__handle_existing_table(should_full_refresh(), old_relation) }}
+    {%- endif -%}
+
+    {% call statement('main') -%}
+      {{ get_create_view_as_sql(target_relation, sql) }}
+    {%- endcall %}
+
+    {% set should_revoke = should_revoke(exists_as_view, full_refresh_mode=True) %}
+    {% do apply_grants(target_relation, grant_config, should_revoke=should_revoke) %}
+
+    {{ run_hooks(post_hooks) }}
+
+    {{ return({'relations': [target_relation]}) }}
 {%- endmaterialization %}
 
 {% macro fabricspark__handle_existing_table(full_refresh, old_relation) %}

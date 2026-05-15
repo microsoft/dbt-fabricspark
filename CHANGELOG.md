@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.11.0
+
+### New Features
+
+- Added a `token_credential` authentication method that loads any `azure.core.credentials.TokenCredential` implementation by dotted path via new `credential_class` and `credential_kwargs` profile fields. Enables desktop tools with custom OAuth flows, WIF in CI, and broker-vended tokens without a second `az login` or repurposing the SPN config (#177)
+
+### Bug Fixes
+
+- Fixed cross-workspace 4-part naming for `view`, `snapshot`, and `materialized_lake_view` materializations — they previously dropped `workspace_name` and emitted 3-part DDL against a 4-part target, failing with `Artifact not found`. Snapshot staging views (`__dbt_tmp`) are now workspace-qualified so `MERGE INTO` resolves correctly (#172, #182)
+- Fixed `dbt docs generate` retry storm on missing source schemas — `[SCHEMA_NOT_FOUND]` and `[TABLE_OR_VIEW_NOT_FOUND]` are now classified as permanent Spark errors and skip the `retry_all` loop, eliminating ~120 s of waste per missing schema. `list_relations_without_caching` also matches the Spark 3.3+ bracket error format alongside the older wording (#180)
+
+### Infrastructure
+
+- Overhauled contribution docs with crisper local-dev guidance and clearer expectations for external vs Microsoft contributors (#181)
+
+---
+
 ## v1.10.1
 
 ### Bug Fixes

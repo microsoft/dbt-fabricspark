@@ -327,6 +327,7 @@ Each segment is independently backtick-quoted, so workspace names with spaces or
 | `reuse_session`         | bool   | `false`                               | Keep Livy sessions alive for reuse across runs                                                                               |
 | `session_id_file`       | string | `./livy-session-id.txt`               | Path to file storing session ID for reuse                                                                                    |
 | `session_idle_timeout`  | string | `30m`                                 | Livy session idle timeout (e.g. `30m`, `1h`)                                                                                 |
+| `high_concurrency`      | bool   | `true`                                | Use high-concurrency Livy API so each dbt thread gets its own REPL — see [High-concurrency Livy](#high-concurrency-livy)     |
 | **Timeouts & Polling**  |        |                                       |                                                                                                                              |
 | `connect_retries`       | int    | `1`                                   | Number of connection retries                                                                                                 |
 | `connect_timeout`       | int    | `10`                                  | Connection timeout in seconds                                                                                                |
@@ -349,6 +350,51 @@ Each segment is independently backtick-quoted, so workspace names with spaces or
 | **Azure CLI**         | `CLI`             | Local development. Uses `az login` credentials.                         | None (run `az login` first)               |
 | **Service Principal** | `SPN`             | CI/CD and automation. Uses Azure AD app registration.                   | `client_id`, `tenant_id`, `client_secret` |
 | **Fabric Notebook**   | `fabric_notebook` | Running dbt inside a Fabric notebook. Uses `notebookutils.credentials`. | None (runs in Fabric runtime)             |
+
+### High-concurrency Livy
+
+By default the adapter uses Fabric's [high-concurrency Livy API](https://learn.microsoft.com/en-us/fabric/data-engineering/high-concurrency-livy)
+(`high_concurrency: true`). Each dbt thread acquires its own HC session — and therefore its own REPL — inside a single underlying Livy session
+shared via a deterministic `sessionTag` derived from `(workspaceid, lakehouseid)`. Statements from different REPLs execute in
+parallel inside the same Spark application, so increasing `threads` buys us throughput.
+
+When `reuse_session: true`, the underlying Livy session also stays warm between dbt invocations (until Fabric's
+`spark.livy.session.idle.timeout` elapses), so the next run skips Spark cold-start entirely.
+
+Set `high_concurrency: false` to fall back to the single-session-per-process mode, where one Livy session
+serves every thread and statements queue FIFO inside — useful as an escape hatch
+when debugging any problems with the high-concurrency API.
+
+Fabric packs up to **5 REPLs onto one underlying Livy session** (see the
+["Limits"](https://learn.microsoft.com/en-us/fabric/data-engineering/high-concurrency-livy#key-concepts)
+note in the Microsoft Learn HC Livy docs). With `threads > 5`, dbt still
+works correctly — Fabric simply spins up a second underlying Livy session
+to host the 6th REPL onwards, and the same `sessionTag` makes future
+acquires snap-attach to whichever underlying session has room.
+
+What that means in practice:
+
+| Property                                              | Shared across underlying sessions? |
+| ----------------------------------------------------- | ---------------------------------- |
+| OneLake Delta tables (dbt model outputs)              | Yes — same lakehouse storage       |
+| Catalog / metastore (`SELECT FROM <other_model>`)     | Yes — same Fabric catalog          |
+| Temp views (`CREATE TEMPORARY VIEW ...`)              | No — REPL/session-local            |
+| Session-level Spark configs (`SET spark.sql.X = ...`) | No                                 |
+| Cached datasets / UDFs / broadcast vars               | No                                 |
+
+Because dbt-fabricspark materializations always write permanent Delta /
+MLV objects, model-to-model `ref`s resolve correctly regardless of which
+underlying session produced or consumes the table. Macros that depend on
+session-local state (temp views, in-session configs) are the only ones
+that could surprise — none ship with this adapter today.
+
+Cost tradeoff: each additional underlying Livy session is a separate
+Spark cluster billed for the duration of the run plus the
+`spark.livy.session.idle.timeout` afterwards. Keep `threads ≤ 5` for the
+cheapest profile; raise it only when the extra parallelism beats the
+extra compute spend.
+
+High-concurrency has no effect in local mode as this is a Fabric specific construct.
 
 ### Materialized Lake Views
 

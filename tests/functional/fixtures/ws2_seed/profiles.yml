@@ -12,6 +12,7 @@ ws2_seed_fixture:
       schema: dbo
       threads: 1
       reuse_session: false
+      high_concurrency: false
       retry_all: true
       connect_retries: 3
       connect_timeout: 15

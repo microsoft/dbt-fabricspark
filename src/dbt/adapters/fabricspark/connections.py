@@ -27,6 +27,10 @@ from dbt.adapters.contracts.connection import (
 from dbt.adapters.events.logging import AdapterLogger
 from dbt.adapters.events.types import AdapterEventDebug, ConnectionUsed, SQLQuery, SQLQueryStatus
 from dbt.adapters.exceptions import FailedToConnectError
+from dbt.adapters.fabricspark.concurrent_livy import (
+    HighConcurrencyConnectionWrapper,
+    HighConcurrencySessionManager,
+)
 from dbt.adapters.fabricspark.livysession import (
     LivySessionConnectionWrapper,
     LivySessionManager,
@@ -171,10 +175,16 @@ class FabricSparkConnectionManager(SQLConnectionManager):
             try:
                 if creds.method == FabricSparkConnectionMethod.LIVY:
                     thread_id = cls.get_thread_identifier()
+                    use_hc = creds.high_concurrency and not creds.is_local_mode
                     if thread_id not in cls.connection_managers:
-                        cls.connection_managers[thread_id] = LivySessionManager()
-                    handle = LivySessionConnectionWrapper(
-                        cls.connection_managers[thread_id].connect(creds)
+                        cls.connection_managers[thread_id] = (
+                            HighConcurrencySessionManager() if use_hc else LivySessionManager()
+                        )
+                    raw_handle = cls.connection_managers[thread_id].connect(creds)
+                    handle = (
+                        HighConcurrencyConnectionWrapper(raw_handle)
+                        if use_hc
+                        else LivySessionConnectionWrapper(raw_handle)
                     )
                     connection.state = ConnectionState.OPEN
 
@@ -241,7 +251,17 @@ class FabricSparkConnectionManager(SQLConnectionManager):
         Connections must persist because the Livy session is shared.
         Sessions are deleted on process exit via an atexit handler
         registered in LivySessionManager.
+
+        For HC backends, however, each per-thread manager owns its own HC
+        session id; releasing those promptly here frees REPL slots so the
+        underlying Livy session can host new acquirers without bumping into
+        the 5-REPL packing cap.
         """
+        for manager in self.connection_managers.values():
+            try:
+                manager.disconnect()
+            except Exception as ex:
+                logger.debug(f"connection manager disconnect raised: {ex}")
         self.connection_managers.clear()
 
     @classmethod

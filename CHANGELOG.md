@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.12.0
+
+### New Features
+
+- **High-concurrency Livy support** for true parallel statement execution. Each dbt thread acquires its own REPL inside one underlying Livy session via [Fabric's HC Livy API](https://learn.microsoft.com/en-us/fabric/data-engineering/high-concurrency-livy) (`/highConcurrencySessions` + `/repls/{replId}/statements`). All threads in a process share a deterministic `sessionTag` derived from `(workspaceid, lakehouseid)` when `reuse_session: true`, so Fabric snap-attaches new REPLs onto the still-warm underlying session across runs — observed **3.6× wall-clock speedup** on the 2nd run of the issue's repro (442s → 122s). Singleton mode remains available via `high_concurrency: false`; the new flag defaults to `true` for Fabric mode and is a no-op in local mode. See the new "High-concurrency Livy" section in the README for the `threads > 5` cross-REPL state table (#185, #186)
+
+### Infrastructure
+
+- Refactored the Livy backend behind a new `LivyBackend` ABC with two implementations — `singleton_livy.py` (existing single-session path) and `concurrent_livy.py` (new HC path) — selected at connect time by the `high_concurrency` credential. Shared auth/header/retry/lakehouse-property helpers remain in `livysession.py`; the existing class names continue to be re-exported from there for backwards compatibility with downstream importers and the test patch surface (#186)
+
+---
+
 ## v1.11.0
 
 ### New Features

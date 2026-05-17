@@ -17,7 +17,7 @@ select 1 as id, 'Joe' as name
 """
 
 _MODELS__TABLE_DELTA_MODEL = """
-{{ config(materialized='table', file_format='delta') }}
+{{ config(materialized='table', file_format='delta', clustered_by=['id']) }}
 select 1 as id, 'Joe' as name
 """
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.12.1
+
+### Bug Fixes
+
+- Fixed `clustered_by` being silently ignored on Delta tables. Setting `clustered_by=['col_a', 'col_b']` (with no `buckets`) on a Delta model now emits `CREATE OR REPLACE TABLE … USING DELTA CLUSTER BY (col_a, col_b) AS SELECT …` so [Fabric Spark liquid clustering](https://learn.microsoft.com/fabric/data-engineering/liquid-clustering-delta-tables) is applied at create time. Hive bucketing (`clustered_by` + `buckets`) and non-Delta `file_format` are unchanged. `clustered_by` + `partition_by` on Delta now raises a compile-time error — the two are mutually exclusive on Delta (#187)
+
 ## v1.12.0
 
 ### New Features

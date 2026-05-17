@@ -35,8 +35,13 @@
 
 {% macro fabricspark__file_format_clause() %}
   {%- set file_format = config.get('file_format') -%}
+  {%- set clustered_by = config.get('clustered_by') -%}
+  {%- set buckets = config.get('buckets') -%}
+  {%- set liquid = clustered_by is not none and buckets is none -%}
   {%- if file_format is not none and file_format != 'delta' %}
     using {{ file_format }}
+  {%- elif liquid and (file_format is none or file_format == 'delta') %}
+    using delta
   {%- endif %}
 {%- endmacro -%}
 
@@ -126,16 +131,26 @@
 {% macro fabricspark__clustered_cols(label, required=false) %}
   {%- set cols = config.get('clustered_by', validator=validation.any[list, basestring]) -%}
   {%- set buckets = config.get('buckets', validator=validation.any[int]) -%}
-  {%- if (cols is not none) and (buckets is not none) %}
-    {%- if cols is string -%}
-      {%- set cols = [cols] -%}
+  {%- set partition_by = config.get('partition_by') -%}
+  {%- set file_format = config.get('file_format', 'delta') -%}
+
+  {%- if cols is not none -%}
+    {%- if cols is string -%}{%- set cols = [cols] -%}{%- endif -%}
+
+    {%- if buckets is not none -%}
+      {{ label }} (
+      {%- for c in cols -%}{{ c }}{%- if not loop.last -%},{%- endif -%}{%- endfor -%}
+      ) into {{ buckets }} buckets
+    {%- elif file_format == 'delta' -%}
+      {%- if partition_by is not none -%}
+        {{ exceptions.raise_compiler_error(
+             "clustered_by (Delta liquid clustering) and partition_by are "
+             "mutually exclusive on Delta tables. Pick one.") }}
+      {%- endif -%}
+      cluster by (
+      {%- for c in cols -%}{{ c }}{%- if not loop.last -%},{%- endif -%}{%- endfor -%}
+      )
     {%- endif -%}
-    {{ label }} (
-    {%- for item in cols -%}
-      {{ item }}
-      {%- if not loop.last -%},{%- endif -%}
-    {%- endfor -%}
-    ) into {{ buckets }} buckets
   {%- endif %}
 {%- endmacro -%}
 

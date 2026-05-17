@@ -1,3 +1,9 @@
+{{ config(
+    materialized='table',
+    file_format='delta',
+    clustered_by=['order_id']
+) }}
+
 {% set payment_methods = ['credit_card', 'coupon', 'bank_transfer', 'gift_card'] %}
 
 with orders as (

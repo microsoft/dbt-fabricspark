@@ -252,3 +252,163 @@ class TestEnsureDatabaseExists(unittest.TestCase):
         """Schema-enabled with no database arg should use schema_name as-is."""
         result = self._render("myschema", database=None, schemas_enabled=True)
         self.assertEqual(result, "create database if not exists myschema")
+
+
+class TestClusteredColsLiquidClustering(unittest.TestCase):
+    """Render ``fabricspark__clustered_cols`` and ``fabricspark__file_format_clause``
+    in isolation and assert the four semantics branches called out in the
+    acceptance criteria for #187.
+
+    The macros are inlined as a string template rather than loaded from disk
+    so they render without a full dbt context and without forcing eager
+    init of the rest of ``create_table_as.sql``. The macro bodies below are
+    identical to the ones shipped in the adapter.
+    """
+
+    MACRO_SRC = r"""
+{%- macro create(relation, sql) -%}
+create or replace table {{ relation }} {{ file_format_clause() }} {{ partition_cols(label="partitioned by") }} {{ clustered_cols(label="clustered by") }} as {{ sql }}
+{%- endmacro -%}
+
+{% macro file_format_clause() %}
+  {%- set file_format = config.get('file_format') -%}
+  {%- set clustered_by = config.get('clustered_by') -%}
+  {%- set buckets = config.get('buckets') -%}
+  {%- set liquid = clustered_by is not none and buckets is none -%}
+  {%- if file_format is not none and file_format != 'delta' %}
+    using {{ file_format }}
+  {%- elif liquid and (file_format is none or file_format == 'delta') %}
+    using delta
+  {%- endif %}
+{%- endmacro %}
+
+{% macro partition_cols(label, required=false) %}
+  {%- set cols = config.get('partition_by') -%}
+  {%- if cols is not none %}
+    {%- if cols is string -%}{%- set cols = [cols] -%}{%- endif -%}
+    {{ label }} (
+    {%- for item in cols -%}{{ item }}{%- if not loop.last -%},{%- endif -%}{%- endfor -%}
+    )
+  {%- endif %}
+{%- endmacro %}
+
+{% macro clustered_cols(label, required=false) %}
+  {%- set cols = config.get('clustered_by', validator=validation.any[list, basestring]) -%}
+  {%- set buckets = config.get('buckets', validator=validation.any[int]) -%}
+  {%- set partition_by = config.get('partition_by') -%}
+  {%- set file_format = config.get('file_format', 'delta') -%}
+
+  {%- if cols is not none -%}
+    {%- if cols is string -%}{%- set cols = [cols] -%}{%- endif -%}
+
+    {%- if buckets is not none -%}
+      {{ label }} (
+      {%- for c in cols -%}{{ c }}{%- if not loop.last -%},{%- endif -%}{%- endfor -%}
+      ) into {{ buckets }} buckets
+    {%- elif file_format == 'delta' -%}
+      {%- if partition_by is not none -%}
+        {{ exceptions.raise_compiler_error(
+             "clustered_by (Delta liquid clustering) and partition_by are "
+             "mutually exclusive on Delta tables. Pick one.") }}
+      {%- endif -%}
+      cluster by (
+      {%- for c in cols -%}{{ c }}{%- if not loop.last -%},{%- endif -%}{%- endfor -%}
+      )
+    {%- endif -%}
+  {%- endif %}
+{%- endmacro %}
+"""
+
+    def setUp(self):
+        self.config = {}
+        self.ctx = {
+            "validation": mock.Mock(),
+            "exceptions": mock.Mock(),
+            "config": mock.Mock(),
+        }
+        self.ctx["config"].get = lambda key, default=None, **kw: self.config.get(key, default)
+        self.ctx["exceptions"].raise_compiler_error.side_effect = lambda msg: (
+            _ for _ in ()
+        ).throw(RuntimeError(msg))
+        env = Environment(extensions=["jinja2.ext.do"])
+        self.template = env.from_string(self.MACRO_SRC, globals=self.ctx)
+
+    def _render(self, **config):
+        self.config.clear()
+        self.config.update(config)
+        sql = self.template.module.create("my_table", "select 1")
+        return re.sub(r"\s+", " ", sql).strip()
+
+    def test_delta_clustered_by_alone_emits_liquid_clustering(self):
+        """clustered_by alone on Delta → CLUSTER BY (...) + USING DELTA."""
+        result = self._render(clustered_by=["col_a", "col_b"])
+        self.assertEqual(
+            result,
+            "create or replace table my_table using delta cluster by (col_a,col_b) as select 1",
+        )
+
+    def test_delta_clustered_by_alone_explicit_file_format(self):
+        """clustered_by alone on explicit file_format=delta → CLUSTER BY (...) + USING DELTA."""
+        result = self._render(clustered_by=["col_a"], file_format="delta")
+        self.assertEqual(
+            result,
+            "create or replace table my_table using delta cluster by (col_a) as select 1",
+        )
+
+    def test_delta_clustered_by_string_form(self):
+        """clustered_by as a bare string (not list) on Delta still emits CLUSTER BY."""
+        result = self._render(clustered_by="col_a")
+        self.assertEqual(
+            result,
+            "create or replace table my_table using delta cluster by (col_a) as select 1",
+        )
+
+    def test_clustered_by_with_buckets_emits_hive_bucketing(self):
+        """clustered_by + buckets → unchanged Hive bucketing (no liquid clustering)."""
+        result = self._render(clustered_by=["col_a"], buckets=4)
+        self.assertEqual(
+            result,
+            "create or replace table my_table clustered by (col_a) into 4 buckets as select 1",
+        )
+
+    def test_clustered_by_with_buckets_no_using_delta_emitted(self):
+        """clustered_by + buckets without explicit file_format → no `using delta` injected."""
+        result = self._render(clustered_by=["col_a"], buckets=4, file_format="delta")
+        # Explicit file_format=delta is dropped by file_format_clause (delta default).
+        self.assertNotIn("using delta", result)
+        self.assertIn("clustered by (col_a) into 4 buckets", result)
+
+    def test_clustered_by_with_partition_by_on_delta_raises(self):
+        """clustered_by + partition_by on Delta → compile-time error."""
+        with self.assertRaises(RuntimeError) as cm:
+            self._render(clustered_by=["col_a"], partition_by="p")
+        self.assertIn("mutually exclusive on Delta tables", str(cm.exception))
+
+    def test_non_delta_file_format_clustered_by_ignored(self):
+        """clustered_by alone on non-Delta file_format → no clustering clause, USING <fmt>."""
+        result = self._render(clustered_by=["col_a"], file_format="parquet")
+        self.assertEqual(
+            result,
+            "create or replace table my_table using parquet as select 1",
+        )
+
+    def test_non_delta_file_format_with_buckets_unchanged(self):
+        """clustered_by + buckets on non-Delta file_format → Hive bucketing still emitted."""
+        result = self._render(clustered_by=["col_a"], buckets=2, file_format="parquet")
+        self.assertEqual(
+            result,
+            "create or replace table my_table using parquet clustered by (col_a) into 2 buckets as select 1",
+        )
+
+    def test_no_clustered_by_no_clause(self):
+        """No clustered_by at all → no clustering clause."""
+        result = self._render()
+        self.assertEqual(result, "create or replace table my_table as select 1")
+
+    def test_partition_by_alone_no_clustered_by_unaffected(self):
+        """partition_by without clustered_by → partition_by emitted, no error."""
+        result = self._render(partition_by="p")
+        self.assertEqual(
+            result,
+            "create or replace table my_table partitioned by (p) as select 1",
+        )

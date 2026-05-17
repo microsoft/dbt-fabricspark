@@ -340,6 +340,17 @@ def dbt_profile_target(request, workspace_id, api_endpoint, schema_mode):
         "livy_mode": os.getenv("LIVY_MODE", "fabric"),
         "reuse_session": True,
         "session_idle_timeout": "60m",
+        # High-concurrency Livy is disabled for the functional suite even though
+        # the user-facing default is True. The pytest-xdist test framework spawns
+        # multiple worker processes that pre-attach to specific Livy session IDs
+        # written to file by the orchestrator. The HC API has no "attach to this
+        # underlying session" parameter (only a packing-hint sessionTag), and
+        # the docs explicitly note that rapid concurrent POSTs to acquire HC
+        # sessions with the same tag can create multiple underlying Livy
+        # sessions instead of packing — overwhelming Fabric capacity in CI.
+        # Re-enabling here would require a test-infra refactor outside the
+        # scope of the HC support work itself.
+        "high_concurrency": False,
         "spark_config": {
             "name": f"dbt-test-{lakehouse_name}",
             "tags": {

@@ -33,6 +33,10 @@ prompts:
         type: 'int'
       session_id_file:
         hint: Optional path to file storing Livy session ID for session reuse. Defaults to ./livy-session-id.txt if not specified.
+      high_concurrency:
+        hint: When true (default), each dbt thread gets its own REPL inside one underlying Livy session via Fabric's high-concurrency Livy API — statements from different threads run in parallel. When false, falls back to the legacy single-session-per-process mode where statements execute FIFO inside the default Spark scheduling pool. Has no effect in local mode.
+        type: 'bool'
+        default: true
   schema:
     hint: 'default schema that dbt will build objects in'
   threads:

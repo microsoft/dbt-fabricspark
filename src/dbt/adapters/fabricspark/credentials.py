@@ -68,6 +68,15 @@ class FabricSparkCredentials(Credentials):
     reuse_session: bool = False  # When True, Fabric sessions are kept alive and reused across runs
     session_idle_timeout: str = "30m"  # Livy session idle timeout (e.g. "30m", "1h")
 
+    # High-concurrency Livy. When True (default), each dbt thread acquires
+    # its own REPL inside a single underlying Livy session shared via a
+    # deterministic sessionTag. Statements from different REPLs execute in
+    # parallel inside the Spark application. When False, falls back to the
+    # legacy single-session-per-process behaviour where statements queue
+    # FIFO inside the default Spark scheduling pool.
+    # Has no effect in local mode (livy_mode=local).
+    high_concurrency: bool = True
+
     # Livy session stability settings
     http_timeout: int = 120  # seconds for each HTTP request to Fabric API
     session_start_timeout: int = 600  # max seconds to wait for session start (10 min)

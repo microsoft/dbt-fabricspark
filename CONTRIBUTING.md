@@ -62,10 +62,10 @@ Therefore, if the tests pass locally, they are highly likely to pass in CI as we
 
 1. Install recommended developer tooling (optional):
 
-  ```bash
-  curl -fsSL https://gh.io/copilot-install | bash
-  $HOME/.local/bin/copilot --yolo
-  ```
+   ```bash
+   curl -fsSL https://gh.io/copilot-install | bash
+   $HOME/.local/bin/copilot --yolo
+   ```
 
 1. Login to github and ensure to authorize `Microsoft` if you're an employee (optional):
 

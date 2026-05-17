@@ -66,7 +66,13 @@ class FabricSparkCredentials(Credentials):
     environmentId: Optional[str] = None
     session_id_file: Optional[str] = None
     reuse_session: bool = False  # When True, Fabric sessions are kept alive and reused across runs
-    session_idle_timeout: str = "30m"  # Livy session idle timeout (e.g. "30m", "1h")
+    # Default ``None`` so the adapter does NOT send
+    # ``spark.livy.session.idle.timeout`` in the session ``conf``. Fabric
+    # treats that key as session-immutable, so its presence (even when the
+    # value matches the pool default) disqualifies starter-pool matching and
+    # forces on-demand cold start. Set explicitly (e.g. ``"30m"``) only when
+    # the trade-off is acceptable.
+    session_idle_timeout: Optional[str] = None
 
     # High-concurrency Livy. When True (default), each dbt thread acquires
     # its own REPL inside a single underlying Livy session shared via a

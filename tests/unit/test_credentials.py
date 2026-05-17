@@ -161,6 +161,24 @@ def test_credentials_type() -> None:
     assert credentials.type == "fabricspark"
 
 
+def test_credentials_session_idle_timeout_defaults_to_none() -> None:
+    """Default ``session_idle_timeout`` must be falsy.
+
+    A truthy default would inject ``spark.livy.session.idle.timeout`` into
+    the Livy session ``conf``, which Fabric treats as session-immutable —
+    disqualifying starter-pool matching and forcing on-demand cold start.
+    """
+    credentials = FabricSparkCredentials(
+        method="livy",
+        authentication="CLI",
+        lakehouse="tests",
+        workspaceid="1de8390c-9aca-4790-bee8-72049109c0f4",
+        lakehouseid="8c5bc260-bc3a-4898-9ada-01e433d461ba",
+        spark_config={"name": "test-session"},
+    )
+    assert not credentials.session_idle_timeout
+
+
 def test_credentials_database_defaults_to_lakehouse() -> None:
     """Test that database is always derived from lakehouse name."""
     credentials = FabricSparkCredentials(

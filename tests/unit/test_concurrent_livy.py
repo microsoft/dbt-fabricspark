@@ -409,3 +409,46 @@ class TestHighConcurrencyConnectionWrapper:
         with patch.object(HighConcurrencyCursor, "execute") as mock_exec:
             wrapper.execute("SELECT 1;")
             mock_exec.assert_called_once_with("SELECT 1")
+
+
+# --------------------------------------------------------------------------- #
+# _build_acquire_payload — session_idle_timeout injection                     #
+# --------------------------------------------------------------------------- #
+
+
+class TestBuildAcquirePayloadIdleTimeout:
+    """Guard rails for the starter-pool fallback bug.
+
+    Fabric treats ``spark.livy.session.idle.timeout`` as a session-immutable
+    SparkConf; its mere presence in the acquire ``conf`` disqualifies
+    starter-pool matching. The adapter must therefore omit the key unless
+    the user has explicitly opted in by setting ``session_idle_timeout``.
+    """
+
+    def test_default_credentials_omit_idle_timeout(self):
+        creds = _make_creds()
+        hc = HighConcurrencySession(creds, creds.spark_config)
+        payload = hc._build_acquire_payload()
+        assert "spark.livy.session.idle.timeout" not in payload.get("conf", {})
+
+    def test_empty_string_idle_timeout_omits_key(self):
+        creds = _make_creds(session_idle_timeout="")
+        hc = HighConcurrencySession(creds, creds.spark_config)
+        payload = hc._build_acquire_payload()
+        assert "spark.livy.session.idle.timeout" not in payload.get("conf", {})
+
+    def test_explicit_idle_timeout_injects_key(self):
+        creds = _make_creds(session_idle_timeout="45m")
+        hc = HighConcurrencySession(creds, creds.spark_config)
+        payload = hc._build_acquire_payload()
+        assert payload["conf"]["spark.livy.session.idle.timeout"] == "45m"
+
+    def test_environment_id_still_injects_when_idle_timeout_omitted(self):
+        creds = _make_creds(environmentId="11111111-2222-3333-4444-555555555555")
+        hc = HighConcurrencySession(creds, creds.spark_config)
+        payload = hc._build_acquire_payload()
+        assert (
+            payload["conf"]["spark.fabric.environment.id"]
+            == "11111111-2222-3333-4444-555555555555"
+        )
+        assert "spark.livy.session.idle.timeout" not in payload["conf"]

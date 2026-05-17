@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.12.2
+
+### Bug Fixes
+
+- Fixed every fresh Livy session being forced onto an on-demand Spark cluster instead of a Fabric starter pool. `session_idle_timeout` no longer defaults to `"30m"`; the adapter now omits `spark.livy.session.idle.timeout` from the session `conf` unless the user explicitly sets a value. Fabric treats that key as session-immutable, so its mere presence (even matching the pool's own default) emitted `FallbackReasons: UserSparkConfigMismatch` and added ~3 min of cold-start per cold session (vs ~40 s on a warm starter pool). Existing profiles that set `session_idle_timeout` explicitly continue to behave as before, with the same starter-pool trade-off (#184)
+
 ## v1.12.1
 
 ### Bug Fixes

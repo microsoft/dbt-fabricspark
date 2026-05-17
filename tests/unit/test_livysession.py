@@ -490,9 +490,9 @@ class TestCredentialsSessionFile:
         assert credentials.resolved_session_id_file == "/custom/path/my-session.txt"
 
 
-def _make_fabric_credentials(reuse_session=False, session_id_file=None):
+def _make_fabric_credentials(reuse_session=False, session_id_file=None, **overrides):
     """Helper to create Fabric mode credentials for tests."""
-    return FabricSparkCredentials(
+    base = dict(
         method="livy",
         livy_mode="fabric",
         authentication="CLI",
@@ -504,6 +504,8 @@ def _make_fabric_credentials(reuse_session=False, session_id_file=None):
         reuse_session=reuse_session,
         session_id_file=session_id_file,
     )
+    base.update(overrides)
+    return FabricSparkCredentials(**base)
 
 
 class TestFabricSessionReuseMode:
@@ -670,6 +672,57 @@ class TestFabricSessionReuseMode:
             LivySessionManager._connect_fabric(credentials, {"name": "test"})
             mock_fresh.assert_called_once_with(credentials, {"name": "test"})
             mock_reuse.assert_not_called()
+
+
+class TestCreateFabricSessionIdleTimeout:
+    """Guard rails for the starter-pool fallback bug on the singleton path.
+
+    Fabric treats ``spark.livy.session.idle.timeout`` as a session-immutable
+    SparkConf, so its mere presence in the POST ``/sessions`` ``conf``
+    disqualifies starter-pool matching and forces an on-demand cold start.
+    """
+
+    def setup_method(self):
+        LivySessionManager.livy_global_session = None
+
+    def _capture_spark_config(self, credentials):
+        captured: dict = {}
+
+        def _capture(spark_config):
+            captured["spark_config"] = spark_config
+
+        with patch(
+            "dbt.adapters.fabricspark.livysession.LivySession.create_session",
+            side_effect=_capture,
+        ):
+            LivySessionManager._create_fabric_session(credentials, {"name": "test-session"})
+        return captured["spark_config"]
+
+    def test_default_credentials_omit_idle_timeout(self):
+        credentials = _make_fabric_credentials()
+        spark_config = self._capture_spark_config(credentials)
+        assert "spark.livy.session.idle.timeout" not in spark_config.get("conf", {})
+
+    def test_empty_string_idle_timeout_omits_key(self):
+        credentials = _make_fabric_credentials(session_idle_timeout="")
+        spark_config = self._capture_spark_config(credentials)
+        assert "spark.livy.session.idle.timeout" not in spark_config.get("conf", {})
+
+    def test_explicit_idle_timeout_injects_key(self):
+        credentials = _make_fabric_credentials(session_idle_timeout="45m")
+        spark_config = self._capture_spark_config(credentials)
+        assert spark_config["conf"]["spark.livy.session.idle.timeout"] == "45m"
+
+    def test_environment_id_still_injects_when_idle_timeout_omitted(self):
+        credentials = _make_fabric_credentials(
+            environmentId="11111111-2222-3333-4444-555555555555"
+        )
+        spark_config = self._capture_spark_config(credentials)
+        assert (
+            spark_config["conf"]["spark.fabric.environment.id"]
+            == "11111111-2222-3333-4444-555555555555"
+        )
+        assert "spark.livy.session.idle.timeout" not in spark_config["conf"]
 
 
 class TestFixBinding:

@@ -5,6 +5,25 @@ labels: ["type:bug", "triage:product"]
 body:
 -   type: markdown
     attributes:
+        value: |
+            ## Issues and bug bashing
+
+            > ⚠️ Here's how you can get your issue triaged and fixed ASAP
+
+            In the age of AI, we should be innovating and shipping daily.
+            So in this adapter, we try to fix bugs and ship features fast - and keep a high bar of test coverage.
+
+            Once you open an issue, please - try to be **as descriptive as possible** to give our human/AI maintainers the necessary details to reproduce the issue.
+
+            For example - if you can - create a dummy repro dbt project - so the maintainer can reproduce your problem ASAP - see an example a well-written GitHub issue [here](https://github.com/microsoft/dbt-fabricspark/issues/172#issuecomment-4426907640).
+
+            Once we have a fix identified, to gain more confidence, we might ask you install the adapter right from a PR branch to ensure the repro is gone, like so:
+
+            ```bash
+            pip install git+https://github.com/microsoft/dbt-fabricspark.git@dev/somebranch/172
+            ```
+-   type: markdown
+    attributes:
         value: Thanks for taking the time to fill out this bug report!
 -   type: checkboxes
     attributes:

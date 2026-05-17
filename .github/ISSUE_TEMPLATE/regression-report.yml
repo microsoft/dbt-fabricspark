@@ -6,6 +6,26 @@ labels: ["type:regression", "triage:product"]
 body:
 -   type: markdown
     attributes:
+        value: |
+            ## Issues, bug-bashing, help us help you
+
+            > ⚠️ Here's how you can get your issue triaged and fixed ASAP
+
+            In the age of AI, we should be innovating and shipping **high-quality** software daily.
+
+            So in this adapter, we try to fix bugs and ship features fast - and keep an extremely high bar for test coverage in CI before PRs merge to `main`.
+
+            Once you open an issue, please - try to be **as descriptive as possible** to give our human/AI maintainers the necessary details to reproduce the issue rapidly.
+
+            For example - if you can - create a dummy repro dbt project in your GitHub account - so the maintainers can reproduce your problem ASAP - see an example a well-written GitHub issue [here](https://github.com/microsoft/dbt-fabricspark/issues/172#issuecomment-4426907640).
+
+            If the issue is complex - once we have a fix identified, to gain more confidence, we might ask you install the adapter right from a PR branch to ensure the repro is gone in your setup as well, like so:
+
+            ```bash
+            pip install git+https://github.com/microsoft/dbt-fabricspark.git@dev/somebranch/123
+            ```
+-   type: markdown
+    attributes:
         value: Thanks for taking the time to fill out this regression report!
 -   type: checkboxes
     attributes:

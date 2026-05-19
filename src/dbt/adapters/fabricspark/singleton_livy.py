@@ -485,7 +485,7 @@ class LivyCursor:
         # for the server-side interpreter, so embedded /* ... */ comments are
         # stripped here before submission. Client-side escaping is unnecessary
         # because submission uses POST JSON, not URL encoding.
-        code = re.sub(r"\s*/\*(.|\n)*?\*/\s*", "\n", sql, re.DOTALL).strip()
+        code = re.sub(r"\s*/\*(.|\n)*?\*/\s*", "\n", sql, flags=re.DOTALL).strip()
         return code
 
     def _getLivyResult(self, res_obj) -> Response:

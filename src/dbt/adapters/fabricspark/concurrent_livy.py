@@ -552,7 +552,7 @@ class HighConcurrencyCursor:
 
     @staticmethod
     def _strip_block_comments(sql: str) -> str:
-        return re.sub(r"\s*/\*(.|\n)*?\*/\s*", "\n", sql, re.DOTALL).strip()
+        return re.sub(r"\s*/\*(.|\n)*?\*/\s*", "\n", sql, flags=re.DOTALL).strip()
 
     def execute(self, sql: str, *parameters: Any) -> None:
         if len(parameters) > 0:

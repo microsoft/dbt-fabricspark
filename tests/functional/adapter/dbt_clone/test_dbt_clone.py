@@ -289,4 +289,4 @@ class TestSparkCloneCrossWorkspace:
         )
         with project.adapter.connection_named("__test"):
             _, rows = project.adapter.execute(f"select count(*) from {cloned}", fetch=True)
-            assert list(rows)[0][0] == 1
+            assert int(list(rows)[0][0]) == 1

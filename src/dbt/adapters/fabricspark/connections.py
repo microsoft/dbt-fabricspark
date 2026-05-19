@@ -107,12 +107,7 @@ class FabricSparkConnectionManager(SQLConnectionManager):
             if len(exc.args) == 0:
                 raise
 
-            thrift_resp = exc.args[0]
-            if hasattr(thrift_resp, "status"):
-                msg = thrift_resp.status.errorMessage
-                raise DbtRuntimeError(msg)
-            else:
-                raise DbtRuntimeError(str(exc))
+            raise DbtRuntimeError(str(exc))
 
     def cancel(self, connection: Connection) -> None:
         connection.handle.cancel()

@@ -18,6 +18,7 @@ from dbt_common.utils.encoding import DECIMALS
 from dbt.adapters.events.logging import AdapterLogger
 from dbt.adapters.exceptions import FailedToConnectError
 from dbt.adapters.fabricspark import livysession as _livy_helpers
+from dbt.adapters.fabricspark._http_utils import parse_retry_after
 from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
 from dbt.adapters.fabricspark.livy_backend import LivyBackend
 from dbt.adapters.fabricspark.shortcuts import ShortcutClient
@@ -55,10 +56,6 @@ _shortcuts_done: "set[tuple[str, str]]" = set()
 
 def _get_headers(credentials: FabricSparkCredentials, tokenPrint: bool = False) -> dict[str, str]:
     return _livy_helpers.get_headers(credentials, tokenPrint)
-
-
-def _parse_retry_after(response: requests.Response) -> float:
-    return _livy_helpers._parse_retry_after(response)
 
 
 def derive_session_tag(credentials: FabricSparkCredentials) -> str:
@@ -415,7 +412,7 @@ class HighConcurrencyCursor:
                 time.sleep(wait)
                 continue
             if res.status_code == 429:
-                retry_after = _parse_retry_after(res)
+                retry_after = parse_retry_after(res)
                 wait = max(retry_after, 2**attempt)
                 logger.debug(f"HC statement submit got HTTP 429, retrying in {wait:.0f}s")
                 time.sleep(wait)
@@ -494,7 +491,7 @@ class HighConcurrencyCursor:
                 continue
             if resp.status_code == 429:
                 consecutive_failures += 1
-                retry_after = _parse_retry_after(resp)
+                retry_after = parse_retry_after(resp)
                 wait = max(retry_after, 2 ** (consecutive_failures - 1))
                 logger.debug(f"HC statement poll got HTTP 429, retrying in {wait:.0f}s")
                 time.sleep(wait)

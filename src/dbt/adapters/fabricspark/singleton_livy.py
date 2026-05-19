@@ -17,6 +17,7 @@ from requests.models import Response
 from dbt.adapters.events.logging import AdapterLogger
 from dbt.adapters.exceptions import FailedToConnectError
 from dbt.adapters.fabricspark import livysession as _livy_helpers
+from dbt.adapters.fabricspark._http_utils import parse_retry_after
 from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
 from dbt.adapters.fabricspark.livy_backend import LivyBackend
 from dbt.adapters.fabricspark.shortcuts import ShortcutClient
@@ -29,10 +30,6 @@ _session_lock = threading.Lock()
 
 def _get_headers(credentials: FabricSparkCredentials, tokenPrint: bool = False) -> dict[str, str]:
     return _livy_helpers.get_headers(credentials, tokenPrint)
-
-
-def _parse_retry_after(response: requests.Response) -> float:
-    return _livy_helpers._parse_retry_after(response)
 
 
 class LivySession:
@@ -448,7 +445,7 @@ class LivyCursor:
                 time.sleep(wait_time)
                 continue
             if res.status_code == 429:
-                retry_after = _parse_retry_after(res)
+                retry_after = parse_retry_after(res)
                 wait_time = max(retry_after, 2**attempt * 1)
                 logger.debug(
                     f"Livy statement submit got HTTP 429, "
@@ -540,7 +537,7 @@ class LivyCursor:
                 continue
             if poll_res.status_code == 429:
                 consecutive_failures += 1
-                retry_after = _parse_retry_after(poll_res)
+                retry_after = parse_retry_after(poll_res)
                 wait_time = max(retry_after, 2 ** (consecutive_failures - 1) * 1)
                 logger.debug(
                     f"Livy statement poll got HTTP 429, "

@@ -24,24 +24,31 @@
       {{ return(relations) }}
   {%- endif -%}
 
-  {%- set other_existing_relation = load_cached_relation(defer_relation) -%}
-
-  -- If this is a database that can do zero-copy cloning of tables, and the other relation is a table, then this will be a table
-  -- Otherwise, this will be a view
-
-  {% set can_clone_table = can_clone_table() %}
-
-  {%- if not existing_relation.is_delta -%}
+  {%- set file_format = config.get('file_format', 'delta') -%}
+  {%- if file_format != 'delta' -%}
     {% set invalid_format_msg -%}
-      shallow clone requires to be 'delta' (default file format). Other file formats are not supported.
+      Invalid file_format: {{ file_format }}
+      shallow clone requires file_format='delta'.
     {%- endset %}
     {% do exceptions.raise_compiler_error(invalid_format_msg) %}
-  {%- elif other_existing_relation and other_existing_relation.type == 'table' and can_clone_table -%}
+  {%- endif -%}
+
+  {%- set can_clone_table = can_clone_table() -%}
+
+  {%- set materialization = config.get('materialized') -%}
+
+  {%- if materialization != 'view' and can_clone_table -%}
 
       {%- set target_relation = this.incorporate(type='table') -%}
+
+      {%- set workspace_name = config.get('workspace_name') -%}
+      {%- if workspace_name -%}
+        {%- set target_relation = target_relation.incorporate(workspace=workspace_name) -%}
+      {%- endif -%}
+
       {% if existing_relation is not none and not existing_relation.is_table %}
-        {{ log("Dropping relation " ~ existing_relation ~ " because it is of type " ~ existing_relation.type) }}
-        {{ drop_relation_if_exists(existing_relation) }}
+          {{ log("Dropping relation " ~ existing_relation ~ " because it is of type " ~ existing_relation.type) }}
+          {{ drop_relation_if_exists(existing_relation) }}
       {% endif %}
 
       -- as a general rule, data platforms that can clone tables can also do atomic 'create or replace'
@@ -58,10 +65,6 @@
   {%- else -%}
 
       {%- set target_relation = this.incorporate(type='view') -%}
-
-      -- reuse the view materialization
-      -- TODO: support actual dispatch for materialization macros
-      -- Tracking ticket: https://github.com/dbt-labs/dbt-core/issues/7799
       {% set search_name = "materialization_view_" ~ adapter.type() %}
       {% if not search_name in context %}
           {% set search_name = "materialization_view_default" %}

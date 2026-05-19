@@ -52,7 +52,7 @@ class LivySession:
         exc_val: Exception | None,
         exc_tb: TracebackType | None,
     ) -> bool:
-        return True
+        return False
 
     def try_reuse_session(self, session_id: str) -> bool:
         """Try to reuse an existing session by ID.
@@ -382,7 +382,7 @@ class LivyCursor:
         exc_tb: TracebackType | None,
     ) -> bool:
         self.close()
-        return True
+        return False
 
     @property
     def description(
@@ -710,7 +710,7 @@ class LivyConnection:
         exc_tb: TracebackType | None,
     ) -> bool:
         self.close()
-        return True
+        return False
 
 
 def _atexit_cleanup() -> None:

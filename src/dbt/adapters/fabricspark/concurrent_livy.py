@@ -122,7 +122,7 @@ class HighConcurrencySession:
         exc_val: Exception | None,
         exc_tb: TracebackType | None,
     ) -> bool:
-        return True
+        return False
 
     # ---- acquire ---------------------------------------------------------
 
@@ -344,7 +344,7 @@ class HighConcurrencyCursor:
         exc_tb: TracebackType | None,
     ) -> bool:
         self.close()
-        return True
+        return False
 
     @property
     def description(
@@ -631,7 +631,7 @@ class HighConcurrencyConnection:
         exc_tb: TracebackType | None,
     ) -> bool:
         self.close()
-        return True
+        return False
 
 
 def _maybe_create_shortcuts(credentials: FabricSparkCredentials) -> None:

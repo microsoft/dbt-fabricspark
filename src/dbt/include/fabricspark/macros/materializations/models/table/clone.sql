@@ -46,7 +46,14 @@
         {%- set target_relation = target_relation.incorporate(workspace=workspace_name) -%}
       {%- endif -%}
 
-      {% if existing_relation is not none and not existing_relation.is_table %}
+      {#-- Drop any existing relation at the target path before recreating.
+           We only reach this branch when full_refresh is requested (an
+           earlier early-return covers the noop case), and Fabric Spark
+           Delta rejects ``CREATE OR REPLACE TABLE ... SHALLOW CLONE`` when
+           the destination is non-empty with DELTA_UNSUPPORTED_NON_EMPTY_CLONE.
+           Dropping first sidesteps that and also handles the wrong-type
+           case (e.g. a view at the table path). --#}
+      {% if existing_relation is not none %}
           {{ log("Dropping relation " ~ existing_relation ~ " because it is of type " ~ existing_relation.type) }}
           {{ drop_relation_if_exists(existing_relation) }}
       {% endif %}

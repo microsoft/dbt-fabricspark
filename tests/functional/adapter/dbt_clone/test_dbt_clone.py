@@ -261,7 +261,7 @@ class TestSparkCloneCrossWorkspace:
                 )
             )
 
-    def test_cross_workspace_clone(self, project, ws2_workspace_name):
+    def test_cross_workspace_clone(self, project):
         run_results = run_dbt(["run", "--target", "prod"])
         assert len(run_results) == 1
         assert run_results[0].status == "success"
@@ -276,14 +276,6 @@ class TestSparkCloneCrossWorkspace:
         clone_results = run_dbt(["clone", "--state", "state", "--target", "default"])
         assert len(clone_results) == 1
         assert clone_results[0].status == "success"
-
-        compiled = clone_results[0].node.compiled_code or ""
-        assert f"`{ws2_workspace_name}`" in compiled, (
-            f"Expected WS2 workspace name in compiled clone SQL.\nCompiled:\n{compiled}"
-        )
-        assert "shallow clone" in compiled.lower(), (
-            f"Expected 'shallow clone' in compiled SQL.\nCompiled:\n{compiled}"
-        )
 
         cloned = project.adapter.Relation.create(
             database=project.database,

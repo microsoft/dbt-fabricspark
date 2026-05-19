@@ -10,7 +10,6 @@ https://learn.microsoft.com/en-us/fabric/data-engineering/materialized-lake-view
 
 from __future__ import annotations
 
-import datetime as dt
 import random
 import time
 from typing import Any, Dict, List, Optional
@@ -19,6 +18,7 @@ import requests
 from dbt_common.exceptions import DbtRuntimeError
 
 from dbt.adapters.events.logging import AdapterLogger
+from dbt.adapters.fabricspark._http_utils import parse_retry_after
 from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
 from dbt.adapters.fabricspark.livysession import get_headers
 
@@ -138,33 +138,6 @@ def _extract_error_detail(response: requests.Response) -> str:
         return response.text or f"HTTP {response.status_code}"
 
 
-def _parse_retry_after(response: requests.Response) -> float:
-    """Extract wait time (seconds) from a 429 response.
-
-    Checks the ``Retry-After`` header first, then falls back to the
-    Fabric-specific "until: <timestamp>" pattern in the response body.
-    Returns 0 if no hint is found.
-    """
-    header = response.headers.get("Retry-After", "")
-    if header:
-        try:
-            return float(header)
-        except ValueError:
-            pass
-    try:
-        body = response.json()
-        msg = body.get("message", "")
-        if "until:" in msg:
-            ts_str = msg.split("until:")[1].strip().rstrip(")")
-            ts_str = ts_str.replace("(UTC", "").strip()
-            target = dt.datetime.strptime(ts_str, "%m/%d/%Y %I:%M:%S %p")
-            delta = (target - dt.datetime.utcnow()).total_seconds()
-            return max(delta, 0)
-    except Exception:
-        pass
-    return 0
-
-
 def _request_with_retry(
     method: str,
     url: str,
@@ -199,7 +172,7 @@ def _request_with_retry(
             if response.status_code in RETRYABLE_STATUS_CODES and attempt < max_retries:
                 detail = _extract_error_detail(response)
                 if response.status_code == 429:
-                    retry_after = _parse_retry_after(response)
+                    retry_after = parse_retry_after(response)
                     wait = max(retry_after, RETRY_BACKOFF_BASE**attempt) + random.uniform(0, 2)
                 else:
                     wait = RETRY_BACKOFF_BASE**attempt

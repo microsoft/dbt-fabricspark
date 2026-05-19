@@ -94,9 +94,16 @@ class BaseClone:
 
 
 class TestSparkClonePossible(BaseClone):
+    @pytest.fixture(scope="class", autouse=True)
+    def _skip_unless_schema_enabled(self, is_schema_enabled):
+        if not is_schema_enabled:
+            pytest.skip("Cross-schema clone requires a schema-enabled lakehouse.")
+
     @pytest.fixture(scope="class")
     def profiles_config_update(self, dbt_profile_target, unique_schema, other_schema):
         outputs = {"default": dbt_profile_target, "otherschema": deepcopy(dbt_profile_target)}
+        outputs["default"]["schema"] = unique_schema
+        outputs["otherschema"]["schema"] = other_schema
         return {"test": {"outputs": outputs, "target": "default"}}
 
     @pytest.fixture(scope="class")
@@ -131,7 +138,7 @@ class TestSparkClonePossible(BaseClone):
             project.adapter.drop_schema(relation)
 
     def test_can_clone_true(self, project, unique_schema, other_schema):
-        project.create_test_schema(TestSparkClonePossible.schemaname)
+        project.create_test_schema(other_schema)
         self.run_and_save_state(project.project_root, with_snapshot=True)
 
         clone_args = [
@@ -146,7 +153,7 @@ class TestSparkClonePossible(BaseClone):
         assert len(results) == 4
 
         schema_relations = project.adapter.list_relations(
-            database=project.database, schema=TestSparkClonePossible.schemaname
+            database=project.database, schema=other_schema
         )
         filtered_schema_relations = [
             relation

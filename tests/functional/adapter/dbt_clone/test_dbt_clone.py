@@ -277,10 +277,15 @@ class TestSparkCloneCrossWorkspace:
         assert len(clone_results) == 1
         assert clone_results[0].status == "success"
 
+        # Resolve the cloned relation from the result node so the SELECT
+        # targets the same schema dbt actually materialized into (the
+        # functional fixture stack can otherwise hand back a different
+        # unique_schema for the __test connection).
+        cloned_node = clone_results[0].node
         cloned = project.adapter.Relation.create(
-            database=project.database,
-            schema=project.test_schema,
-            identifier="cross_ws_clone_model",
+            database=cloned_node.database,
+            schema=cloned_node.schema,
+            identifier=cloned_node.alias,
         )
         with project.adapter.connection_named("__test"):
             _, rows = project.adapter.execute(f"select count(*) from {cloned}", fetch=True)

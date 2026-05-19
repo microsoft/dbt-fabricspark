@@ -42,8 +42,6 @@ from dbt.adapters.sql import SQLConnectionManager
 logger = AdapterLogger("Microsoft Fabric-Spark")
 for logger_name in [
     "fabricspark.connector",
-    "botocore",
-    "boto3",
     "Microsoft Fabric-Spark.connector",
 ]:
     logger.debug(f"Setting {logger_name} to DEBUG")

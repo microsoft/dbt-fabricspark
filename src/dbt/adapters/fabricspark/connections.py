@@ -173,12 +173,14 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                         cls.connection_managers[thread_id] = (
                             HighConcurrencySessionManager() if use_hc else LivySessionManager()
                         )
-                    raw_handle = cls.connection_managers[thread_id].connect(creds)
+                    manager = cls.connection_managers[thread_id]
+                    raw_handle = manager.connect(creds)
                     handle = (
                         HighConcurrencyConnectionWrapper(raw_handle)
                         if use_hc
                         else LivySessionConnectionWrapper(raw_handle)
                     )
+                    setattr(handle, "_manager", manager)
                     connection.state = ConnectionState.OPEN
 
                 else:
@@ -236,14 +238,12 @@ class FabricSparkConnectionManager(SQLConnectionManager):
         pass
 
     def cleanup_all(self) -> None:
-        """Clean up connection manager references only.
+        """Clean up all managed Livy sessions/connections.
 
         Does NOT call super().cleanup_all() because that clears
         thread_connections, which breaks subsequent dbt invocations
         within the same process (e.g. seed → run → show in tests).
         Connections must persist because the Livy session is shared.
-        Sessions are deleted on process exit via an atexit handler
-        registered in LivySessionManager.
 
         For HC backends, however, each per-thread manager owns its own HC
         session id; releasing those promptly here frees REPL slots so the
@@ -265,6 +265,17 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                 return connection
 
             connection = super().close(connection)
+
+            manager = getattr(connection.handle, "_manager", None)
+            if manager is None:
+                thread_id = cls.get_thread_identifier()
+                manager = cls.connection_managers.get(thread_id)
+
+            if manager is not None:
+                manager.disconnect()
+                for key, value in list(cls.connection_managers.items()):
+                    if value is manager:
+                        del cls.connection_managers[key]
             return connection
         except Exception as err:
             logger.debug(f"Error closing connection {err}")

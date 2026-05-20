@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import atexit
 import datetime as dt
 import json
 import re
@@ -708,17 +707,6 @@ class LivyConnection:
     ) -> bool:
         self.close()
         return False
-
-
-def _atexit_cleanup() -> None:
-    """Delete the Fabric Livy session on process exit.
-
-    Local-mode sessions are kept alive for reuse across runs.
-    """
-    LivySessionManager._disconnect_impl()
-
-
-atexit.register(_atexit_cleanup)
 
 
 class LivySessionManager(LivyBackend):

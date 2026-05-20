@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import atexit
 import datetime as dt
 import hashlib
 import json
@@ -30,13 +29,6 @@ NUMBERS = DECIMALS + (int, float)
 # produced sessionId/replId; keep polling until state leaves the set.
 _ACQUIRING_STATES = frozenset({"NotStarted", "starting", "AcquiringHighConcurrencySession"})
 _TERMINAL_BAD_STATES = frozenset({"Dead", "Killed", "Failed", "Error"})
-
-
-_active_sessions_lock = threading.Lock()
-# All in-flight HighConcurrencySession instances across every dbt thread.
-# Used by the atexit handler to DELETE each HC id on process exit so REPL
-# slots free up promptly instead of waiting for Fabric's idle reaper.
-_active_sessions: "set[HighConcurrencySession]" = set()
 
 
 _session_tag_lock = threading.Lock()
@@ -180,9 +172,6 @@ class HighConcurrencySession:
         if not self.hc_id:
             raise FailedToConnectError(f"HC acquire response missing 'id': {body}")
 
-        with _active_sessions_lock:
-            _active_sessions.add(self)
-
         self._poll_until_idle()
         self.is_new_session_required = False
         self.is_dead = False
@@ -307,8 +296,6 @@ class HighConcurrencySession:
         except Exception as ex:
             logger.warning(f"Failed to delete HC session {self.hc_id}: {ex}")
         finally:
-            with _active_sessions_lock:
-                _active_sessions.discard(self)
             self.hc_id = None
             self.session_id = None
             self.repl_id = None
@@ -661,8 +648,7 @@ class HighConcurrencySessionManager(LivyBackend):
     """Per-dbt-thread backend. One instance owns one HC session = one REPL.
 
     Acquires lazily on the first :meth:`connect` call; cleanup happens in
-    :meth:`disconnect` (called explicitly by `connections.cleanup_all` or via
-    the module-level atexit handler).
+    :meth:`disconnect` (called by the connection manager lifecycle).
     """
 
     def __init__(self) -> None:
@@ -744,22 +730,3 @@ class HighConcurrencyConnectionWrapper(object):
         else:
             escaped = str(value).replace("'", "\\'")
             return f"'{escaped}'"
-
-
-def _atexit_cleanup_hc() -> None:
-    """DELETE every still-active HC session on process exit.
-
-    Iterates ``_active_sessions`` rather than relying on
-    ``connection_managers`` in ``connections.py``, which can be cleared by
-    ``cleanup_all`` before exit.
-    """
-    with _active_sessions_lock:
-        sessions = list(_active_sessions)
-    for s in sessions:
-        try:
-            s.delete()
-        except Exception as ex:
-            logger.debug(f"atexit HC delete failed for {s.hc_id}: {ex}")
-
-
-atexit.register(_atexit_cleanup_hc)

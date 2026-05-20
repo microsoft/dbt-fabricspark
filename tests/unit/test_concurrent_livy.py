@@ -66,11 +66,9 @@ def _mock_response(status_code: int, json_body=None, text: str = "") -> MagicMoc
 def _reset_module_state():
     """Reset module-level caches between tests so they don't bleed across cases."""
     concurrent_livy._session_tags.clear()
-    concurrent_livy._active_sessions.clear()
     concurrent_livy._shortcuts_done.clear()
     yield
     concurrent_livy._session_tags.clear()
-    concurrent_livy._active_sessions.clear()
     concurrent_livy._shortcuts_done.clear()
 
 
@@ -154,8 +152,6 @@ class TestHighConcurrencySessionAcquire:
         # POST sent sessionTag and conf
         post_body = mock_post.call_args.kwargs.get("data") or mock_post.call_args[1].get("data")
         assert "sessionTag" in post_body
-        # Session is now in the active registry so atexit will reap it.
-        assert hc in concurrent_livy._active_sessions
 
     @patch("dbt.adapters.fabricspark.concurrent_livy._get_headers", return_value={})
     @patch("dbt.adapters.fabricspark.concurrent_livy.time.sleep")
@@ -321,7 +317,6 @@ class TestHighConcurrencyDelete:
         creds = _make_creds()
         hc = HighConcurrencySession(creds, creds.spark_config)
         hc.hc_id = "hc-del"
-        concurrent_livy._active_sessions.add(hc)
 
         hc.delete()
 
@@ -329,7 +324,6 @@ class TestHighConcurrencyDelete:
         assert hc.hc_id is None
         assert hc.session_id is None
         assert hc.repl_id is None
-        assert hc not in concurrent_livy._active_sessions
 
 
 # --------------------------------------------------------------------------- #

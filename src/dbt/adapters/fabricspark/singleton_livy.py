@@ -907,6 +907,8 @@ class LivySessionConnectionWrapper(object):
     def __init__(self, handle):
         self.handle = handle
         self._cursor = None
+        self.manager: Optional[LivyBackend] = None
+        self.thread_id: Optional[Any] = None
 
     def cursor(self) -> LivySessionConnectionWrapper:
         self._cursor = self.handle.cursor()

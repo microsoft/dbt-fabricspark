@@ -683,6 +683,8 @@ class HighConcurrencyConnectionWrapper(object):
     def __init__(self, handle: HighConcurrencyConnection):
         self.handle = handle
         self._cursor: Optional[HighConcurrencyCursor] = None
+        self.manager: Optional[LivyBackend] = None
+        self.thread_id: Optional[Any] = None
 
     def cursor(self) -> HighConcurrencyConnectionWrapper:
         self._cursor = self.handle.cursor()

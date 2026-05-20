@@ -180,7 +180,8 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                         if use_hc
                         else LivySessionConnectionWrapper(raw_handle)
                     )
-                    setattr(handle, "_manager", manager)
+                    handle.manager = manager
+                    handle.thread_id = thread_id
                     connection.state = ConnectionState.OPEN
 
                 else:
@@ -248,7 +249,8 @@ class FabricSparkConnectionManager(SQLConnectionManager):
         For HC backends, however, each per-thread manager owns its own HC
         session id; releasing those promptly here frees REPL slots so the
         underlying Livy session can host new acquirers without bumping into
-        the 5-REPL packing cap.
+        the 5-REPL packing cap. For singleton backends, disconnect applies the
+        standard reuse-session policy (delete when reuse_session=False).
         """
         for manager in self.connection_managers.values():
             try:
@@ -266,16 +268,25 @@ class FabricSparkConnectionManager(SQLConnectionManager):
 
             connection = super().close(connection)
 
-            manager = getattr(connection.handle, "_manager", None)
+            manager = getattr(connection.handle, "manager", None)
+            manager_thread_id = getattr(connection.handle, "thread_id", None)
             if manager is None:
-                thread_id = cls.get_thread_identifier()
-                manager = cls.connection_managers.get(thread_id)
+                fallback_thread_id = cls.get_thread_identifier()
+                manager = cls.connection_managers.get(fallback_thread_id)
+                if manager is not None:
+                    logger.debug(
+                        "Connection handle has no attached manager; "
+                        f"falling back to thread manager for thread_id={fallback_thread_id}"
+                    )
+                    manager_thread_id = fallback_thread_id
 
             if manager is not None:
                 manager.disconnect()
-                for key, value in list(cls.connection_managers.items()):
-                    if value is manager:
-                        del cls.connection_managers[key]
+                if (
+                    manager_thread_id is not None
+                    and cls.connection_managers.get(manager_thread_id) is manager
+                ):
+                    del cls.connection_managers[manager_thread_id]
             return connection
         except Exception as err:
             logger.debug(f"Error closing connection {err}")

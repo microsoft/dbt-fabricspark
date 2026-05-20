@@ -317,10 +317,11 @@ class TestSparkClonePossibleNoSchema:
             f"{state_path}/manifest.json",
         )
 
+        run_node = run_results[0].node
         built = project.adapter.Relation.create(
-            database=project.database,
-            schema=project.test_schema,
-            identifier=run_results[0].node.alias,
+            database=run_node.database,
+            schema=run_node.schema,
+            identifier=run_node.alias,
         )
         with project.adapter.connection_named("__test"):
             project.adapter.execute(f"drop table {built}")
@@ -328,10 +329,11 @@ class TestSparkClonePossibleNoSchema:
         clone_results = run_dbt(["clone", "--state", "state"])
         assert clone_results[0].status == "success"
 
+        clone_node = clone_results[0].node
         cloned = project.adapter.Relation.create(
-            database=project.database,
-            schema=project.test_schema,
-            identifier=clone_results[0].node.alias,
+            database=clone_node.database,
+            schema=clone_node.schema,
+            identifier=clone_node.alias,
         )
         with project.adapter.connection_named("__test"):
             _, rows = project.adapter.execute(f"select count(*) from {cloned}", fetch=True)

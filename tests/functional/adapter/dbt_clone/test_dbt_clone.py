@@ -93,11 +93,19 @@ class BaseClone:
         self.copy_state(project_root)
 
 
-@pytest.mark.skip("Cloning cross schema is not supported")
 class TestSparkClonePossible(BaseClone):
+    """Clone coverage for schema-enabled lakehouses."""
+
+    @pytest.fixture(scope="class", autouse=True)
+    def _skip_unless_schema_enabled(self, is_schema_enabled):
+        if not is_schema_enabled:
+            pytest.skip("Requires a schema-enabled lakehouse.")
+
     @pytest.fixture(scope="class")
     def profiles_config_update(self, dbt_profile_target, unique_schema, other_schema):
         outputs = {"default": dbt_profile_target, "otherschema": deepcopy(dbt_profile_target)}
+        outputs["default"]["schema"] = unique_schema
+        outputs["otherschema"]["schema"] = other_schema
         return {"test": {"outputs": outputs, "target": "default"}}
 
     @pytest.fixture(scope="class")
@@ -132,7 +140,7 @@ class TestSparkClonePossible(BaseClone):
             project.adapter.drop_schema(relation)
 
     def test_can_clone_true(self, project, unique_schema, other_schema):
-        project.create_test_schema(TestSparkClonePossible.schemaname)
+        project.create_test_schema(other_schema)
         self.run_and_save_state(project.project_root, with_snapshot=True)
 
         clone_args = [
@@ -147,7 +155,7 @@ class TestSparkClonePossible(BaseClone):
         assert len(results) == 4
 
         schema_relations = project.adapter.list_relations(
-            database=project.database, schema=TestSparkClonePossible.schemaname
+            database=project.database, schema=other_schema
         )
         filtered_schema_relations = [
             relation
@@ -187,3 +195,100 @@ class TestSparkClonePossible(BaseClone):
             match="--state or --defer-state are required for deferral, but neither was provided",
         ):
             run_dbt(clone_args)
+
+
+CROSS_WS_CLONE_MODEL_SQL = """
+{{ config(
+    materialized='table',
+    workspace_name=(var('ws2_workspace_name') if target.name == 'prod' else none),
+) }}
+select 1 as id, 'hello' as label
+"""
+
+
+class TestSparkCloneCrossWorkspace:
+    """``dbt clone`` from a WS2 state manifest into the WS1 dev target.
+
+    Fabric Livy only supports 4-part naming against schema-enabled lakehouses,
+    so this class is skipped in the no_schema orchestrator pass.
+    """
+
+    @pytest.fixture(scope="class", autouse=True)
+    def _skip_unless_schema_enabled(self, is_schema_enabled):
+        if not is_schema_enabled:
+            pytest.skip("Cross-workspace 4-part naming requires a schema-enabled lakehouse.")
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {"cross_ws_clone_model.sql": CROSS_WS_CLONE_MODEL_SQL}
+
+    @pytest.fixture(scope="class")
+    def project_config_update(self, ws2_workspace_name):
+        return {
+            "name": "cross_workspace_clone",
+            "vars": {"ws2_workspace_name": ws2_workspace_name},
+        }
+
+    @pytest.fixture(scope="class")
+    def profiles_config_update(
+        self,
+        dbt_profile_target,
+        ws2_workspace_id,
+        ws2_lakehouse_id,
+        ws2_lakehouse_name,
+    ):
+        prod = deepcopy(dbt_profile_target)
+        prod["workspaceid"] = ws2_workspace_id
+        prod["lakehouseid"] = ws2_lakehouse_id
+        prod["lakehouse"] = ws2_lakehouse_name
+        return {
+            "test": {
+                "outputs": {"default": dbt_profile_target, "prod": prod},
+                "target": "default",
+            }
+        }
+
+    @pytest.fixture(autouse=True)
+    def clean_up(self, project, ws2_lakehouse_name):
+        yield
+        with project.adapter.connection_named("__test"):
+            project.adapter.drop_schema(
+                project.adapter.Relation.create(
+                    database=project.database, schema=project.test_schema
+                )
+            )
+            project.adapter.drop_schema(
+                project.adapter.Relation.create(
+                    database=ws2_lakehouse_name, schema=project.test_schema
+                )
+            )
+
+    def test_cross_workspace_clone(self, project):
+        run_results = run_dbt(["run", "--target", "prod"])
+        assert len(run_results) == 1
+        assert run_results[0].status == "success"
+
+        state_path = os.path.join(project.project_root, "state")
+        os.makedirs(state_path, exist_ok=True)
+        shutil.copyfile(
+            f"{project.project_root}/target/manifest.json",
+            f"{state_path}/manifest.json",
+        )
+
+        clone_results = run_dbt(["clone", "--state", "state", "--target", "default"])
+        assert len(clone_results) == 1
+        assert clone_results[0].status == "success"
+
+        # Resolve the cloned relation from the result node so the SELECT
+        # targets the same schema dbt actually materialized into (the
+        # functional fixture stack can otherwise hand back a different
+        # unique_schema for the __test connection).
+        cloned_node = clone_results[0].node
+        cloned = project.adapter.Relation.create(
+            database=cloned_node.database,
+            schema=cloned_node.schema,
+            identifier=cloned_node.alias,
+        )
+        with project.adapter.connection_named("__test"):
+            _, rows = project.adapter.execute(f"select count(*) from {cloned}", fetch=True)
+            assert int(list(rows)[0][0]) == 1

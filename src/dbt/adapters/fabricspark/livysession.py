@@ -214,7 +214,8 @@ def _extract_expiry_from_jwt(token: Optional[str]) -> Optional[int]:
             return exp
         if isinstance(exp, float) and exp > 0:
             return int(exp)
-    except Exception:
+    except Exception as ex:
+        logger.debug(f"Unable to parse JWT expiry from credentials.accessToken: {ex}")
         return None
 
     return None

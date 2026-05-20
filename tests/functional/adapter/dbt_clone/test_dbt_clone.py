@@ -94,10 +94,12 @@ class BaseClone:
 
 
 class TestSparkClonePossible(BaseClone):
+    """Clone coverage for schema-enabled lakehouses."""
+
     @pytest.fixture(scope="class", autouse=True)
     def _skip_unless_schema_enabled(self, is_schema_enabled):
         if not is_schema_enabled:
-            pytest.skip("Cross-schema clone requires a schema-enabled lakehouse.")
+            pytest.skip("Requires a schema-enabled lakehouse.")
 
     @pytest.fixture(scope="class")
     def profiles_config_update(self, dbt_profile_target, unique_schema, other_schema):
@@ -286,6 +288,50 @@ class TestSparkCloneCrossWorkspace:
             database=cloned_node.database,
             schema=cloned_node.schema,
             identifier=cloned_node.alias,
+        )
+        with project.adapter.connection_named("__test"):
+            _, rows = project.adapter.execute(f"select count(*) from {cloned}", fetch=True)
+            assert int(list(rows)[0][0]) == 1
+
+
+class TestSparkClonePossibleNoSchema:
+    """Clone coverage for no_schema lakehouses."""
+
+    @pytest.fixture(scope="class", autouse=True)
+    def _skip_unless_no_schema(self, is_schema_enabled):
+        if is_schema_enabled:
+            pytest.skip("Requires a no_schema lakehouse.")
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {"clone_target.sql": "{{ config(materialized='table') }} select 1 as id"}
+
+    def test_clone_in_no_schema(self, project):
+        run_results = run_dbt(["run"])
+        assert run_results[0].status == "success"
+
+        state_path = os.path.join(project.project_root, "state")
+        os.makedirs(state_path, exist_ok=True)
+        shutil.copyfile(
+            f"{project.project_root}/target/manifest.json",
+            f"{state_path}/manifest.json",
+        )
+
+        built = project.adapter.Relation.create(
+            database=project.database,
+            schema=project.test_schema,
+            identifier=run_results[0].node.alias,
+        )
+        with project.adapter.connection_named("__test"):
+            project.adapter.execute(f"drop table {built}")
+
+        clone_results = run_dbt(["clone", "--state", "state"])
+        assert clone_results[0].status == "success"
+
+        cloned = project.adapter.Relation.create(
+            database=project.database,
+            schema=project.test_schema,
+            identifier=clone_results[0].node.alias,
         )
         with project.adapter.connection_named("__test"):
             _, rows = project.adapter.execute(f"select count(*) from {cloned}", fetch=True)

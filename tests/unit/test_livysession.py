@@ -1,6 +1,8 @@
 """Tests for livysession module, focusing on local vs Fabric mode routing."""
 
+import base64
 import datetime as dt
+import json
 import os
 import tempfile
 from decimal import Decimal
@@ -16,6 +18,7 @@ from dbt.adapters.fabricspark.livysession import (
     LivyCursor,
     LivySession,
     LivySessionManager,
+    get_default_access_token,
     get_headers,
     read_session_id_from_file,
     write_session_id_to_file,
@@ -105,6 +108,44 @@ class TestLivySession:
         assert session.is_local_mode is False
         assert "workspaces/1de8390c-9aca-4790-bee8-72049109c0f4" in session.connect_url
         assert "lakehouses/8c5bc260-bc3a-4898-9ada-01e433d461ba" in session.connect_url
+
+
+class TestIntTestsAuthTokenExpiry:
+    @staticmethod
+    def _make_jwt_with_exp(expiry: int) -> str:
+        header = base64.urlsafe_b64encode(
+            json.dumps({"alg": "none", "typ": "JWT"}).encode()
+        ).decode()
+        payload = base64.urlsafe_b64encode(json.dumps({"exp": expiry}).encode()).decode()
+        return f"{header.rstrip('=')}.{payload.rstrip('=')}.signature"
+
+    @staticmethod
+    def _make_int_tests_credentials(token: str) -> FabricSparkCredentials:
+        return FabricSparkCredentials(
+            method="livy",
+            livy_mode="fabric",
+            authentication="int_tests",
+            accessToken=token,
+            workspaceid="1de8390c-9aca-4790-bee8-72049109c0f4",
+            lakehouseid="8c5bc260-bc3a-4898-9ada-01e433d461ba",
+            lakehouse="tests",
+            spark_config={"name": "test-session"},
+        )
+
+    def test_default_access_token_uses_jwt_exp_claim(self):
+        credentials = self._make_int_tests_credentials(self._make_jwt_with_exp(424242))
+
+        token = get_default_access_token(credentials)
+
+        assert token.expires_on == 424242
+
+    def test_default_access_token_without_jwt_exp_forces_immediate_refresh(self):
+        credentials = self._make_int_tests_credentials("plain-test-token")
+
+        with patch("dbt.adapters.fabricspark.livysession.time.time", return_value=1712345678):
+            token = get_default_access_token(credentials)
+
+        assert token.expires_on == 1712345678
 
 
 class TestCreateSessionRetry:

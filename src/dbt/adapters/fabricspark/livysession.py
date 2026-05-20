@@ -7,6 +7,7 @@ import os
 import re
 import threading
 import time
+from base64 import urlsafe_b64decode
 from typing import Any, Optional
 
 import requests
@@ -182,11 +183,41 @@ def get_default_access_token(credentials: FabricSparkCredentials) -> AccessToken
     out : AccessToken
         The access token.
     """
-    expires_on = 1845972874
+    derived_expiry = _extract_expiry_from_jwt(credentials.accessToken)
+    expires_on = derived_expiry or int(time.time())
 
-    # Create an AccessToken instance
+    if derived_expiry is None:
+        logger.debug(
+            "Could not derive token expiry from credentials.accessToken; "
+            "forcing immediate refresh for int_tests auth."
+        )
+
     accessToken = AccessToken(token=credentials.accessToken, expires_on=expires_on)
     return accessToken
+
+
+def _extract_expiry_from_jwt(token: Optional[str]) -> Optional[int]:
+    """Best-effort extraction of JWT `exp` claim."""
+    if not token:
+        return None
+
+    try:
+        parts = token.split(".")
+        if len(parts) < 2:
+            return None
+
+        payload = parts[1]
+        payload_with_padding = payload + "=" * (-len(payload) % 4)
+        claims = json.loads(urlsafe_b64decode(payload_with_padding))
+        exp = claims.get("exp")
+        if isinstance(exp, int) and exp > 0:
+            return exp
+        if isinstance(exp, float) and exp > 0:
+            return int(exp)
+    except Exception:
+        return None
+
+    return None
 
 
 def _load_custom_credential(credentials: FabricSparkCredentials) -> Any:

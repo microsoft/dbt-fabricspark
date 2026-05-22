@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.12.3
+
+### Bug Fixes
+
+- Fixed `dbt clone` failures against Fabric in two scenarios — cloning into a target that doesn't yet exist (raised `AttributeError` on a `None` `existing_relation`) and cloning across workspaces (the destination's `workspace_name` was dropped from the rendered DDL). `clone.sql` now reads `file_format` from `config`, branches on the configured materialization, propagates `workspace_name` onto the target relation via `incorporate(workspace=...)`, and drops the destination before `SHALLOW CLONE` to avoid `DELTA_UNSUPPORTED_NON_EMPTY_CLONE` on `--full-refresh`. Re-enabled `TestSparkClonePossible` and added `TestSparkCloneCrossWorkspace` to the functional suite (#207)
+- Fixed exception suppression in all six `__exit__` methods across `singleton_livy.py` and `concurrent_livy.py` — they returned `True`, silently swallowing every database error, timeout, `KeyboardInterrupt`, and programming bug raised inside their `with` blocks (so dbt could report success on a failed model and `Ctrl+C` could be ignored). All six now return `False` so exceptions propagate (#193)
+- Fixed `re.sub` calls in `singleton_livy._getLivySQL` and `concurrent_livy._strip_block_comments` passing `re.DOTALL` positionally, which silently set `count=16` and capped Livy comment-stripping to 16 replacements per submitted statement. Both now use `flags=re.DOTALL` so all `/* ... */` blocks are removed before submission (#195)
+- Fixed the adapter forcing `botocore` and `boto3` loggers to DEBUG at import time, which flooded the dbt log with AWS SDK request/response noise as soon as a user's project transitively imported `boto3`. The adapter has no AWS dependency; both entries are removed from the dependency-logger list (#198)
+- Fixed `int_tests` authentication caching the access token with a hardcoded 2028 expiry, which bypassed all refresh checks. Expiry is now derived from the JWT `exp` claim, with a safe fallback that forces immediate refresh if the token can't be parsed (#205)
+
+### Infrastructure
+
+- Consolidated four near-duplicate `_parse_retry_after` implementations (two full copies in `livysession.py` / `mlv_api.py` plus thin wrappers in `singleton_livy.py` / `concurrent_livy.py`) into a single `parse_retry_after` helper in `_http_utils.py`, and replaced the deprecated `datetime.utcnow()` with timezone-aware `datetime.now(timezone.utc)` so the Fabric `until: ... (UTC)` body fallback parses cleanly under Python 3.12+ (#200)
+- Removed a dead Thrift exception-handling branch in `FabricSparkConnectionManager.exception_handler`. The adapter talks to Fabric Livy over HTTP and has no Thrift dependency; the branch was a copy-paste from a `dbt-spark` ancestor and was never reachable (#203)
+
+---
+
 ## v1.12.2
 
 ### Bug Fixes

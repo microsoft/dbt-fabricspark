@@ -425,6 +425,8 @@ class TestCrossWorkspace4PartWriteCTAS:
 # ---------------------------------------------------------------------------
 
 _SHARED_SCHEMA_NAME = "finance"
+_CATALOG_RETRY_ATTEMPTS = 3
+_CATALOG_RETRY_DELAY_SECONDS = 5
 
 WS1_SHARED_SCHEMA_MODEL_SQL = """
 {{ config(
@@ -481,22 +483,23 @@ class TestCrossWorkspaceDocsGenerateSharedSchemaRegression:
         )
         assert len(run_results) == 2
 
-        node_keys = set()
-        for attempt in range(3):
+        has_ws1_node = False
+        has_ws2_node = False
+        for retry_count in range(_CATALOG_RETRY_ATTEMPTS):
             catalog = run_dbt(["docs", "generate"])
             node_keys = set(catalog.nodes.keys())
             has_ws1_node = any(k.endswith(".ws1_finance_stg_account") for k in node_keys)
             has_ws2_node = any(k.endswith(".ws2_finance_dim_account") for k in node_keys)
             if has_ws1_node and has_ws2_node:
                 break
-            if attempt < 2:
-                time.sleep(5)
+            if retry_count < (_CATALOG_RETRY_ATTEMPTS - 1):
+                time.sleep(_CATALOG_RETRY_DELAY_SECONDS)
 
-        assert any(k.endswith(".ws1_finance_stg_account") for k in node_keys), (
+        assert has_ws1_node, (
             "Expected WS1 model in catalog output. Missing node indicates catalog "
             "introspection used the wrong lakehouse/schema pairing."
         )
-        assert any(k.endswith(".ws2_finance_dim_account") for k in node_keys), (
+        assert has_ws2_node, (
             "Expected WS2 model in catalog output. Missing node indicates catalog "
             "introspection used the wrong lakehouse/schema pairing."
         )

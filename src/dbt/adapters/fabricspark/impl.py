@@ -684,6 +684,29 @@ class FabricSparkAdapter(SQLAdapter):
             return self.get_catalog(relation_configs, used_schemas)
         return super().get_filtered_catalog(relation_configs, used_schemas, relations)
 
+    def _catalog_needs_database_scoping(self) -> bool:
+        """Return True when catalog relation keys must retain database."""
+        schemas_enabled = getattr(self.config.credentials, "lakehouse_schemas_enabled", False)
+        if schemas_enabled:
+            return True
+
+        schema = getattr(self.config.credentials, "schema", None)
+        lakehouse = getattr(self.config.credentials, "lakehouse", None)
+        return bool(schema and lakehouse and schema != lakehouse)
+
+    def _get_catalog_relations(
+        self, relation_configs: Iterable[RelationConfig]
+    ) -> List[BaseRelation]:
+        relations = super()._get_catalog_relations(relation_configs)
+        if not self._catalog_needs_database_scoping():
+            return relations
+        return [
+            relation.include(database=True, schema=True, identifier=True)
+            if relation.database
+            else relation
+            for relation in relations
+        ]
+
     def get_catalog(
         self,
         relation_configs: Iterable[RelationConfig],

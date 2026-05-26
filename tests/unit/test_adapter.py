@@ -989,6 +989,34 @@ class TestSparkAdapter(unittest.TestCase):
         self.assertEqual(schema_relation.database, "silver_lh_ita")
         self.assertEqual(captured_databases, ["silver_lh_ita"])
 
+    def test_get_catalog_schemas_keeps_distinct_databases_before_connection_open(self):
+        config = self._get_target_livy(self.project_cfg)
+        adapter = FabricSparkAdapter(config, self.mp_context)
+        adapter.config.credentials.lakehouse = "dbtsparktest"
+        adapter.config.credentials.schema = "dbo"
+        adapter.config.credentials.lakehouse_schemas_enabled = False
+
+        rel_cfg_ws1 = mock.Mock()
+        rel_cfg_ws1.database = "silver_lh_ita"
+        rel_cfg_ws1.schema = "finance"
+        rel_cfg_ws1.identifier = "ws1_finance_stg_account"
+        rel_cfg_ws1.quoting_dict = {}
+        rel_cfg_ws1.config = {}
+
+        rel_cfg_ws2 = mock.Mock()
+        rel_cfg_ws2.database = "gold_lh_ita"
+        rel_cfg_ws2.schema = "finance"
+        rel_cfg_ws2.identifier = "ws2_finance_dim_account"
+        rel_cfg_ws2.quoting_dict = {}
+        rel_cfg_ws2.config = {}
+
+        schema_map = adapter._get_catalog_schemas([rel_cfg_ws1, rel_cfg_ws2])
+
+        self.assertSetEqual(
+            {info.database for info in schema_map.keys()},
+            {"silver_lh_ita", "gold_lh_ita"},
+        )
+
     def test_get_one_catalog_skips_relations_from_different_database(self):
         config = self._get_target_livy(self.project_cfg)
         adapter = FabricSparkAdapter(config, self.mp_context)

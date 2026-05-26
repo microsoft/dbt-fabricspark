@@ -1011,3 +1011,32 @@ class TestSparkAdapter(unittest.TestCase):
 
         get_columns_mock.assert_not_called()
         self.assertEqual(len(table.rows), 0)
+
+    def test_get_one_catalog_keeps_matching_relation_database(self):
+        config = self._get_target_livy(self.project_cfg)
+        adapter = FabricSparkAdapter(config, self.mp_context)
+        adapter.config.credentials.lakehouse_schemas_enabled = True
+        matching_relation = FabricSparkRelation.create(
+            database="silver_lh_ita",
+            schema="finance",
+            identifier="stg_account",
+            type=RelationType.Table,
+        )
+        info_schema = mock.Mock(database="silver_lh_ita")
+        captured_databases = []
+
+        def _capture_relation_db(rel):
+            captured_databases.append(rel.database)
+            return []
+
+        with (
+            mock.patch.object(
+                adapter, "list_relations_without_caching", return_value=[matching_relation]
+            ),
+            mock.patch.object(
+                adapter, "_get_columns_for_catalog", side_effect=_capture_relation_db
+            ),
+        ):
+            adapter._get_one_catalog(info_schema, {"finance"}, frozenset())
+
+        self.assertEqual(captured_databases, ["silver_lh_ita"])

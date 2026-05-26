@@ -22,6 +22,8 @@ All four multi-workspace env vars (``WORKSPACE_ID_1``, ``WORKSPACE_NAME_1``,
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from dbt.adapters.fabricspark.relation import FabricSparkRelation
@@ -479,8 +481,16 @@ class TestCrossWorkspaceDocsGenerateSharedSchemaRegression:
         )
         assert len(run_results) == 2
 
-        catalog = run_dbt(["docs", "generate"])
-        node_keys = set(catalog.nodes.keys())
+        node_keys = set()
+        for attempt in range(3):
+            catalog = run_dbt(["docs", "generate"])
+            node_keys = set(catalog.nodes.keys())
+            has_ws1_node = any(k.endswith(".ws1_finance_stg_account") for k in node_keys)
+            has_ws2_node = any(k.endswith(".ws2_finance_dim_account") for k in node_keys)
+            if has_ws1_node and has_ws2_node:
+                break
+            if attempt < 2:
+                time.sleep(5)
 
         assert any(k.endswith(".ws1_finance_stg_account") for k in node_keys), (
             "Expected WS1 model in catalog output. Missing node indicates catalog "

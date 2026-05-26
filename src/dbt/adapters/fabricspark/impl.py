@@ -720,13 +720,34 @@ class FabricSparkAdapter(SQLAdapter):
             )
 
         database = information_schema.database
-        if not self.Relation.get_default_include_policy().database:
+        schemas_enabled = getattr(self.config.credentials, "lakehouse_schemas_enabled", None)
+        if schemas_enabled is False:
+            database = None
+        elif schemas_enabled is None and not self.Relation.get_default_include_policy().database:
             database = None
         logger.debug(f"database name is {database}")
         schema = list(schemas)[0]
 
+        schema_relation = self.Relation.create(database=database, schema=schema, identifier=schema)
+        if database:
+            schema_relation = schema_relation.include(database=True, schema=True, identifier=True)
+
         columns: List[Dict[str, Any]] = []
-        for relation in self.list_relations(database, schema):
+        for relation in self.list_relations_without_caching(schema_relation):
+            if (
+                database
+                and relation.database
+                and relation.database.casefold() != str(database).casefold()
+            ):
+                logger.debug(
+                    "Skipping relation {} while cataloging {}.{} due to database mismatch",
+                    str(relation),
+                    database,
+                    schema,
+                )
+                continue
+            if database and not relation.database:
+                relation = relation.incorporate(path={"database": database})
             logger.debug("Getting table schema for relation {}", str(relation))
             columns_to_add = self._get_columns_for_catalog(relation)
             columns.extend(columns_to_add)

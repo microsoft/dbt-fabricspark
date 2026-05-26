@@ -419,6 +419,80 @@ class TestCrossWorkspace4PartWriteCTAS:
 
 
 # ---------------------------------------------------------------------------
+# Regression: docs generate with shared schema names across WS1/WS2 lakehouses
+# ---------------------------------------------------------------------------
+
+_SHARED_SCHEMA_NAME = "finance"
+
+WS1_SHARED_SCHEMA_MODEL_SQL = """
+{{ config(
+    materialized='table',
+    schema=var('shared_schema_name')
+) }}
+
+select 1 as id, 'silver' as layer
+"""
+
+WS2_SHARED_SCHEMA_MODEL_SQL = """
+{{ config(
+    materialized='table',
+    file_format='delta',
+    workspace_name=var('ws2_workspace_name'),
+    database=var('ws2_lakehouse_name'),
+    schema=var('shared_schema_name')
+) }}
+
+select 1 as id, 'gold' as layer
+"""
+
+
+class TestCrossWorkspaceDocsGenerateSharedSchemaRegression:
+    @pytest.fixture(scope="class", autouse=True)
+    def _skip_unless_schema_enabled(self, is_schema_enabled):
+        if not is_schema_enabled:
+            pytest.skip(
+                "Cross-workspace 4-part naming is only supported on schema-enabled "
+                "lakehouses (Fabric Livy limitation)."
+            )
+
+    @pytest.fixture(scope="class")
+    def project_config_update(self, ws2_workspace_name, ws2_lakehouse_name):
+        return {
+            "name": "cross_workspace_docs_generate_shared_schema",
+            "vars": {
+                "ws2_workspace_name": ws2_workspace_name,
+                "ws2_lakehouse_name": ws2_lakehouse_name,
+                "shared_schema_name": _SHARED_SCHEMA_NAME,
+            },
+        }
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {
+            "ws1_finance_stg_account.sql": WS1_SHARED_SCHEMA_MODEL_SQL,
+            "ws2_finance_dim_account.sql": WS2_SHARED_SCHEMA_MODEL_SQL,
+        }
+
+    def test_docs_generate_handles_shared_schema_names_across_lakehouses(self, project):
+        run_results = run_dbt(
+            ["run", "--select", "ws1_finance_stg_account", "ws2_finance_dim_account"]
+        )
+        assert len(run_results) == 2
+
+        catalog = run_dbt(["docs", "generate"])
+        node_keys = set(catalog.nodes.keys())
+
+        assert any(k.endswith(".ws1_finance_stg_account") for k in node_keys), (
+            "Expected WS1 model in catalog output. Missing node indicates catalog "
+            "introspection used the wrong lakehouse/schema pairing."
+        )
+        assert any(k.endswith(".ws2_finance_dim_account") for k in node_keys), (
+            "Expected WS2 model in catalog output. Missing node indicates catalog "
+            "introspection used the wrong lakehouse/schema pairing."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Positive: cross-workspace WRITE via incremental materialization
 # (initial CTAS + subsequent MERGE INTO across the workspace boundary)
 # ---------------------------------------------------------------------------

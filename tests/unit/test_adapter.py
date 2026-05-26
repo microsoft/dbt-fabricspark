@@ -958,3 +958,56 @@ class TestSparkAdapter(unittest.TestCase):
         self.assertEqual(relations[1].type, RelationType.MaterializedView)
         self.assertEqual(relations[2].type, RelationType.View)
         self.assertEqual(relations[3].type, RelationType.Table)
+
+    def test_get_one_catalog_applies_database_to_unqualified_relations(self):
+        """Catalog DESCRIBE must stay on the info-schema database."""
+        config = self._get_target_livy(self.project_cfg)
+        adapter = FabricSparkAdapter(config, self.mp_context)
+        adapter.config.credentials.lakehouse_schemas_enabled = True
+        relation = FabricSparkRelation.create(
+            database=None, schema="finance", identifier="stg_account", type=RelationType.Table
+        )
+        info_schema = mock.Mock(database="silver_lh_ita")
+        captured_databases = []
+
+        def _capture_relation_db(rel):
+            captured_databases.append(rel.database)
+            return []
+
+        with (
+            mock.patch.object(
+                adapter, "list_relations_without_caching", return_value=[relation]
+            ) as list_relations_mock,
+            mock.patch.object(
+                adapter, "_get_columns_for_catalog", side_effect=_capture_relation_db
+            ),
+        ):
+            adapter._get_one_catalog(info_schema, {"finance"}, frozenset())
+
+        schema_relation = list_relations_mock.call_args.args[0]
+        self.assertTrue(schema_relation.include_policy.database)
+        self.assertEqual(schema_relation.database, "silver_lh_ita")
+        self.assertEqual(captured_databases, ["silver_lh_ita"])
+
+    def test_get_one_catalog_skips_relations_from_different_database(self):
+        config = self._get_target_livy(self.project_cfg)
+        adapter = FabricSparkAdapter(config, self.mp_context)
+        adapter.config.credentials.lakehouse_schemas_enabled = True
+        wrong_db_relation = FabricSparkRelation.create(
+            database="gold_lh_ita",
+            schema="finance",
+            identifier="stg_account",
+            type=RelationType.Table,
+        )
+        info_schema = mock.Mock(database="silver_lh_ita")
+
+        with (
+            mock.patch.object(
+                adapter, "list_relations_without_caching", return_value=[wrong_db_relation]
+            ),
+            mock.patch.object(adapter, "_get_columns_for_catalog") as get_columns_mock,
+        ):
+            table = adapter._get_one_catalog(info_schema, {"finance"}, frozenset())
+
+        get_columns_mock.assert_not_called()
+        self.assertEqual(len(table.rows), 0)

@@ -2,7 +2,7 @@
 /**
  * CLI entry point: nudge Copilot agents on failed CI runs.
  *
- * Discovers Copilot PRs via `gh` CLI, checks for failed/cancelled/timed-out
+ * Discovers Copilot PRs via `gh` CLI, checks for failed/timed-out
  * workflow runs, and posts a comment telling the agent to read the logs and fix.
  *
  * Usage:

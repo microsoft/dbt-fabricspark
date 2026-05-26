@@ -6,7 +6,7 @@ GitHub Action automations for repo maintenance. All tools discover open Copilot 
 | ---------------------- | ---------------------------------------------------------------------------------------------------- |
 | **approve-workflow**   | Re-runs `action_required` workflow runs (GitHub UI's "Approve and run")                              |
 | **sync-main**          | Comments on PRs whose branches are behind `main`, telling Copilot to merge and re-test               |
-| **nudge**              | Detects failed/cancelled/timed-out CI runs and comments telling Copilot to read logs, fix, and retry |
+| **nudge**              | Detects failed/timed-out CI runs and comments telling Copilot to read logs, fix, and retry |
 | **compact-dependabot** | Fetches diffs from open Dependabot PRs and writes a combined patch file for review and application   |
 | **get-version-diffs**  | Generates a changelog of PR descriptions between the last version bump and HEAD of main              |
 

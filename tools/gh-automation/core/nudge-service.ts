@@ -1,7 +1,7 @@
 /**
  * Service for nudging Copilot agents on failed CI runs.
  *
- * Detects failed/cancelled/timed-out workflow runs on Copilot PRs
+ * Detects failed/timed-out workflow runs on Copilot PRs
  * and posts a comment telling the agent to read the logs and fix.
  */
 
@@ -9,7 +9,7 @@ import { GhClient } from './gh-client.js';
 import { Logger } from './logger.js';
 import type { NudgeResult, PullRequest, WorkflowRun, WorkflowRunsResponse } from './types.js';
 
-const NUDGE_CONCLUSIONS = new Set(['failure', 'cancelled', 'timed_out']);
+const NUDGE_CONCLUSIONS = new Set(['failure', 'timed_out']);
 
 function buildNudgeComment(run: WorkflowRun): string {
     return [
@@ -31,7 +31,7 @@ export class NudgeService {
         private readonly logger: Logger,
     ) {}
 
-    /** Get the latest failed/cancelled/timed-out workflow run for a branch, only if it's the most recent completed run. */
+    /** Get the latest failed/timed-out workflow run for a branch, only if it's the most recent completed run. */
     getLatestFailedRun(branch: string): WorkflowRun | null {
         const encoded = encodeURIComponent(branch);
         const response = this.client.execJson<WorkflowRunsResponse>([

@@ -8,7 +8,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Logger } from './logger.js';
 
-const DEFAULT_SLEEP_SECONDS = 60;
+const DEFAULT_SLEEP_SECONDS = 300;
 
 export class WatchRunner {
     private readonly intervalMs: number;

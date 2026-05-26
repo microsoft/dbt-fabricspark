@@ -425,8 +425,8 @@ class TestCrossWorkspace4PartWriteCTAS:
 # ---------------------------------------------------------------------------
 
 _SHARED_SCHEMA_NAME = "finance"
-_CATALOG_RETRY_ATTEMPTS = 3
-_CATALOG_RETRY_DELAY_SECONDS = 5
+_CATALOG_RETRY_ATTEMPTS = 6
+_CATALOG_RETRY_DELAY_SECONDS = 10
 
 WS1_SHARED_SCHEMA_MODEL_SQL = """
 {{ config(

@@ -958,3 +958,319 @@ class TestSparkAdapter(unittest.TestCase):
         self.assertEqual(relations[1].type, RelationType.MaterializedView)
         self.assertEqual(relations[2].type, RelationType.View)
         self.assertEqual(relations[3].type, RelationType.Table)
+
+
+class TestCatalogPerLakehouseScoping(unittest.TestCase):
+    """Regression coverage for issue #209.
+
+    ``dbt docs generate`` against a project that writes to multiple Fabric
+    lakehouses sharing schema names (e.g. both ``silver_lh`` and ``gold_lh``
+    have a ``finance`` schema) previously mis-attributed silver-layer models
+    to the gold lakehouse during catalog enumeration, surfacing as
+    ``[TABLE_OR_VIEW_NOT_FOUND]`` from ``DESCRIBE TABLE``.
+
+    The root cause: ``FabricSparkRelation.include_policy.database`` is
+    captured from the class-level ``_schemas_enabled`` flag at relation
+    creation time. The cache pre-population step in dbt-core (via
+    ``_get_cache_schemas`` → ``Relation.create_from``) may build the schema
+    listing relations during manifest parsing — before ``connections.open``
+    flips ``_schemas_enabled`` to True. The rendered SHOW SQL is then
+    database-unqualified, runs against the session-bound default lakehouse,
+    and the cache stores the returned tables under whichever
+    ``schema_relation.database`` the caller asked about — a silent
+    cross-lakehouse mis-attribution.
+
+    These tests cover the two defensive guards added to
+    ``FabricSparkAdapter``:
+
+    1. ``list_relations_without_caching`` forces
+       ``schema_relation.include_policy.database = True`` whenever the
+       active mode requires three-part naming and the incoming relation
+       lost that flag — so the SHOW SQL is always database-qualified.
+    2. ``_get_one_catalog`` skips any relation whose ``database`` does not
+       match the catalog cell being iterated for — belt-and-suspenders so a
+       stale cache entry can never DESCRIBE a table in the wrong lakehouse.
+    """
+
+    def setUp(self):
+        flags.STRICT_MODE = False
+        self.mp_context = get_context("spawn")
+
+        self.project_cfg = {
+            "name": "X",
+            "version": "0.1",
+            "profile": "test",
+            "project-root": "/tmp/dbt/does-not-exist",
+            "quoting": {"identifier": False, "schema": False},
+            "config-version": 2,
+        }
+
+    def _adapter(self, schema: str = "dbo", lakehouse: str = "silver_lh"):
+        config = config_from_parts_or_dicts(
+            self.project_cfg,
+            {
+                "outputs": {
+                    "test": {
+                        "type": "fabricspark",
+                        "method": "livy",
+                        "authentication": "CLI",
+                        "lakehouse": lakehouse,
+                        "workspaceid": "1de8390c-9aca-4790-bee8-72049109c0f4",
+                        "lakehouseid": "8c5bc260-bc3a-4898-9ada-01e433d461ba",
+                        "connect_retries": 0,
+                        "connect_timeout": 10,
+                        "threads": 1,
+                        "endpoint": "https://dailyapi.fabric.microsoft.com/v1",
+                        "schema": schema,
+                        "spark_config": {"name": "test-session"},
+                    }
+                },
+                "target": "test",
+            },
+        )
+        return FabricSparkAdapter(config, self.mp_context)
+
+    def test_list_relations_qualifies_database_when_schemas_enabled_flag_set(self):
+        """After connections.open flips ``_schemas_enabled``, list_relations
+        must always render database-qualified SHOW SQL — even when the
+        incoming relation was created earlier with ``include_policy.database
+        = False`` (e.g. during manifest parsing)."""
+        adapter = self._adapter()
+        # Simulate the post-open state: the class flag is True, but a
+        # relation built during parsing locked include_policy.database=False.
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            stale_relation = FabricSparkRelation.create(
+                database="gold_lh",
+                schema="finance",
+                identifier="anything",
+            ).include(database=False)
+            self.assertFalse(stale_relation.include_policy.database)
+            self.assertTrue(adapter._catalog_requires_database_scoping(stale_relation))
+
+            captured = {}
+
+            def fake_execute_macro(macro_name, kwargs):
+                # Capture the schema_relation seen by the macro to assert that
+                # list_relations_without_caching re-included the database
+                # segment before emitting the SHOW SQL.
+                captured["schema_relation"] = kwargs["schema_relation"]
+                return []
+
+            with mock.patch.object(adapter, "execute_macro", side_effect=fake_execute_macro):
+                adapter.list_relations_without_caching(stale_relation)
+
+            rendered = captured["schema_relation"]
+            self.assertTrue(rendered.include_policy.database)
+            self.assertEqual(rendered.database, "gold_lh")
+            self.assertEqual(rendered.schema, "finance")
+
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_list_relations_qualifies_database_via_parse_time_fallback(self):
+        """When ``_schemas_enabled`` is still False but ``schema != lakehouse``
+        in profiles.yml (the parse-time fallback used by
+        ``generate_schema_name``), database scoping must still be enforced —
+        the credentials reliably signal schema-enabled mode even before
+        connections.open finishes."""
+        # Schema 'dbo' != lakehouse 'silver_lh' → fallback should trigger.
+        adapter = self._adapter(schema="dbo", lakehouse="silver_lh")
+        # Confirm we are testing the pre-open state.
+        self.assertFalse(FabricSparkRelation._schemas_enabled)
+
+        stale_relation = FabricSparkRelation.create(
+            database="gold_lh",
+            schema="finance",
+            identifier="anything",
+        ).include(database=False)
+        self.assertTrue(adapter._catalog_requires_database_scoping(stale_relation))
+
+        captured = {}
+
+        def fake_execute_macro(macro_name, kwargs):
+            captured["schema_relation"] = kwargs["schema_relation"]
+            return []
+
+        with mock.patch.object(adapter, "execute_macro", side_effect=fake_execute_macro):
+            adapter.list_relations_without_caching(stale_relation)
+
+        rendered = captured["schema_relation"]
+        self.assertTrue(rendered.include_policy.database)
+        self.assertEqual(rendered.database, "gold_lh")
+
+    def test_list_relations_does_not_qualify_in_no_schema_mode(self):
+        """In genuine no-schema mode (``schema == lakehouse``, no flag set),
+        the SHOW SQL must remain database-unqualified — three-part naming is
+        not supported against non-schema lakehouses."""
+        adapter = self._adapter(schema="silver_lh", lakehouse="silver_lh")
+        self.assertFalse(FabricSparkRelation._schemas_enabled)
+
+        relation = FabricSparkRelation.create(
+            database="silver_lh",
+            schema="silver_lh",
+            identifier="x",
+        ).include(database=False)
+        self.assertFalse(adapter._catalog_requires_database_scoping(relation))
+
+        captured = {}
+
+        def fake_execute_macro(macro_name, kwargs):
+            captured["schema_relation"] = kwargs["schema_relation"]
+            return []
+
+        with mock.patch.object(adapter, "execute_macro", side_effect=fake_execute_macro):
+            adapter.list_relations_without_caching(relation)
+
+        # include_policy untouched — macro keeps emitting two-part naming.
+        self.assertFalse(captured["schema_relation"].include_policy.database)
+
+    def test_list_relations_preserves_already_qualified_policy(self):
+        """A relation already carrying ``include_policy.database=True`` must
+        pass through unchanged — the fix only patches the stale case."""
+        adapter = self._adapter()
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            relation = FabricSparkRelation.create(
+                database="gold_lh",
+                schema="finance",
+                identifier="x",
+            )
+            self.assertTrue(relation.include_policy.database)
+
+            captured = {}
+
+            def fake_execute_macro(macro_name, kwargs):
+                captured["schema_relation"] = kwargs["schema_relation"]
+                return []
+
+            with mock.patch.object(adapter, "execute_macro", side_effect=fake_execute_macro):
+                adapter.list_relations_without_caching(relation)
+
+            # Same identity / policy preserved.
+            self.assertIs(captured["schema_relation"], relation)
+            self.assertTrue(captured["schema_relation"].include_policy.database)
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_get_one_catalog_skips_relations_with_mismatched_database(self):
+        """If a stale cache entry lists a silver-layer model under the gold
+        lakehouse, _get_one_catalog must skip it so DESCRIBE TABLE never
+        runs against the wrong lakehouse."""
+        from dbt.adapters.base.relation import InformationSchema
+
+        adapter = self._adapter()
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            # Three relations: one matches the gold catalog cell (kept), one
+            # mis-attributed silver model (must be skipped), one unqualified
+            # (kept, since the listing returned it under no database).
+            kept = FabricSparkRelation.create(
+                database="gold_lh",
+                schema="finance",
+                identifier="dim_account",
+                type=FabricSparkRelation.get_relation_type.Table,
+            )
+            stale = FabricSparkRelation.create(
+                database="silver_lh",
+                schema="finance",
+                identifier="stg_account",
+                type=FabricSparkRelation.get_relation_type.Table,
+            )
+
+            with (
+                mock.patch.object(adapter, "list_relations", return_value=[kept, stale]),
+                mock.patch.object(
+                    adapter, "_get_columns_for_catalog", return_value=[]
+                ) as columns_for,
+            ):
+                # Build the information_schema for the gold cell.
+                gold_relation = FabricSparkRelation.create(
+                    database="gold_lh",
+                    schema="finance",
+                    identifier="placeholder",
+                )
+                info_schema = InformationSchema.from_relation(gold_relation, None)
+                adapter._get_one_catalog(info_schema, {"finance"}, frozenset())
+
+            described = [call.args[0].identifier for call in columns_for.call_args_list]
+            self.assertIn("dim_account", described)
+            self.assertNotIn(
+                "stg_account",
+                described,
+                "Silver-layer relation must not be DESCRIBE'd against the "
+                "gold lakehouse during gold's catalog iteration (issue #209).",
+            )
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_get_one_catalog_database_mismatch_is_case_insensitive(self):
+        """Database comparison must be case-insensitive — Fabric preserves
+        the original casing of lakehouse names through the cache, but two
+        relations differing only in case still refer to the same lakehouse."""
+        from dbt.adapters.base.relation import InformationSchema
+
+        adapter = self._adapter()
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            relation = FabricSparkRelation.create(
+                database="Gold_LH",
+                schema="finance",
+                identifier="dim_account",
+                type=FabricSparkRelation.get_relation_type.Table,
+            )
+            with (
+                mock.patch.object(adapter, "list_relations", return_value=[relation]),
+                mock.patch.object(
+                    adapter, "_get_columns_for_catalog", return_value=[]
+                ) as columns_for,
+            ):
+                cell = FabricSparkRelation.create(
+                    database="gold_lh",
+                    schema="finance",
+                    identifier="x",
+                )
+                info_schema = InformationSchema.from_relation(cell, None)
+                adapter._get_one_catalog(info_schema, {"finance"}, frozenset())
+
+            # Same lakehouse (case-only difference) → not skipped.
+            self.assertEqual(columns_for.call_count, 1)
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_catalog_schema_map_keeps_same_schema_different_database_distinct(self):
+        """``_get_catalog_schemas`` must keep ``(silver_lh, finance)`` and
+        ``(gold_lh, finance)`` as separate entries — otherwise the catalog
+        executor only spawns one future and the two lakehouses collide."""
+        from dbt.adapters.contracts.relation import RelationConfig
+
+        adapter = self._adapter()
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            # Mock relation configs with shared schema, distinct databases.
+            silver_cfg = mock.MagicMock(spec=RelationConfig)
+            silver_cfg.database = "silver_lh"
+            silver_cfg.schema = "finance"
+            silver_cfg.identifier = "stg_account"
+            silver_cfg.quoting_dict = {}
+            silver_cfg.config = mock.MagicMock()
+            silver_cfg.config.get = mock.MagicMock(return_value=None)
+            silver_cfg.catalog_name = None
+
+            gold_cfg = mock.MagicMock(spec=RelationConfig)
+            gold_cfg.database = "gold_lh"
+            gold_cfg.schema = "finance"
+            gold_cfg.identifier = "dim_account"
+            gold_cfg.quoting_dict = {}
+            gold_cfg.config = mock.MagicMock()
+            gold_cfg.config.get = mock.MagicMock(return_value=None)
+            gold_cfg.catalog_name = None
+
+            schema_map = adapter._get_catalog_schemas([silver_cfg, gold_cfg])
+
+            databases = sorted(info.database for info in schema_map.keys())
+            self.assertEqual(databases, ["gold_lh", "silver_lh"])
+            for schemas in schema_map.values():
+                self.assertEqual(schemas, {"finance"})
+        finally:
+            FabricSparkRelation._schemas_enabled = False

@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.12.4
+
+### Bug Fixes
+
+- Fixed `dbt docs generate` cross-attributing models across lakehouses with shared schema names. When a project wrote to multiple schema-enabled Fabric lakehouses that each defined the same schema (e.g. both `silver_lh` and `gold_lh` have a `finance` schema), the catalog enumeration tried to `DESCRIBE` silver-layer models against the gold lakehouse, raising `[TABLE_OR_VIEW_NOT_FOUND]` even though the manifest correctly resolved each model. Root cause: `FabricSparkRelation.include_policy.database` is captured at instance creation time from the class-level `_schemas_enabled` flag, which only flips to `True` inside `connections.open` — relations built earlier (during cache pre-population) locked in `database=False`, so the rendered `SHOW TABLE EXTENDED IN <schema> LIKE '*'` ran against the session-bound default catalog and the cache stored the returned tables under the wrong lakehouse key. `FabricSparkAdapter.list_relations_without_caching` now re-includes the database segment whenever the active mode requires three-part naming, and `_get_one_catalog` defensively skips any cached relation whose database does not match the catalog cell being iterated for ([#209](https://github.com/microsoft/dbt-fabricspark/issues/209))
+
+---
+
 ## v1.12.3
 
 ### Bug Fixes

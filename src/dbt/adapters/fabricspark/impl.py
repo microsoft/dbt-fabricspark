@@ -756,10 +756,7 @@ class FabricSparkAdapter(SQLAdapter):
             )
 
         database = information_schema.database
-        schemas_enabled = getattr(self.config.credentials, "lakehouse_schemas_enabled", None)
-        if schemas_enabled is False or (
-            schemas_enabled is None and not self.Relation.get_default_include_policy().database
-        ):
+        if not self._catalog_needs_database_scoping():
             database = None
         logger.debug(f"database name is {database}")
         schema = list(schemas)[0]

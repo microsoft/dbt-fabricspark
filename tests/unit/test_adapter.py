@@ -1091,3 +1091,30 @@ class TestSparkAdapter(unittest.TestCase):
 
         schema_relation = list_mock.call_args.args[0]
         self.assertEqual(schema_relation.workspace, "My WS2")
+
+    def test_get_one_catalog_keeps_database_for_workspace_map_before_schema_detection(self):
+        config = self._get_target_livy(self.project_cfg)
+        adapter = FabricSparkAdapter(config, self.mp_context)
+        adapter.config.credentials.lakehouse_schemas_enabled = None
+        adapter.config.credentials.lakehouse = "silver_lh_ita"
+        adapter.config.credentials.schema = "finance"
+        info_schema = mock.Mock(database="gold_lh_ita")
+
+        rel_cfg_ws2 = mock.Mock()
+        rel_cfg_ws2.database = "gold_lh_ita"
+        rel_cfg_ws2.schema = "finance"
+        rel_cfg_ws2.identifier = "ws2_finance_dim_account"
+        rel_cfg_ws2.quoting_dict = {}
+        rel_cfg_ws2.config = {"workspace_name": "My WS2"}
+
+        workspace_map = adapter._get_catalog_workspace_map([rel_cfg_ws2])
+
+        with mock.patch.object(
+            adapter, "list_relations_without_caching", return_value=[]
+        ) as list_mock:
+            adapter._get_one_catalog(info_schema, {"finance"}, workspace_map)
+
+        schema_relation = list_mock.call_args.args[0]
+        self.assertEqual(schema_relation.database, "gold_lh_ita")
+        self.assertTrue(schema_relation.include_policy.database)
+        self.assertEqual(schema_relation.workspace, "My WS2")

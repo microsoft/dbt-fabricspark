@@ -477,11 +477,37 @@ class TestCrossWorkspaceDocsGenerateSharedSchemaRegression:
             "ws2_finance_dim_account.sql": WS2_SHARED_SCHEMA_MODEL_SQL,
         }
 
-    def test_docs_generate_handles_shared_schema_names_across_lakehouses(self, project):
+    def _wait_for_ws2_model_visibility(
+        self, project, ws2_workspace_name: str, ws2_lakehouse_name: str
+    ) -> None:
+        sql = (
+            "select count(*) as n "
+            f"from `{ws2_workspace_name}`.`{ws2_lakehouse_name}`."
+            f"`{_SHARED_SCHEMA_NAME}`.ws2_finance_dim_account"
+        )
+        for retry_count in range(_CATALOG_RETRY_ATTEMPTS):
+            try:
+                rows = project.run_sql(sql, fetch="all")
+                if rows and int(rows[0][0]) == 1:
+                    return
+            except Exception:
+                # Cross-workspace catalog propagation can lag briefly after run.
+                pass
+            if retry_count < (_CATALOG_RETRY_ATTEMPTS - 1):
+                time.sleep(_CATALOG_RETRY_DELAY_SECONDS)
+        pytest.fail(
+            "Expected WS2 model to be queryable via cross-workspace relation before docs generate."
+        )
+
+    def test_docs_generate_handles_shared_schema_names_across_lakehouses(
+        self, project, ws2_workspace_name, ws2_lakehouse_name
+    ):
         run_results = run_dbt(
             ["run", "--select", "ws1_finance_stg_account", "ws2_finance_dim_account"]
         )
         assert len(run_results) == 2
+
+        self._wait_for_ws2_model_visibility(project, ws2_workspace_name, ws2_lakehouse_name)
 
         has_ws1_node = False
         has_ws2_node = False

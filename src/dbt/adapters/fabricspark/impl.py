@@ -707,12 +707,25 @@ class FabricSparkAdapter(SQLAdapter):
             for relation in relations
         ]
 
+    def _get_catalog_workspace_map(
+        self, relation_configs: Iterable[RelationConfig]
+    ) -> Dict[Tuple[Optional[str], str], Set[str]]:
+        workspace_map: Dict[Tuple[Optional[str], str], Set[str]] = {}
+        for relation in self._get_catalog_relations(relation_configs):
+            if not relation.schema or not relation.workspace:
+                continue
+            database_key = relation.database.casefold() if relation.database else None
+            schema_key = relation.schema.casefold()
+            workspace_map.setdefault((database_key, schema_key), set()).add(relation.workspace)
+        return workspace_map
+
     def get_catalog(
         self,
         relation_configs: Iterable[RelationConfig],
         used_schemas: FrozenSet[Tuple[str, str]],
     ) -> Tuple["agate.Table", List[Exception]]:
         schema_map = self._get_catalog_schemas(relation_configs)
+        workspace_map = self._get_catalog_workspace_map(relation_configs)
 
         with executor(self.config) as tpe:
             futures: List[Future["agate.Table"]] = []
@@ -725,7 +738,7 @@ class FabricSparkAdapter(SQLAdapter):
                             self._get_one_catalog,
                             info,
                             [schema],
-                            relation_configs,
+                            workspace_map,
                         )
                     )
             catalogs, exceptions = catch_as_completed(futures)
@@ -735,7 +748,7 @@ class FabricSparkAdapter(SQLAdapter):
         self,
         information_schema: InformationSchema,
         schemas: Set[str],
-        used_schemas: FrozenSet[Tuple[str, str]],
+        workspace_map: Optional[Dict[Tuple[Optional[str], str], Set[str]]],
     ) -> "agate.Table":
         if len(schemas) != 1:
             raise CompilationError(
@@ -750,8 +763,25 @@ class FabricSparkAdapter(SQLAdapter):
             database = None
         logger.debug(f"database name is {database}")
         schema = list(schemas)[0]
+        workspace = None
+        if workspace_map:
+            workspace_candidates = workspace_map.get(
+                (database.casefold() if isinstance(database, str) else None, schema.casefold()),
+                set(),
+            )
+            if len(workspace_candidates) == 1:
+                workspace = next(iter(workspace_candidates))
+            elif len(workspace_candidates) > 1:
+                logger.debug(
+                    "Multiple workspace candidates {} while cataloging {}.{}",
+                    workspace_candidates,
+                    database,
+                    schema,
+                )
 
-        schema_relation = self.Relation.create(database=database, schema=schema, identifier=schema)
+        schema_relation = self.Relation.create(
+            database=database, schema=schema, identifier=schema, workspace=workspace
+        )
         if database:
             schema_relation = schema_relation.include(database=True, schema=True, identifier=True)
 

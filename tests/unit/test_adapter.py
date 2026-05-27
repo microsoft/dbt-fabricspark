@@ -982,7 +982,7 @@ class TestSparkAdapter(unittest.TestCase):
                 adapter, "_get_columns_for_catalog", side_effect=_capture_relation_db
             ),
         ):
-            adapter._get_one_catalog(info_schema, {"finance"}, frozenset())
+            adapter._get_one_catalog(info_schema, {"finance"}, None)
 
         schema_relation = list_relations_mock.call_args.args[0]
         self.assertTrue(schema_relation.include_policy.database)
@@ -1035,7 +1035,7 @@ class TestSparkAdapter(unittest.TestCase):
             ),
             mock.patch.object(adapter, "_get_columns_for_catalog") as get_columns_mock,
         ):
-            table = adapter._get_one_catalog(info_schema, {"finance"}, frozenset())
+            table = adapter._get_one_catalog(info_schema, {"finance"}, None)
 
         get_columns_mock.assert_not_called()
         self.assertEqual(len(table.rows), 0)
@@ -1065,6 +1065,29 @@ class TestSparkAdapter(unittest.TestCase):
                 adapter, "_get_columns_for_catalog", side_effect=_capture_relation_db
             ),
         ):
-            adapter._get_one_catalog(info_schema, {"finance"}, frozenset())
+            adapter._get_one_catalog(info_schema, {"finance"}, None)
 
         self.assertEqual(captured_databases, ["silver_lh_ita"])
+
+    def test_get_one_catalog_uses_workspace_from_relation_configs(self):
+        config = self._get_target_livy(self.project_cfg)
+        adapter = FabricSparkAdapter(config, self.mp_context)
+        adapter.config.credentials.lakehouse_schemas_enabled = True
+        info_schema = mock.Mock(database="gold_lh_ita")
+
+        rel_cfg_ws2 = mock.Mock()
+        rel_cfg_ws2.database = "gold_lh_ita"
+        rel_cfg_ws2.schema = "finance"
+        rel_cfg_ws2.identifier = "ws2_finance_dim_account"
+        rel_cfg_ws2.quoting_dict = {}
+        rel_cfg_ws2.config = {"workspace_name": "My WS2"}
+
+        workspace_map = adapter._get_catalog_workspace_map([rel_cfg_ws2])
+
+        with mock.patch.object(
+            adapter, "list_relations_without_caching", return_value=[]
+        ) as list_mock:
+            adapter._get_one_catalog(info_schema, {"finance"}, workspace_map)
+
+        schema_relation = list_mock.call_args.args[0]
+        self.assertEqual(schema_relation.workspace, "My WS2")

@@ -429,9 +429,60 @@ class FabricSparkAdapter(SQLAdapter):
 
         return relations
 
+    def _catalog_requires_database_scoping(self, schema_relation: BaseRelation) -> bool:
+        """Return True when SHOW / DESCRIBE statements must be database-qualified.
+
+        ``FabricSparkRelation`` captures ``include_policy.database`` from the
+        class-level ``_schemas_enabled`` flag at instance creation time, and the
+        flag only flips to True inside ``connections.open`` after a Fabric REST
+        round-trip detects schema support on the session-bound lakehouse. Code
+        paths that construct catalog listing relations during manifest parsing
+        (e.g. ``_get_cache_schemas`` → ``Relation.create_from``) therefore lock
+        in ``database=False`` even when the rest of the run requires three-part
+        names. That mismatch is the root cause of issue #209: the rendered
+        ``SHOW TABLE EXTENDED IN <schema> LIKE '*'`` runs against the
+        session-bound default catalog, returns the wrong lakehouse's tables,
+        and the cache stores them under whichever ``schema_relation.database``
+        the caller asked about — silently mis-attributing tables across
+        lakehouses that share a schema name.
+
+        We treat database qualification as required when either the
+        class-level ``_schemas_enabled`` flag is set, the bound credentials
+        report schemas-enabled, or the parse-time fallback (``schema !=
+        lakehouse``) signals a schema-enabled lakehouse — mirroring the same
+        decision rule used by ``generate_schema_name`` in the macro layer.
+        """
+        if not schema_relation.database:
+            return False
+        if self.Relation._schemas_enabled:
+            return True
+        creds = getattr(self.config, "credentials", None)
+        if creds is None:
+            return False
+        if getattr(creds, "lakehouse_schemas_enabled", False):
+            return True
+        schema = getattr(creds, "schema", None)
+        lakehouse = getattr(creds, "lakehouse", None)
+        return bool(schema and lakehouse and schema != lakehouse)
+
     def list_relations_without_caching(self, schema_relation: BaseRelation) -> List[BaseRelation]:
         """Distinct Spark compute engines may not support the same SQL featureset. Thus, we must
         try different methods to fetch relation information."""
+
+        # Defend against stale ``include_policy`` snapshots: ``schema_relation``
+        # may have been constructed during manifest parsing — before
+        # ``connections.open`` detected schemas-enabled mode and flipped
+        # ``FabricSparkRelation._schemas_enabled`` to True. The include_policy
+        # is captured at relation-instantiation time, so a later flip does not
+        # update existing relations. Without this guard the rendered SHOW SQL
+        # would be database-unqualified and Fabric Spark would resolve it
+        # against the session-bound lakehouse — returning tables from the
+        # WRONG lakehouse when multiple lakehouses share a schema name and
+        # poisoning the relations cache (issue #209).
+        if not schema_relation.include_policy.database and self._catalog_requires_database_scoping(
+            schema_relation
+        ):
+            schema_relation = schema_relation.include(database=True)
 
         # In no_schema mode, use a prefix-specific LIKE pattern so Spark only
         # returns tables belonging to that prefix.
@@ -727,6 +778,23 @@ class FabricSparkAdapter(SQLAdapter):
 
         columns: List[Dict[str, Any]] = []
         for relation in self.list_relations(database, schema):
+            # Defensive guard against cache mis-attribution: drop any relation
+            # whose database does not match the catalog cell we are iterating
+            # for. Without this, a stale cache entry (e.g. populated before
+            # schemas-enabled detection finalized — see #209) could cause
+            # ``DESCRIBE TABLE`` to run against the wrong lakehouse, surfacing
+            # as ``[TABLE_OR_VIEW_NOT_FOUND]`` even though the manifest is
+            # correctly resolved.
+            if (
+                database
+                and relation.database
+                and relation.database.casefold() != str(database).casefold()
+            ):
+                logger.debug(
+                    f"Skipping relation {relation} during catalog of {database}.{schema}: "
+                    f"database mismatch ({relation.database!r} != {database!r})"
+                )
+                continue
             logger.debug("Getting table schema for relation {}", str(relation))
             columns_to_add = self._get_columns_for_catalog(relation)
             columns.extend(columns_to_add)

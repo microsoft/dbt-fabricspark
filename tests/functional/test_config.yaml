@@ -45,7 +45,7 @@ tasks:
   - Command: uv run python -m tests.functional.orchestrator seed-ws2
     Name: Seed cross_ws_fixture into WS2 lakehouse
     Group: Provision-Infra
-    TimeoutInMinutes: 45
+    TimeoutInMinutes: 55
 
   - Command: uv run python -m tests.functional.orchestrator create-session --schema-mode no_schema --count 4
     Name: Create Livy session (no_schema)

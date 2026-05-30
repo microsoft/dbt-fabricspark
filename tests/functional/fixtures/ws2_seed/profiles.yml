@@ -14,7 +14,8 @@ ws2_seed_fixture:
       reuse_session: false
       high_concurrency: false
       retry_all: true
-      connect_retries: 3
+      connect_retries: 1
       connect_timeout: 15
+      session_start_timeout: 1500
       spark_config:
         name: "dbt-ws2-cross-workspace-seed"

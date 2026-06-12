@@ -165,10 +165,10 @@
   {{ return(adapter.dispatch('persist_constraints', 'dbt')(relation, model)) }}
 {% endmacro %}
 
-/* TODO: alter table {{ relation }} change column {{ quoted_name }} set not null;
+{# TODO: alter table {{ relation }} change column {{ quoted_name }} set not null;
      is not supported in Fabric Runtime 1.2/Spark 3.4.1
     {% do alter_column_set_constraints(relation, model.columns) %}
-*/
+#}
 {% macro fabricspark__persist_constraints(relation, model) %}
   {%- set contract_config = config.get('contract') -%}
   {% if contract_config.enforced and config.get('file_format', 'delta') == 'delta' %}
@@ -194,7 +194,7 @@
 
 
 {% macro alter_column_set_constraints(relation, column_dict) %}
-  return(adapter.dispatch('alter_column_set_constraints', 'dbt')(relation, column_dict))
+  {{ return(adapter.dispatch('alter_column_set_constraints', 'dbt')(relation, column_dict)) }}
 {% endmacro %}
 
 {% macro fabricspark__alter_column_set_constraints(relation, column_dict) %}

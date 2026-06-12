@@ -72,8 +72,8 @@ uv run pytest tests/unit/test_adapter.py::TestSparkAdapter::test_profile_with_da
 
 ## Comments in code
 
-- Do **NOT** add flowery comments in the code all over the place. The code is self-descriptive, **ONLY** add comments when the code is doing something non-orthodox
-- Do **NOT** indirectly refer to Github issues in the actual code. The codebase has nothing to do with Github, it's self-contained.
+- Do **NOT** add flowery comments in the code all over the place. The code is self-descriptive, **ONLY** add comments when the code is doing something non-orthodox.
+- Do **NOT** refer to Github issues in the actual code. The codebase has nothing to do with Github, it's self-contained. Just because you were told to repro an issue on GitHub doesn't mean the code should link about it.
 
 ## Do not assume — ask first
 

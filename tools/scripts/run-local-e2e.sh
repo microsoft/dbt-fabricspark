@@ -47,7 +47,7 @@ echo "  Using wheel: ${WHEEL}"
 rm -rf "${VENV_DIR}"
 uv venv "${VENV_DIR}"
 source "${VENV_DIR}/bin/activate"
-uv pip install "${WHEEL}" dbt-core
+uv pip install "${WHEEL}" "dbt-core<2.0"
 
 cp -r "${JAFFLE_SHOP_SRC}" "${JAFFLE_SHOP_DIR}"
 sed -i '/+database:/d; /+schema:/d' "${JAFFLE_SHOP_DIR}/dbt_project.yml"

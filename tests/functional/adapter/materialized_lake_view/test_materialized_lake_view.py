@@ -175,20 +175,43 @@ _mlv_on_non_delta_sql = """
 select id, name from {{ ref('non_delta_view') }}
 """
 
-
-# ---------------------------------------------------------------------------
-# MLV model — schema-change regression coverage for issue #216.
-# Toggling the ``mlv_schema_v2`` var changes the projected column list,
-# which previously produced MLV_SCHEMA_MISMATCH on the second run because
-# the materialization relied on CREATE OR REPLACE instead of dropping the
-# existing MLV first.
-# ---------------------------------------------------------------------------
-
 _mlv_schema_change_sql = """
 {{ config(
     materialized='materialized_lake_view',
     mlv_on_demand=true,
-    mlv_comment='Functional test MLV for schema-change regression (#216)'
+    mlv_comment='Functional test MLV for schema-change regression (#216, on-demand)'
+) }}
+
+{% if var('mlv_schema_v2', false) %}
+select
+    id,
+    amount,
+    amount * 2 as amount_doubled
+from {{ ref('mlv_source_table') }}
+{% else %}
+select
+    id,
+    name,
+    amount
+from {{ ref('mlv_source_table') }}
+{% endif %}
+"""
+
+
+_mlv_schema_change_scheduled_sql = """
+{{ config(
+    materialized='materialized_lake_view',
+    mlv_schedule={
+        "enabled": true,
+        "configuration": {
+            "startDateTime": "2026-04-10T00:00:00",
+            "endDateTime": "2099-04-10T00:00:00",
+            "localTimeZoneId": "Central Standard Time",
+            "type": "Daily",
+            "times": ["06:00"]
+        }
+    },
+    mlv_comment='Functional test MLV for schema-change regression (#216, schedule-only)'
 ) }}
 
 {% if var('mlv_schema_v2', false) %}
@@ -439,3 +462,44 @@ class TestMLVSchemaChange:
             fetch="one",
         )
         assert int(v2_cols[0]) == 2 and int(v2_cols[1]) == 200 and int(v2_cols[2]) == 400
+
+
+@skip_no_schema
+class TestMLVSchemaChangeScheduled:
+    """Regression coverage for issue #216 comment 4688109488 — the schedule-only
+    path (mlv_on_demand=false + mlv_schedule set) reproduces MLV_SCHEMA_MISMATCH
+    too. Even without a client-side refresh call, Fabric rejects the schema
+    change inside CREATE OR REPLACE itself. The drop-before-recreate fix in the
+    materialization is applied before the on-demand vs schedule branching, so
+    this path must also be exercised against real Fabric.
+    """
+
+    @pytest.fixture(scope="class")
+    def project_config_update(self):
+        return {"name": "mlv_schema_change_scheduled_test"}
+
+    @pytest.fixture(scope="class")
+    def seeds(self):
+        return {"mlv_seed.csv": _seeds_csv}
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {
+            "mlv_source_table.sql": _source_table_sql,
+            "mlv_schema_change_scheduled.sql": _mlv_schema_change_scheduled_sql,
+        }
+
+    def test_rerun_with_changed_schema_succeeds_scheduled(self, project):
+        run_dbt(["seed"])
+        run_dbt(["run", "--select", "mlv_source_table"])
+
+        v1 = run_dbt(["run", "--select", "mlv_schema_change_scheduled"])
+        assert len(v1) == 1 and v1[0].status == "success"
+
+        v2 = run_dbt(
+            ["run", "--select", "mlv_schema_change_scheduled", "--vars", "{mlv_schema_v2: true}"]
+        )
+        assert len(v2) == 1 and v2[0].status == "success", (
+            f"Schedule-only schema-change re-run failed (regression of #216 "
+            f"comment 4688109488): {v2[0].message}"
+        )

@@ -109,8 +109,14 @@
         {% endif %}
     {% endfor %}
 
-    {#-- Drop existing object if it's a different type (table/view) --#}
-    {% if old_relation is not none and old_relation.type.value != 'materialized_view' %}
+    {#-- Always drop an existing relation before re-creating. Fabric MLVs do
+         not honour CREATE OR REPLACE as a true replacement: the previously
+         materialized data is retained and the new SELECT is refreshed against
+         it, which raises MLV_SCHEMA_MISMATCH whenever the schema changes (and
+         also fires on schedule-only models, before any refresh API call). The
+         documented Fabric guidance is "delete the existing view and create a
+         new one" for any definition change. --#}
+    {% if old_relation is not none %}
         {{ log("Dropping " ~ old_relation.type ~ " " ~ old_relation.render() ~ " to replace with materialized lake view") }}
         {{ adapter.drop_relation(old_relation) }}
     {% endif %}

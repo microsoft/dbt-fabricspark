@@ -176,6 +176,37 @@ select id, name from {{ ref('non_delta_view') }}
 """
 
 
+# ---------------------------------------------------------------------------
+# MLV model — schema-change regression coverage for issue #216.
+# Toggling the ``mlv_schema_v2`` var changes the projected column list,
+# which previously produced MLV_SCHEMA_MISMATCH on the second run because
+# the materialization relied on CREATE OR REPLACE instead of dropping the
+# existing MLV first.
+# ---------------------------------------------------------------------------
+
+_mlv_schema_change_sql = """
+{{ config(
+    materialized='materialized_lake_view',
+    mlv_on_demand=true,
+    mlv_comment='Functional test MLV for schema-change regression (#216)'
+) }}
+
+{% if var('mlv_schema_v2', false) %}
+select
+    id,
+    amount,
+    amount * 2 as amount_doubled
+from {{ ref('mlv_source_table') }}
+{% else %}
+select
+    id,
+    name,
+    amount
+from {{ ref('mlv_source_table') }}
+{% endif %}
+"""
+
+
 # ===========================================================================
 # Happy-path test classes — split for xdist parallel distribution
 # ===========================================================================
@@ -354,3 +385,57 @@ class TestMLVNonDeltaSourceValidation:
         results = run_dbt(["run", "--select", "mlv_on_non_delta"], expect_pass=False)
         assert len(results) == 1
         assert results[0].status == "error"
+
+
+@skip_no_schema
+class TestMLVSchemaChange:
+    """Regression coverage for issue #216 — rerunning an MLV with a changed
+    SELECT schema must succeed.
+
+    Before the fix the materialization emitted ``CREATE OR REPLACE MATERIALIZED
+    LAKE VIEW`` against the existing MLV, which Fabric attempts to refresh
+    against the previously materialized state and rejects with
+    ``MLV_SCHEMA_MISMATCH`` whenever the new SELECT produces a different
+    schema. The fix drops the existing MLV before recreating it.
+    """
+
+    @pytest.fixture(scope="class")
+    def project_config_update(self):
+        return {"name": "mlv_schema_change_test"}
+
+    @pytest.fixture(scope="class")
+    def seeds(self):
+        return {"mlv_seed.csv": _seeds_csv}
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {
+            "mlv_source_table.sql": _source_table_sql,
+            "mlv_schema_change.sql": _mlv_schema_change_sql,
+        }
+
+    def test_rerun_with_changed_schema_succeeds(self, project):
+        """Create the MLV, then re-run with a different SELECT schema."""
+        run_dbt(["seed"])
+        run_dbt(["run", "--select", "mlv_source_table"])
+
+        v1 = run_dbt(["run", "--select", "mlv_schema_change"])
+        assert len(v1) == 1 and v1[0].status == "success"
+
+        v1_cols = project.run_sql(
+            f"select id, name, amount from {_fq_table(project, 'mlv_schema_change')} where id = 1",
+            fetch="one",
+        )
+        assert int(v1_cols[0]) == 1 and v1_cols[1] == "alice" and int(v1_cols[2]) == 100
+
+        v2 = run_dbt(["run", "--select", "mlv_schema_change", "--vars", "{mlv_schema_v2: true}"])
+        assert len(v2) == 1 and v2[0].status == "success", (
+            f"Schema-change re-run failed (regression of #216): {v2[0].message}"
+        )
+
+        v2_cols = project.run_sql(
+            f"select id, amount, amount_doubled from {_fq_table(project, 'mlv_schema_change')} "
+            "where id = 2",
+            fetch="one",
+        )
+        assert int(v2_cols[0]) == 2 and int(v2_cols[1]) == 200 and int(v2_cols[2]) == 400

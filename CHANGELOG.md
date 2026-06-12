@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.12.5
+
+### Bug Fixes
+
+- Fix `UnexpectedJinjaBlockDeprecation` (D023) emitted by `create_table_as.sql`: a stray `{% do %}` tag inside a C-style `/* … */` comment was being parsed as a top-level Jinja block. Switched the wrapper to a Jinja comment `{# … #}`. Added a unit-test regression that scans every macro file for `unexpected_block` warnings. ([#46](https://github.com/microsoft/dbt-fabricspark/issues/46))
+- Pin `dbt-core<2.0` in `tools/scripts/run-local-e2e.sh` so the local end-to-end harness keeps resolving a `fabricspark`-aware dbt-core (avoids the unrelated `2.0.0a1` alpha).
+- Fix latent typo in `alter_column_set_constraints` dispatcher macro (`create_table_as.sql`): the body was missing its `{{ … }}` wrap, so the macro emitted its own source as text instead of dispatching. Added unit guards: (a) the dispatcher now renders via `adapter.dispatch` correctly, and (b) `FabricSparkRelation` cannot silently re-introduce the legacy `Cannot set database in spark!` runtime check that v1.9.3 removed to enable schema-enabled lakehouses and cross-lakehouse writes. ([#46](https://github.com/microsoft/dbt-fabricspark/issues/46))
+
 ## v1.12.4
 
 ### Bug Fixes

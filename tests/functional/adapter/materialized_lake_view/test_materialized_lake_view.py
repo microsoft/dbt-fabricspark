@@ -177,12 +177,7 @@ select id, name from {{ ref('non_delta_view') }}
 
 
 # ---------------------------------------------------------------------------
-# MLV models — schema-evolution scenarios (mirror standalone repro #216).
-# v1 selects (id, name, amount); v2 selects (id, amount, amount * 2 as
-# amount_doubled). The "_with_flag" pair carries mlv_allow_schema_evolution
-# so the analyzer takes the notebook validation path; the "_no_flag" pair
-# leaves the flag off so the default DAG-flow validator rejects the v2
-# replace with MLV_SCHEMA_MISMATCH.
+# MLV models — schema-evolution scenarios
 # ---------------------------------------------------------------------------
 
 _mlv_alice_v1_with_flag_sql = """
@@ -406,9 +401,7 @@ class TestMLVNonDeltaSourceValidation:
 
 # ===========================================================================
 # Schema-evolution tests — exercise mlv_allow_schema_evolution against a
-# Fabric MLV whose definition changes between runs (alice/bob/charlie ->
-# id+amount+amount_doubled). Mirrors the standalone repro at
-# mdrakiburrahman/mlv-repro-216.
+# Fabric MLV whose definition changes between runs.
 # ===========================================================================
 
 

@@ -17,7 +17,7 @@ import os
 
 import pytest
 
-from dbt.tests.util import run_dbt
+from dbt.tests.util import run_dbt, write_file
 
 # ---------------------------------------------------------------------------
 # Skip guard — only run on schema-enabled lakehouses
@@ -173,6 +173,54 @@ _mlv_on_non_delta_sql = """
 ) }}
 
 select id, name from {{ ref('non_delta_view') }}
+"""
+
+
+# ---------------------------------------------------------------------------
+# MLV models — schema-evolution scenarios (mirror standalone repro #216).
+# v1 selects (id, name, amount); v2 selects (id, amount, amount * 2 as
+# amount_doubled). The "_with_flag" pair carries mlv_allow_schema_evolution
+# so the analyzer takes the notebook validation path; the "_no_flag" pair
+# leaves the flag off so the default DAG-flow validator rejects the v2
+# replace with MLV_SCHEMA_MISMATCH.
+# ---------------------------------------------------------------------------
+
+_mlv_alice_v1_with_flag_sql = """
+{{ config(
+    materialized='materialized_lake_view',
+    mlv_on_demand=true,
+    mlv_allow_schema_evolution=true
+) }}
+
+select id, name, amount from {{ ref('mlv_source_table') }}
+"""
+
+_mlv_alice_v2_with_flag_sql = """
+{{ config(
+    materialized='materialized_lake_view',
+    mlv_on_demand=true,
+    mlv_allow_schema_evolution=true
+) }}
+
+select id, amount, amount * 2 as amount_doubled from {{ ref('mlv_source_table') }}
+"""
+
+_mlv_alice_v1_no_flag_sql = """
+{{ config(
+    materialized='materialized_lake_view',
+    mlv_on_demand=true
+) }}
+
+select id, name, amount from {{ ref('mlv_source_table') }}
+"""
+
+_mlv_alice_v2_no_flag_sql = """
+{{ config(
+    materialized='materialized_lake_view',
+    mlv_on_demand=true
+) }}
+
+select id, amount, amount * 2 as amount_doubled from {{ ref('mlv_source_table') }}
 """
 
 
@@ -354,3 +402,112 @@ class TestMLVNonDeltaSourceValidation:
         results = run_dbt(["run", "--select", "mlv_on_non_delta"], expect_pass=False)
         assert len(results) == 1
         assert results[0].status == "error"
+
+
+# ===========================================================================
+# Schema-evolution tests — exercise mlv_allow_schema_evolution against a
+# Fabric MLV whose definition changes between runs (alice/bob/charlie ->
+# id+amount+amount_doubled). Mirrors the standalone repro at
+# mdrakiburrahman/mlv-repro-216.
+# ===========================================================================
+
+
+@skip_no_schema
+class TestMLVSchemaEvolutionAllowed:
+    """With mlv_allow_schema_evolution=true the analyzer takes the notebook
+    validation path and a CREATE OR REPLACE that swaps the projected columns
+    of an existing MLV succeeds."""
+
+    @pytest.fixture(scope="class")
+    def project_config_update(self):
+        return {"name": "mlv_schema_evol_allowed_test"}
+
+    @pytest.fixture(scope="class")
+    def seeds(self):
+        return {"mlv_seed.csv": _seeds_csv}
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {
+            "mlv_source_table.sql": _source_table_sql,
+            "mlv_alice.sql": _mlv_alice_v1_with_flag_sql,
+        }
+
+    def test_v2_replaces_v1_when_flag_enabled(self, project):
+        run_dbt(["seed"])
+        source_results = run_dbt(["run", "--select", "mlv_source_table"])
+        assert source_results[0].status == "success"
+
+        v1_results = run_dbt(["run", "--select", "mlv_alice"])
+        assert v1_results[0].status == "success"
+
+        v1_name = project.run_sql(
+            f"select name from {_fq_table(project, 'mlv_alice')} where id = 1",
+            fetch="one",
+        )
+        assert v1_name[0] == "alice"
+
+        write_file(
+            _mlv_alice_v2_with_flag_sql,
+            project.project_root,
+            "models",
+            "mlv_alice.sql",
+        )
+
+        v2_results = run_dbt(["run", "--select", "mlv_alice"])
+        assert v2_results[0].status == "success", (
+            f"v2 CREATE OR REPLACE failed with mlv_allow_schema_evolution=true: "
+            f"{v2_results[0].message}"
+        )
+
+        v2_row = project.run_sql(
+            f"select id, amount, amount_doubled from "
+            f"{_fq_table(project, 'mlv_alice')} where id = 1",
+            fetch="one",
+        )
+        assert tuple(int(v) for v in v2_row) == (1, 100, 200)
+
+
+@skip_no_schema
+class TestMLVSchemaEvolutionBlockedByDefault:
+    """Without mlv_allow_schema_evolution the analyzer takes the DAG-flow
+    validator and rejects the v2 CREATE OR REPLACE with MLV_SCHEMA_MISMATCH.
+    Locks in the conservative default so the flag never becomes a silent
+    no-op."""
+
+    @pytest.fixture(scope="class")
+    def project_config_update(self):
+        return {"name": "mlv_schema_evol_blocked_test"}
+
+    @pytest.fixture(scope="class")
+    def seeds(self):
+        return {"mlv_seed.csv": _seeds_csv}
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {
+            "mlv_source_table.sql": _source_table_sql,
+            "mlv_alice.sql": _mlv_alice_v1_no_flag_sql,
+        }
+
+    def test_v2_blocked_without_flag(self, project):
+        run_dbt(["seed"])
+        source_results = run_dbt(["run", "--select", "mlv_source_table"])
+        assert source_results[0].status == "success"
+
+        v1_results = run_dbt(["run", "--select", "mlv_alice"])
+        assert v1_results[0].status == "success"
+
+        write_file(
+            _mlv_alice_v2_no_flag_sql,
+            project.project_root,
+            "models",
+            "mlv_alice.sql",
+        )
+
+        v2_results = run_dbt(["run", "--select", "mlv_alice"], expect_pass=False)
+        assert len(v2_results) == 1
+        assert v2_results[0].status == "error"
+        assert "MLV_SCHEMA_MISMATCH" in (v2_results[0].message or ""), (
+            f"Expected MLV_SCHEMA_MISMATCH in error, got: {v2_results[0].message}"
+        )

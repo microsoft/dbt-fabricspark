@@ -162,6 +162,12 @@
         {{ sql }}
     {%- endcall -%}
 
+    {% if mlv_allow_schema_evolution %}
+        {%- call statement('mlv_reset_artifact_type') -%}
+            RESET trident.artifact.type
+        {%- endcall %}
+    {% endif %}
+
     {#-- Post-creation: on-demand refresh and/or schedule (failures are fatal) --#}
     {% if mlv_on_demand %}
         {{ log("Triggering on-demand MLV refresh...") }}

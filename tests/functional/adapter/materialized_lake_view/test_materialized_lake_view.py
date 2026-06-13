@@ -484,6 +484,8 @@ class TestMLVSchemaEvolutionBlockedByDefault:
         }
 
     def test_v2_blocked_without_flag(self, project):
+        project.run_sql("RESET trident.artifact.type")
+
         run_dbt(["seed"])
         source_results = run_dbt(["run", "--select", "mlv_source_table"])
         assert source_results[0].status == "success"

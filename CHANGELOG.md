@@ -2,6 +2,10 @@
 
 ## v1.12.5
 
+### Features
+
+- Added opt-in `mlv_allow_schema_evolution` config (default `false`) for the `materialized_lake_view` materialization. When `true`, the macro emits `SET trident.artifact.type = SynapseNotebook` before `CREATE OR REPLACE MATERIALIZED LAKE VIEW` so subsequent `dbt run` cycles can change the projected columns, source entities, partitions, properties, or DQ constraints of an existing MLV without hitting `MLV_SCHEMA_MISMATCH`. ([#216](https://github.com/microsoft/dbt-fabricspark/issues/216))
+
 ### Bug Fixes
 
 - Fix `UnexpectedJinjaBlockDeprecation` (D023) emitted by `create_table_as.sql`: a stray `{% do %}` tag inside a C-style `/* … */` comment was being parsed as a top-level Jinja block. Switched the wrapper to a Jinja comment `{# … #}`. Added a unit-test regression that scans every macro file for `unexpected_block` warnings. ([#46](https://github.com/microsoft/dbt-fabricspark/issues/46))

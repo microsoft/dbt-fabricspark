@@ -24,6 +24,10 @@
        tblproperties:      Dict of key-value pairs (optional)
        mlv_on_demand:      Trigger immediate refresh after creation (default: false)
        mlv_schedule:       Schedule config dict for periodic refresh (optional)
+       mlv_allow_schema_evolution:
+                           Allow CREATE OR REPLACE to change the column list, source
+                           entities, partitions, properties, or DQ constraints of an
+                           existing MLV (default: false).
 
      The target lakehouse ID for MLV API calls is resolved automatically
      from the ``database`` config (lakehouse name) via the Fabric REST API.
@@ -50,6 +54,7 @@
     {%- set tblproperties = config.get('tblproperties', none) -%}
     {%- set mlv_on_demand = config.get('mlv_on_demand', false) -%}
     {%- set mlv_schedule = config.get('mlv_schedule', none) -%}
+    {%- set mlv_allow_schema_evolution = config.get('mlv_allow_schema_evolution', false) -%}
 
     {#-- Resolve the target lakehouse ID from the database (lakehouse name) --#}
     {%- set target_lakehouse_name = database or target.lakehouse -%}
@@ -115,6 +120,15 @@
         {{ adapter.drop_relation(old_relation) }}
     {% endif %}
 
+    {#-- This configuration allows CREATE OR REPLACE to change the column list, 
+         source entities, partitions, properties, or DQ constraints
+         of an existing MLV. --#}
+    {% if mlv_allow_schema_evolution %}
+        {%- call statement('mlv_allow_schema_evolution') -%}
+            SET trident.artifact.type = SynapseNotebook
+        {%- endcall %}
+    {% endif %}
+
     {#-- Build the CREATE OR REPLACE statement --#}
     {%- call statement('main') -%}
         create or replace materialized lake view {{ target_relation }}
@@ -147,6 +161,12 @@
         AS
         {{ sql }}
     {%- endcall -%}
+
+    {% if mlv_allow_schema_evolution %}
+        {%- call statement('mlv_reset_artifact_type') -%}
+            RESET trident.artifact.type
+        {%- endcall %}
+    {% endif %}
 
     {#-- Post-creation: on-demand refresh and/or schedule (failures are fatal) --#}
     {% if mlv_on_demand %}

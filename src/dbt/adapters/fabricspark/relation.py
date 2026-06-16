@@ -110,7 +110,39 @@ class FabricSparkRelation(BaseRelation):
                     ws_name = None
             if ws_name:
                 kwargs["workspace"] = ws_name
-        return super().create_from(quoting, relation_config, **kwargs)
+        relation = super().create_from(quoting, relation_config, **kwargs)
+
+        if (
+            relation.database
+            and not relation.include_policy.database
+            and cls._identity_requires_database(quoting, relation)
+        ):
+            relation = relation.include(database=True)
+        return relation
+
+    @classmethod
+    def _identity_requires_database(cls, quoting, relation) -> bool:
+        """Mirror ``FabricSparkAdapter._catalog_requires_database_scoping``.
+
+        Treat the database (and, by extension, the workspace) as part of the
+        relation identity whenever the run is — or will be — schema-enabled, or
+        the model explicitly targets another workspace. ``workspace`` is only
+        valid against schema-enabled lakehouses (enforced at parse time by
+        ``validate_workspace_name_supported``), so its presence is a reliable
+        schema-enabled signal.
+        """
+        if cls._schemas_enabled:
+            return True
+        if getattr(relation, "workspace", None):
+            return True
+        creds = getattr(quoting, "credentials", None)
+        if creds is None:
+            return False
+        if getattr(creds, "lakehouse_schemas_enabled", False):
+            return True
+        schema = getattr(creds, "schema", None)
+        lakehouse = getattr(creds, "lakehouse", None)
+        return bool(schema and lakehouse and schema != lakehouse)
 
     def render(self) -> str:
         base = super().render()

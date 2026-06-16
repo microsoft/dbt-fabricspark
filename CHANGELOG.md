@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.12.6
+
+### Bug Fixes
+
+- Fixed a false `Compilation Error … dbt found two resources with the database representation` (`AmbiguousAliasError`) raised at `dbt parse`/`dbt compile` time when two models share the same `schema.alias` but target **different** Fabric lakehouses/workspaces via model-level `+database` / `+workspace_name`. dbt-core's `_check_resource_uniqueness` keys its dedupe map on `str(relation)`, but during parsing no Livy session is open, so `FabricSparkRelation._schemas_enabled` is still `False` and `include_policy.database` defaults to `False` — which dropped both the lakehouse and the workspace from the rendered identity, collapsing e.g. `wks_common.lh_common.dbo.d_company` and `wks_dwh.lh_dwh.dbo.d_company` to the same `` `dbo`.d_company `` key. `FabricSparkRelation.create_from` now forces the database segment into the relation identity whenever a schema-enabled signal applies (mirroring `_catalog_requires_database_scoping`: `_schemas_enabled`, `lakehouse_schemas_enabled`, the parse-time `schema != lakehouse` fallback, or a `workspace_name` set), so cross-lakehouse / cross-workspace models resolve to distinct identities while genuine same-target duplicates on non-schema lakehouses still collide as before. ([#221](https://github.com/microsoft/dbt-fabricspark/issues/221))
+
 ## v1.12.5
 
 ### Features

@@ -37,7 +37,7 @@
 
 {% materialization materialized_lake_view, adapter='fabricspark' -%}
     {%- set identifier = model['alias'] -%}
-    {%- set workspace_name = config.get('workspace_name') -%}
+    {%- set workspace_name = config.get('workspace_name') or target.workspace_name -%}
 
     {%- set old_relation = adapter.get_relation(database=database, schema=schema, identifier=identifier) -%}
     {%- set target_relation = api.Relation.create(
@@ -95,7 +95,7 @@
          ===================================================================== --#}
 
     {#-- Ensure the database/schema exists --#}
-    {% do ensure_database_exists(model.schema, database=model.database, workspace=model.config.get('workspace_name')) %}
+    {% do ensure_database_exists(model.schema, database=model.database, workspace=model.config.get('workspace_name') or target.workspace_name) %}
 
     {{ run_hooks(pre_hooks) }}
 

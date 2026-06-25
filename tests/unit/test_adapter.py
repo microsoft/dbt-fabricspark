@@ -658,6 +658,120 @@ class TestSparkAdapter(unittest.TestCase):
             "config() values flow through node.config rather than being silently ignored."
         )
 
+    def test_create_from_falls_back_to_creds_workspace_name(self):
+        """create_from uses profile-level workspace_name when model config doesn't set one."""
+        from dbt.adapters.contracts.relation import RelationConfig
+
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            config = config_from_parts_or_dicts(
+                self.project_cfg,
+                {
+                    "outputs": {
+                        "test": {
+                            "type": "fabricspark",
+                            "method": "livy",
+                            "authentication": "CLI",
+                            "lakehouse": "silver_lh",
+                            "schema": "dbo",
+                            "workspace_name": "profile-ws",
+                            "workspaceid": "1de8390c-9aca-4790-bee8-72049109c0f4",
+                            "lakehouseid": "8c5bc260-bc3a-4898-9ada-01e433d461ba",
+                            "connect_retries": 0,
+                            "connect_timeout": 10,
+                            "threads": 1,
+                            "endpoint": "https://dailyapi.fabric.microsoft.com/v1",
+                            "spark_config": {"name": "test-session"},
+                        }
+                    },
+                    "target": "test",
+                },
+            )
+            relation_config = mock.MagicMock(spec=RelationConfig)
+            relation_config.database = "silver_lh"
+            relation_config.schema = "dbo"
+            relation_config.identifier = "orders"
+            relation_config.quoting_dict = {}
+            relation_config.config = mock.MagicMock()
+            relation_config.config.get = mock.MagicMock(return_value=None)
+            relation_config.catalog_name = None
+
+            rel = FabricSparkRelation.create_from(config, relation_config)
+            assert rel.workspace == "profile-ws", (
+                "create_from should fall back to creds.workspace_name when model config is unset"
+            )
+            assert "`profile-ws`" in str(rel)
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_create_from_model_workspace_name_overrides_profile(self):
+        """Model config(workspace_name=...) takes precedence over the profile-level value."""
+        from dbt.adapters.contracts.relation import RelationConfig
+
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            config = config_from_parts_or_dicts(
+                self.project_cfg,
+                {
+                    "outputs": {
+                        "test": {
+                            "type": "fabricspark",
+                            "method": "livy",
+                            "authentication": "CLI",
+                            "lakehouse": "silver_lh",
+                            "schema": "dbo",
+                            "workspace_name": "profile-ws",
+                            "workspaceid": "1de8390c-9aca-4790-bee8-72049109c0f4",
+                            "lakehouseid": "8c5bc260-bc3a-4898-9ada-01e433d461ba",
+                            "connect_retries": 0,
+                            "connect_timeout": 10,
+                            "threads": 1,
+                            "endpoint": "https://dailyapi.fabric.microsoft.com/v1",
+                            "spark_config": {"name": "test-session"},
+                        }
+                    },
+                    "target": "test",
+                },
+            )
+            relation_config = mock.MagicMock(spec=RelationConfig)
+            relation_config.database = "silver_lh"
+            relation_config.schema = "dbo"
+            relation_config.identifier = "orders"
+            relation_config.quoting_dict = {}
+            relation_config.config = mock.MagicMock()
+            relation_config.config.get = mock.MagicMock(return_value="model-ws")
+            relation_config.catalog_name = None
+
+            rel = FabricSparkRelation.create_from(config, relation_config)
+            assert rel.workspace == "model-ws", (
+                "model config(workspace_name=...) must override profile-level workspace_name"
+            )
+            assert "`model-ws`" in str(rel)
+            assert "profile-ws" not in str(rel)
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_create_from_no_workspace_when_neither_set(self):
+        """create_from produces no workspace when neither model config nor profile sets one."""
+        from dbt.adapters.contracts.relation import RelationConfig
+
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            config = self._get_target_livy(self.project_cfg)
+            relation_config = mock.MagicMock(spec=RelationConfig)
+            relation_config.database = "dbtsparktest"
+            relation_config.schema = "dbtsparktest"
+            relation_config.identifier = "orders"
+            relation_config.quoting_dict = {}
+            relation_config.config = mock.MagicMock()
+            relation_config.config.get = mock.MagicMock(return_value=None)
+            relation_config.catalog_name = None
+
+            rel = FabricSparkRelation.create_from(config, relation_config)
+            assert rel.workspace is None
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
     def test_profile_with_schema(self):
         """Test that schema is accepted as user input and database is derived from lakehouse."""
         profile = {

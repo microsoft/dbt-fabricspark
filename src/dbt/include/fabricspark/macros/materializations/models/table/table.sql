@@ -6,7 +6,7 @@
        carry it through to the target relation so all downstream rendering
        (CTAS, drop_relation, schema pre-create, etc.) emits the 4-part name
        and Fabric Livy routes the DDL to the correct workspace catalog. --#}
-  {%- set workspace_name = config.get('workspace_name') -%}
+  {%- set workspace_name = config.get('workspace_name') or target.workspace_name -%}
 
   {%- set old_relation = adapter.get_relation(database=database, schema=schema, identifier=identifier) -%}
 

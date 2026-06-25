@@ -99,6 +99,9 @@ class FabricSparkRelation(BaseRelation):
         For nodes whose config sets ``workspace_name`` (top-level config key),
         we forward it as the ``workspace`` field on the resulting relation so
         ``render()`` emits a 4-part name.
+
+        When no model-level ``workspace_name`` is set, falls back to the
+        profile-level ``workspace_name`` from credentials (``target.workspace_name``).
         """
         if "workspace" not in kwargs:
             ws_name = None
@@ -108,6 +111,11 @@ class FabricSparkRelation(BaseRelation):
                     ws_name = cfg.get("workspace_name")
                 except Exception:
                     ws_name = None
+            # Fall back to profile-level workspace_name when model config doesn't set one.
+            if not ws_name:
+                creds = getattr(quoting, "credentials", None)
+                if creds is not None:
+                    ws_name = getattr(creds, "workspace_name", None)
             if ws_name:
                 kwargs["workspace"] = ws_name
         relation = super().create_from(quoting, relation_config, **kwargs)

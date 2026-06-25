@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+- Added `workspace_name` as an optional profile-level field in `profiles.yml`. When set on a target and the lakehouse has schemas enabled, all relations that do not set `config(workspace_name=...)` will automatically use the profile value as a 4-part name prefix (`\`workspace\`.\`lakehouse\`.\`schema\`.table`). Exposes `target.workspace_name` in Jinja for inspection in macros. Model-level `config(workspace_name=...)` still takes precedence. Silently ignored (with a warning) for non-schema-enabled lakehouses. ([#228](https://github.com/microsoft/dbt-fabricspark/issues/228))
+
 ## v1.12.6
 
 ### Bug Fixes

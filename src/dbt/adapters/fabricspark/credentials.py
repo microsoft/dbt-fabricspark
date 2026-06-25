@@ -66,6 +66,13 @@ class FabricSparkCredentials(Credentials):
     environmentId: Optional[str] = None
     session_id_file: Optional[str] = None
     reuse_session: bool = False  # When True, Fabric sessions are kept alive and reused across runs
+    # Profile-level default workspace for cross-workspace 4-part naming.
+    # When set and the target lakehouse is schema-enabled, any relation that
+    # does not set ``config(workspace_name=...)`` will be rendered with this
+    # workspace as a prefix, producing 4-part names automatically.
+    # Ignored (with a warning) when the lakehouse is not schema-enabled.
+    # Precedence: model config(workspace_name=...) > profile workspace_name > none.
+    workspace_name: Optional[str] = None
     # Default ``None`` so the adapter does NOT send
     # ``spark.livy.session.idle.timeout`` in the session ``conf``. Fabric
     # treats that key as session-immutable, so its presence (even when the
@@ -104,6 +111,7 @@ class FabricSparkCredentials(Credentials):
             f"client_secret='***', "
             f"credential_class={self.credential_class!r}, "
             f"credential_kwargs_keys={sorted(map(str, self.credential_kwargs.keys()))!r}, "
+            f"workspace_name={self.workspace_name!r}, "
             f"accessToken='***')"
         )
 
@@ -213,6 +221,14 @@ class FabricSparkCredentials(Credentials):
         self.lakehouse_schemas_enabled = "defaultSchema" in lakehouse_properties
         logger.debug(f"Lakehouse schemas enabled: {self.lakehouse_schemas_enabled}")
 
+        if not self.lakehouse_schemas_enabled and self.workspace_name:
+            logger.warning(
+                f"profile workspace_name={self.workspace_name!r} is set but the lakehouse "
+                f"'{self.lakehouse}' does not have schemas enabled — workspace_name will be "
+                f"ignored. Enable schemas on the lakehouse or remove workspace_name from the "
+                f"profile to suppress this warning."
+            )
+
         if self.lakehouse_schemas_enabled:
             if (
                 self.schema is not None
@@ -275,4 +291,4 @@ class FabricSparkCredentials(Credentials):
 
     def _connection_keys(self) -> Tuple[str, ...]:
         # Intentionally excludes client_secret, accessToken, tenant_id
-        return "workspaceid", "lakehouseid", "lakehouse", "endpoint", "schema"
+        return "workspaceid", "lakehouseid", "lakehouse", "endpoint", "schema", "workspace_name"

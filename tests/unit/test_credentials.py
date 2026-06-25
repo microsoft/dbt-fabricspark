@@ -453,3 +453,79 @@ def test_repr_masks_credential_kwargs_values() -> None:
     assert "token_url" in rendered
     assert "user_id" in rendered
     assert "my_pkg.auth.Cred" in rendered
+
+
+# --- Tests for profile-level workspace_name ---
+
+
+def test_workspace_name_defaults_to_none() -> None:
+    """workspace_name defaults to None when not set in the profile."""
+    credentials = FabricSparkCredentials(**_base_fabric_kwargs())
+    assert credentials.workspace_name is None
+
+
+def test_workspace_name_parses_from_profile() -> None:
+    """workspace_name is accepted as a profile field."""
+    credentials = FabricSparkCredentials(workspace_name="vd-domain-prod", **_base_fabric_kwargs())
+    assert credentials.workspace_name == "vd-domain-prod"
+
+
+def test_workspace_name_in_repr() -> None:
+    """workspace_name is visible in repr (it is not sensitive)."""
+    credentials = FabricSparkCredentials(workspace_name="my-ws", **_base_fabric_kwargs())
+    rendered = repr(credentials)
+    assert "my-ws" in rendered
+
+
+def test_workspace_name_in_connection_keys() -> None:
+    """workspace_name appears in _connection_keys() so it is shown in dbt debug."""
+    credentials = FabricSparkCredentials(workspace_name="my-ws", **_base_fabric_kwargs())
+    assert "workspace_name" in credentials._connection_keys()
+
+
+def test_apply_lakehouse_properties_warns_on_workspace_name_without_schemas() -> None:
+    """When workspace_name is set but the lakehouse is not schema-enabled, a warning is logged."""
+    from unittest import mock
+
+    credentials = FabricSparkCredentials(
+        workspace_name="vd-domain-prod",
+        schema="my_lakehouse",
+        **_base_fabric_kwargs(),
+    )
+    with mock.patch("dbt.adapters.fabricspark.credentials.logger") as mock_logger:
+        credentials.apply_lakehouse_properties({"oneLakeTablesPath": "..."})
+
+    assert credentials.lakehouse_schemas_enabled is False
+    mock_logger.warning.assert_called_once()
+    warning_msg = mock_logger.warning.call_args[0][0]
+    assert "workspace_name" in warning_msg
+    assert "ignored" in warning_msg
+
+
+def test_apply_lakehouse_properties_no_warning_when_workspace_name_unset() -> None:
+    """No warning is emitted when workspace_name is None (default)."""
+    from unittest import mock
+
+    credentials = FabricSparkCredentials(**_base_fabric_kwargs())
+    with mock.patch("dbt.adapters.fabricspark.credentials.logger") as mock_logger:
+        credentials.apply_lakehouse_properties({"oneLakeTablesPath": "..."})
+
+    mock_logger.warning.assert_not_called()
+
+
+def test_apply_lakehouse_properties_no_warning_when_schemas_enabled() -> None:
+    """No warning when workspace_name is set and schemas ARE enabled."""
+    from unittest import mock
+
+    credentials = FabricSparkCredentials(
+        workspace_name="vd-domain-prod",
+        schema="dbo",
+        **_base_fabric_kwargs(),
+    )
+    with mock.patch("dbt.adapters.fabricspark.credentials.logger") as mock_logger:
+        credentials.apply_lakehouse_properties(
+            {"defaultSchema": "dbo", "oneLakeTablesPath": "..."}
+        )
+
+    assert credentials.lakehouse_schemas_enabled is True
+    mock_logger.warning.assert_not_called()

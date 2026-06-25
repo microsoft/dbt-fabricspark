@@ -30,7 +30,7 @@
        For cross-workspace writes the workspace is forwarded so the
        rendered DDL is workspace-qualified
        (``CREATE DATABASE IF NOT EXISTS \`WS2\`.\`lh\`.\`schema\```). --#}
-  {% do ensure_database_exists(target_relation.schema, database=target_relation.database, workspace=config.get('workspace_name')) %}
+  {% do ensure_database_exists(target_relation.schema, database=target_relation.database, workspace=config.get('workspace_name') or target.workspace_name) %}
 
   {#-- Set Overwrite Mode --#}
   {%- if strategy in ['insert_overwrite', 'microbatch'] and partition_by -%}

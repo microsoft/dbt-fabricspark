@@ -300,6 +300,38 @@ The target schema (`marts` in `shared_lh` of `SharedWorkspace`) is created autom
 
 > **Schema-enabled lakehouses only.** Fabric Livy supports 4-part naming only against schema-enabled lakehouses. Setting `workspace_name` against a non-schema-enabled target raises a parse-time error.
 
+#### Profile-level default workspace
+
+Instead of setting `workspace_name` on every model, you can set it once in `profiles.yml` as a target-scoped default. When set, all relations in that target automatically use the workspace as a prefix — without any per-model config.
+
+```yaml
+# profiles.yml
+my_profile:
+  outputs:
+    prod:
+      type: fabricspark
+      workspace_name: "vd-domain-prod"   # default workspace for this target
+      lakehouse: silver_lh
+      schema: dbo
+      ...
+    dev:
+      type: fabricspark
+      workspace_name: "vd-ephemeral-dev"
+      ...
+```
+
+**Precedence (lowest → highest):**
+
+| Source | Example |
+|---|---|
+| No workspace (current default) | two- or three-part names |
+| Profile `workspace_name` | all relations in target get 4-part names |
+| Model `config(workspace_name=...)` | overrides the profile default for that model |
+
+The profile value is accessible in Jinja as `target.workspace_name`, so you can inspect or branch on it in macros.
+
+> **Schema-enabled lakehouses only.** If `workspace_name` is set in the profile but the target lakehouse does not have schemas enabled, the adapter logs a warning and ignores the value.
+
 #### How it works
 
 Your profile binds to **one workspace + lakehouse** — that's where the Livy session lives, and _every_ SQL statement is issued from that session. `workspace_name` is a rendering decoration applied to the relation; Fabric Livy then federates the statement through its metastore so a `SELECT` returns rows from the other workspace and a `CREATE TABLE AS SELECT` writes into the other workspace's lakehouse.
@@ -333,6 +365,7 @@ Each segment is independently backtick-quoted, so workspace names with spaces or
 | `lakehouseid`           | string | —                                     | Lakehouse UUID                                                                                                                                                                                                                                                                                                                                                                                            |
 | `lakehouse`             | string | —                                     | Lakehouse name                                                                                                                                                                                                                                                                                                                                                                                            |
 | `schema`                | string | —                                     | Schema name. Must equal `lakehouse` for non-schema lakehouses, must differ from `lakehouse` for schema-enabled (e.g., `dbo`)                                                                                                                                                                                                                                                                              |
+| `workspace_name`        | string | —                                     | Optional default workspace for cross-workspace 4-part naming. When set and the lakehouse has schemas enabled, all relations without a model-level `workspace_name` will be rendered with this workspace prefix. Ignored for non-schema lakehouses. Exposed as `target.workspace_name` in Jinja. |
 | `threads`               | int    | `1`                                   | Number of threads for parallel execution                                                                                                                                                                                                                                                                                                                                                                  |
 | **Authentication**      |        |                                       |                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `authentication`        | string | `CLI`                                 | Auth method: `CLI`, `SPN`, or `fabric_notebook`                                                                                                                                                                                                                                                                                                                                                           |

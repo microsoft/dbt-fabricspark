@@ -86,7 +86,9 @@
        remediation message. --#}
   {%- set ws_name = none -%}
   {%- if node is not none and node.config is not none -%}
-    {%- set ws_name = node.config.get('workspace_name') -%}
+    {%- set ws_name = node.config.get('workspace_name') or target.workspace_name -%}
+  {%- elif target.workspace_name -%}
+    {%- set ws_name = target.workspace_name -%}
   {%- endif -%}
   {%- if ws_name -%}
     {%- do adapter.validate_workspace_name_supported(

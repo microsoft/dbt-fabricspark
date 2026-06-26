@@ -37,6 +37,8 @@ prompts:
         hint: When true (default), each dbt thread gets its own REPL inside one underlying Livy session via Fabric's high-concurrency Livy API — statements from different threads run in parallel. When false, falls back to the legacy single-session-per-process mode where statements execute FIFO inside the default Spark scheduling pool. Has no effect in local mode.
         type: 'bool'
         default: true
+      workspace_name:
+        hint: Optional. Default workspace name for cross-workspace 4-part naming. When set and the target lakehouse has schemas enabled, all relations without an explicit model-level workspace_name will be prefixed with this workspace. Ignored for non-schema lakehouses. Precedence: model config(workspace_name=...) > this value.
   schema:
     hint: 'default schema that dbt will build objects in'
   threads:

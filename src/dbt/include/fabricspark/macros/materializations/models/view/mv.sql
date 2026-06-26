@@ -1,7 +1,7 @@
 {% materialization view, adapter='fabricspark' -%}
     {%- set identifier = model['alias'] -%}
     {%- set grant_config = config.get('grants') -%}
-    {%- set workspace_name = config.get('workspace_name') -%}
+    {%- set workspace_name = config.get('workspace_name') or target.workspace_name -%}
 
     {%- set old_relation = adapter.get_relation(database=database, schema=schema, identifier=identifier) -%}
     {%- set exists_as_view = (old_relation is not none and old_relation.is_view) -%}

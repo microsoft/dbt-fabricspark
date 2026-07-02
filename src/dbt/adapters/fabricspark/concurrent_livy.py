@@ -34,8 +34,10 @@ _TERMINAL_BAD_STATES = frozenset({"Dead", "Killed", "Failed", "Error"})
 
 _active_sessions_lock = threading.Lock()
 # All in-flight HighConcurrencySession instances across every dbt thread.
-# Used by the atexit handler to DELETE each HC id on process exit so REPL
-# slots free up promptly instead of waiting for Fabric's idle reaper.
+# On process exit the atexit handler DELETEs each HC id whose credentials do
+# NOT set reuse_session, freeing REPL slots promptly instead of waiting for
+# Fabric's idle reaper. reuse_session sessions are intentionally left alive so
+# the underlying Livy session stays warm for the next invocation.
 _active_sessions: "set[HighConcurrencySession]" = set()
 
 
@@ -678,9 +680,24 @@ class HighConcurrencySessionManager(LivyBackend):
         return self._connection  # type: ignore[return-value]
 
     def disconnect(self) -> None:  # type: ignore[override]
-        """Release this thread's HC id. The underlying Livy session lives on."""
+        """Release this thread's HC id, unless ``reuse_session`` is set.
+
+        With ``reuse_session=False`` (default) the HC session is deleted so the
+        REPL slot frees up immediately. With ``reuse_session=True`` the HC
+        session is left alive so the underlying Livy session stays warm for the
+        next dbt invocation (Fabric reaps it on ``session_idle_timeout``) —
+        deleting the last REPL would otherwise make Fabric tear the session
+        down straight away, defeating reuse. Mirrors the singleton backend's
+        ``_disconnect_impl``.
+        """
         if self._hc_session is not None:
-            self._hc_session.delete()
+            if not self._hc_session.credential.reuse_session:
+                self._hc_session.delete()
+            else:
+                logger.debug(
+                    f"Keeping HC session {self._hc_session.hc_id} alive for reuse "
+                    f"(sessionId={self._hc_session.session_id})"
+                )
             self._hc_session = None
             self._connection = None
 
@@ -747,15 +764,20 @@ class HighConcurrencyConnectionWrapper(object):
 
 
 def _atexit_cleanup_hc() -> None:
-    """DELETE every still-active HC session on process exit.
+    """DELETE still-active HC sessions on process exit.
 
     Iterates ``_active_sessions`` rather than relying on
     ``connection_managers`` in ``connections.py``, which can be cleared by
-    ``cleanup_all`` before exit.
+    ``cleanup_all`` before exit. Sessions whose credentials set
+    ``reuse_session`` are left alive so the underlying Livy session stays warm
+    for the next invocation (Fabric reaps them on ``session_idle_timeout``).
     """
     with _active_sessions_lock:
         sessions = list(_active_sessions)
     for s in sessions:
+        if s.credential.reuse_session:
+            logger.debug(f"atexit: keeping HC session {s.hc_id} alive for reuse")
+            continue
         try:
             s.delete()
         except Exception as ex:

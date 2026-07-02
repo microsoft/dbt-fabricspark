@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.12.8
+
+### Bug Fixes
+
+- Fixed high-concurrency Livy sessions not staying warm across `dbt` invocations when `reuse_session: true` (and `session_idle_timeout`) were set. With `high_concurrency: true` the per-thread `HighConcurrencySessionManager.disconnect()` and the process-exit `atexit` handler unconditionally issued `DELETE /highConcurrencySessions/{hc_id}`; deleting the last REPL made Fabric tear the shared underlying Livy session down immediately (flipping it from *In progress* to *Succeeded*), so `spark.livy.session.idle.timeout` never applied and every subsequent run paid a multi-minute Spark cold-start. This contradicted the documented behavior (README "High-concurrency Livy") and the singleton backend, which already keeps the session alive when `reuse_session` is set. HC teardown now honors `reuse_session`: with `reuse_session: true` the HC session is left alive so the underlying Livy session stays warm for reuse (Fabric reaps it on `session_idle_timeout`), while `reuse_session: false` keeps the previous prompt-release behavior that frees REPL slots. ([#232](https://github.com/microsoft/dbt-fabricspark/issues/232))
+
+---
+
 ## v1.12.7
 
 ### Features

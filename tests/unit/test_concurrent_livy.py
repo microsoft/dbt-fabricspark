@@ -9,7 +9,8 @@ Mocked-HTTP coverage of the HC lifecycle:
 - ``HighConcurrencyCursor.execute`` POSTs to ``/repls/{replId}/statements``,
   polls until ``state == available``, and parses Fabric's standard
   ``output.data.application/json.{schema,data}`` envelope.
-- ``HighConcurrencySessionManager.disconnect`` DELETEs the HC id.
+- ``HighConcurrencySessionManager.disconnect`` DELETEs the HC id, unless
+  ``reuse_session`` is set, in which case the session is kept warm.
 - The HC session manager is registered as a :class:`LivyBackend`.
 - 404 on submit flags the REPL for re-acquire.
 """
@@ -371,6 +372,55 @@ class TestHighConcurrencySessionManager:
         mgr.disconnect()
         mock_delete.assert_called_once()
         assert mgr._hc_session is None
+
+    @patch("dbt.adapters.fabricspark.concurrent_livy._maybe_create_shortcuts")
+    @patch.object(HighConcurrencySession, "delete")
+    @patch.object(HighConcurrencySession, "acquire")
+    def test_disconnect_keeps_session_alive_when_reuse_session(
+        self, _acquire, mock_delete, _shortcuts
+    ):
+        # reuse_session=True must keep the underlying Livy session warm for the
+        # next invocation instead of deleting the HC id (issue #232).
+        creds = _make_creds(reuse_session=True)
+        mgr = HighConcurrencySessionManager()
+        mgr.connect(creds)
+        mgr.disconnect()
+        mock_delete.assert_not_called()
+        assert mgr._hc_session is None
+
+
+# --------------------------------------------------------------------------- #
+# atexit cleanup                                                              #
+# --------------------------------------------------------------------------- #
+
+
+class TestHighConcurrencyAtexitCleanup:
+    @patch("dbt.adapters.fabricspark.concurrent_livy._get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.concurrent_livy.requests.delete")
+    def test_atexit_deletes_only_non_reuse_sessions(self, mock_delete, _headers):
+        # reuse_session sessions are left alive so the underlying Livy session
+        # stays warm; non-reuse sessions are deleted to free REPL slots (#232).
+        mock_delete.return_value = _mock_response(200)
+
+        hc_fresh = HighConcurrencySession(_make_creds(reuse_session=False), {})
+        hc_fresh.hc_id = "hc-del"
+        hc_reuse = HighConcurrencySession(_make_creds(reuse_session=True), {})
+        hc_reuse.hc_id = "hc-keep"
+        concurrent_livy._active_sessions.update({hc_fresh, hc_reuse})
+
+        concurrent_livy._atexit_cleanup_hc()
+
+        mock_delete.assert_called_once()
+        deleted_url = mock_delete.call_args.args[0]
+        assert "hc-del" in deleted_url
+
+        # Non-reuse session was deleted and de-registered.
+        assert hc_fresh.hc_id is None
+        assert hc_fresh not in concurrent_livy._active_sessions
+
+        # reuse_session session is untouched and still active.
+        assert hc_reuse.hc_id == "hc-keep"
+        assert hc_reuse in concurrent_livy._active_sessions
 
 
 # --------------------------------------------------------------------------- #

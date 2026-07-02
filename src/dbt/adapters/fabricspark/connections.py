@@ -245,10 +245,13 @@ class FabricSparkConnectionManager(SQLConnectionManager):
         Sessions are deleted on process exit via an atexit handler
         registered in LivySessionManager.
 
-        For HC backends, however, each per-thread manager owns its own HC
-        session id; releasing those promptly here frees REPL slots so the
-        underlying Livy session can host new acquirers without bumping into
-        the 5-REPL packing cap.
+        For HC backends, each per-thread manager owns its own HC session id.
+        When ``reuse_session`` is false these are released promptly here so
+        REPL slots free up and the underlying Livy session can host new
+        acquirers without bumping into the 5-REPL packing cap. When
+        ``reuse_session`` is true the HC sessions are kept alive instead, so the
+        underlying Livy session stays warm for the next invocation (mirroring
+        the singleton backend); the manager itself handles that distinction.
         """
         for manager in self.connection_managers.values():
             try:

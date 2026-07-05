@@ -1,5 +1,12 @@
 # Copilot Instructions — dbt-fabricspark
 
+## Comments in code
+
+- Do **NOT** add flowery comments in the code all over the place. The code is self-descriptive, **ONLY** add comments when the code is doing something non-orthodox
+- Do **NOT** indirectly refer to Github issues in the actual code. The codebase has nothing to do with Github, it's self-contained.
+
+> 🛑 DO NOT ADD UNNECESSARY COMMENTS IN THE CODE 🛑
+
 ## What this repo is
 
 A **dbt adapter** that lets dbt-core build SQL models against Apache Spark in Microsoft Fabric. 
@@ -69,11 +76,6 @@ uv run pytest tests/unit/test_adapter.py::TestSparkAdapter::test_profile_with_da
 - **Unit tests should cover any branch in `impl.py`/`connections.py`/`livysession.py`/`mlv_api.py` you touch**, including the schema-detection heuristic (parse-time `schema != lakehouse`) and credential masking.
 - **`fail-on-untracked-files` will fail CI if you leave a regenerated file uncommitted** — this catches stale `uv.lock` after a dep change. Always commit lockfile updates that result from your edits.
 - **Devcontainer image is pinned by digest** in `.devcontainer/devcontainer.json` and `.github/workflows/ci.yml`. Don't hand-edit these; rebuild via the flow in `.devcontainer/README.md`.
-
-## Comments in code
-
-- Do **NOT** add flowery comments in the code all over the place. The code is self-descriptive, **ONLY** add comments when the code is doing something non-orthodox
-- Do **NOT** indirectly refer to Github issues in the actual code. The codebase has nothing to do with Github, it's self-contained.
 
 ## Do not assume — ask first
 

@@ -37,6 +37,11 @@ tasks:
     Group: Provision-Infra
     TimeoutInMinutes: 5
 
+  - Command: uv run python -m tests.functional.orchestrator provision --schema-mode with_schema --second-lakehouse
+    Name: Provision second with_schema lakehouse (WS1 cross-lakehouse write target)
+    Group: Provision-Infra
+    TimeoutInMinutes: 5
+
   - Command: uv run python -m tests.functional.orchestrator provision --schema-mode with_schema --workspace ws2
     Name: Provision with_schema lakehouse (WS2 cross-workspace read source)
     Group: Provision-Infra

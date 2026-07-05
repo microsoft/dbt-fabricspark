@@ -1388,3 +1388,172 @@ class TestCatalogPerLakehouseScoping(unittest.TestCase):
                 self.assertEqual(schemas, {"finance"})
         finally:
             FabricSparkRelation._schemas_enabled = False
+
+
+class TestSchemaDDLDatabaseScoping(unittest.TestCase):
+    """create_schema/drop_schema must re-qualify a stale schema relation
+    (``include_policy.database=False`` captured before ``connections.open``) so
+    schema DDL targets the intended lakehouse, not the session-bound one."""
+
+    def setUp(self):
+        flags.STRICT_MODE = False
+        self.mp_context = get_context("spawn")
+
+        self.project_cfg = {
+            "name": "X",
+            "version": "0.1",
+            "profile": "test",
+            "project-root": "/tmp/dbt/does-not-exist",
+            "quoting": {"identifier": False, "schema": False},
+            "config-version": 2,
+        }
+
+    def _adapter(self, schema: str = "dbo", lakehouse: str = "silver_lh"):
+        config = config_from_parts_or_dicts(
+            self.project_cfg,
+            {
+                "outputs": {
+                    "test": {
+                        "type": "fabricspark",
+                        "method": "livy",
+                        "authentication": "CLI",
+                        "lakehouse": lakehouse,
+                        "workspaceid": "1de8390c-9aca-4790-bee8-72049109c0f4",
+                        "lakehouseid": "8c5bc260-bc3a-4898-9ada-01e433d461ba",
+                        "connect_retries": 0,
+                        "connect_timeout": 10,
+                        "threads": 1,
+                        "endpoint": "https://dailyapi.fabric.microsoft.com/v1",
+                        "schema": schema,
+                        "spark_config": {"name": "test-session"},
+                    }
+                },
+                "target": "test",
+            },
+        )
+        return FabricSparkAdapter(config, self.mp_context)
+
+    def _capture_ddl_relation(self, adapter, method_name, relation):
+        """Invoke ``create_schema``/``drop_schema``; return the relation the macro receives."""
+        captured = {}
+
+        def fake_execute_macro(macro_name, kwargs):
+            captured["relation"] = kwargs["relation"]
+            return []
+
+        with (
+            mock.patch.object(adapter, "execute_macro", side_effect=fake_execute_macro),
+            mock.patch.object(adapter, "commit_if_has_connection", return_value=None),
+        ):
+            getattr(adapter, method_name)(relation)
+
+        return captured["relation"]
+
+    def test_create_schema_qualifies_database_when_schemas_enabled_flag_set(self):
+        """Qualify a stale relation once ``_schemas_enabled`` is set."""
+        adapter = self._adapter()
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            stale = FabricSparkRelation.create(
+                database="gold_lh",
+                schema="finance",
+                identifier="anything",
+            ).include(database=False)
+            self.assertFalse(stale.include_policy.database)
+            self.assertTrue(adapter._catalog_requires_database_scoping(stale))
+
+            rendered = self._capture_ddl_relation(adapter, "create_schema", stale)
+
+            self.assertTrue(rendered.include_policy.database)
+            self.assertEqual(rendered.database, "gold_lh")
+            self.assertEqual(rendered.schema, "finance")
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_create_schema_qualifies_via_parse_time_fallback(self):
+        """Qualify via the parse-time ``schema != lakehouse`` fallback."""
+        adapter = self._adapter(schema="dbo", lakehouse="silver_lh")
+        self.assertFalse(FabricSparkRelation._schemas_enabled)
+
+        stale = FabricSparkRelation.create(
+            database="gold_lh",
+            schema="finance",
+            identifier="anything",
+        ).include(database=False)
+        self.assertTrue(adapter._catalog_requires_database_scoping(stale))
+
+        rendered = self._capture_ddl_relation(adapter, "create_schema", stale)
+
+        self.assertTrue(rendered.include_policy.database)
+        self.assertEqual(rendered.database, "gold_lh")
+
+    def test_create_schema_does_not_qualify_in_no_schema_mode(self):
+        """No-schema mode stays two-part (unqualified)."""
+        adapter = self._adapter(schema="silver_lh", lakehouse="silver_lh")
+        self.assertFalse(FabricSparkRelation._schemas_enabled)
+
+        relation = FabricSparkRelation.create(
+            database="silver_lh",
+            schema="silver_lh",
+            identifier="x",
+        ).include(database=False)
+        self.assertFalse(adapter._catalog_requires_database_scoping(relation))
+
+        rendered = self._capture_ddl_relation(adapter, "create_schema", relation)
+
+        self.assertFalse(rendered.include_policy.database)
+
+    def test_create_schema_preserves_already_qualified_policy(self):
+        """Already-qualified relations pass through unchanged."""
+        adapter = self._adapter()
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            relation = FabricSparkRelation.create(
+                database="gold_lh",
+                schema="finance",
+                identifier="x",
+            )
+            self.assertTrue(relation.include_policy.database)
+
+            rendered = self._capture_ddl_relation(adapter, "create_schema", relation)
+
+            self.assertTrue(rendered.include_policy.database)
+            self.assertEqual(rendered.database, "gold_lh")
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_drop_schema_qualifies_database_when_schemas_enabled_flag_set(self):
+        """drop_schema qualifies a stale relation too, so cascade can't hit the wrong lakehouse."""
+        adapter = self._adapter()
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            stale = FabricSparkRelation.create(
+                database="gold_lh",
+                schema="finance",
+                identifier="anything",
+            ).include(database=False)
+            self.assertFalse(stale.include_policy.database)
+
+            rendered = self._capture_ddl_relation(adapter, "drop_schema", stale)
+
+            self.assertTrue(rendered.include_policy.database)
+            self.assertEqual(rendered.database, "gold_lh")
+            self.assertEqual(rendered.schema, "finance")
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_drop_schema_does_not_qualify_in_no_schema_mode(self):
+        """No-schema mode leaves ``drop_schema`` DDL unqualified (two-part)."""
+        adapter = self._adapter(schema="silver_lh", lakehouse="silver_lh")
+        self.assertFalse(FabricSparkRelation._schemas_enabled)
+
+        relation = FabricSparkRelation.create(
+            database="silver_lh",
+            schema="silver_lh",
+            identifier="x",
+        ).include(database=False)
+        self.assertFalse(adapter._catalog_requires_database_scoping(relation))
+
+        rendered = self._capture_ddl_relation(adapter, "drop_schema", relation)
+
+        self.assertFalse(rendered.include_policy.database)

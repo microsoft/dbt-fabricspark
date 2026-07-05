@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.12.9
+
+### Bug Fixes
+
+- Fixed schema pre-creation also creating the schema in the **session-bound** lakehouse (in addition to the configured `+database` target) during same-workspace cross-lakehouse runs. dbt's `before_run` collects the required schemas via `Relation.create_from(...).without_identifier()` while the Livy connection is still a `LazyHandle`, so `FabricSparkRelation._schemas_enabled` is still `False`. On a cold start where the profile leaves `schema` at its default (`schema == lakehouse`), `create_from` sees no schema-enabled signal and locks `include_policy.database=False` on the relation. That stale relation then reaches the inherited `create_schema`/`drop_schema`, where `relation.without_identifier()` renders an *unqualified* `create/drop database if not exists <schema>` that resolves against the session-bound lakehouse instead of the model's `+database` target — so the schema was created in both lakehouses (and, symmetrically, an unqualified `drop database ... cascade` risked dropping the wrong lakehouse's schema). `FabricSparkAdapter` now re-includes the database segment on schema-DDL relations using the same `_catalog_requires_database_scoping` rule already applied by `list_relations_without_caching`, so `create_schema`/`drop_schema` always qualify to the intended lakehouse. Cross-workspace (`workspace_name`) routing was already unaffected because a set `workspace` forces database qualification at parse time. ([#234](https://github.com/microsoft/dbt-fabricspark/issues/234))
+
+---
+
 ## v1.12.8
 
 ### Bug Fixes

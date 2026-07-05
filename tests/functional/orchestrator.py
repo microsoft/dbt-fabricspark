@@ -144,7 +144,19 @@ def cmd_provision() -> None:
         default="ws1",
         help="Which Fabric workspace to provision into. ws2 is for cross-workspace tests.",
     )
+    parser.add_argument(
+        "--second-lakehouse",
+        action="store_true",
+        help=(
+            "Provision a SECOND schema-enabled lakehouse in WS1 as a same-workspace "
+            "cross-lakehouse write target. Writes SECOND_LAKEHOUSE_ID/NAME. "
+            "Only valid with --workspace ws1 --schema-mode with_schema."
+        ),
+    )
     args = parser.parse_args(sys.argv[2:])
+
+    if args.second_lakehouse and (args.workspace != "ws1" or args.schema_mode != "with_schema"):
+        parser.error("--second-lakehouse requires --workspace ws1 --schema-mode with_schema")
 
     if args.workspace == "ws2":
         client = _make_client(_ws2_id())
@@ -157,6 +169,8 @@ def cmd_provision() -> None:
     run_id = current_run_id()
     if args.workspace == "ws2":
         mode_suffix = "CrossWs"
+    elif args.second_lakehouse:
+        mode_suffix = "WithSchema2"
     else:
         mode_suffix = "NoSchema" if args.schema_mode == "no_schema" else "WithSchema"
     # Include the run ID so each CI run's nuke only removes its own lakehouses,
@@ -176,6 +190,9 @@ def cmd_provision() -> None:
         _append_shared_env("WS2_LAKEHOUSE_ID", lh.id)
         _append_shared_env("WS2_LAKEHOUSE_NAME", lh.name)
         _append_shared_env("WS2_WORKSPACE_NAME", _ws2_name())
+    elif args.second_lakehouse:
+        _append_shared_env("SECOND_LAKEHOUSE_ID", lh.id)
+        _append_shared_env("SECOND_LAKEHOUSE_NAME", lh.name)
     else:
         prefix = args.schema_mode.upper()
         _append_shared_env(f"{prefix}_LAKEHOUSE_ID", lh.id)

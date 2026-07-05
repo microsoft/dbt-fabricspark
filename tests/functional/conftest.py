@@ -273,6 +273,31 @@ def ws2_lakehouse_id():
 
 
 @pytest.fixture(scope="session")
+def second_lakehouse_name():
+    """Name of a second WS1 schema-enabled lakehouse (same-workspace cross-lakehouse
+    write target). Populated by ``provision --second-lakehouse``; skips if unset."""
+    name = os.environ.get("SECOND_LAKEHOUSE_NAME")
+    if not name:
+        pytest.skip(
+            "SECOND_LAKEHOUSE_NAME not set — run the with_schema orchestrator pass "
+            "(provision --second-lakehouse) or set it manually."
+        )
+    return name
+
+
+@pytest.fixture(scope="session")
+def second_lakehouse_id():
+    """UUID of the second WS1 schema-enabled lakehouse. Skips if unset."""
+    lh_id = os.environ.get("SECOND_LAKEHOUSE_ID")
+    if not lh_id:
+        pytest.skip(
+            "SECOND_LAKEHOUSE_ID not set — run the with_schema orchestrator pass "
+            "(provision --second-lakehouse) or set it manually."
+        )
+    return lh_id
+
+
+@pytest.fixture(scope="session")
 def api_endpoint():
     return os.getenv("LIVY_ENDPOINT", "https://api.fabric.microsoft.com/v1")
 

@@ -465,6 +465,22 @@ class FabricSparkAdapter(SQLAdapter):
         lakehouse = getattr(creds, "lakehouse", None)
         return bool(schema and lakehouse and schema != lakehouse)
 
+    def _database_scoped_schema_relation(self, relation: BaseRelation) -> BaseRelation:
+        """Re-include the database on a schema relation that lost it before
+        ``connections.open`` set the naming mode, so schema DDL targets the
+        intended lakehouse instead of the session-bound one."""
+        if not relation.include_policy.database and self._catalog_requires_database_scoping(
+            relation
+        ):
+            return relation.include(database=True)
+        return relation
+
+    def create_schema(self, relation: BaseRelation) -> None:
+        super().create_schema(self._database_scoped_schema_relation(relation))
+
+    def drop_schema(self, relation: BaseRelation) -> None:
+        super().drop_schema(self._database_scoped_schema_relation(relation))
+
     def list_relations_without_caching(self, schema_relation: BaseRelation) -> List[BaseRelation]:
         """Distinct Spark compute engines may not support the same SQL featureset. Thus, we must
         try different methods to fetch relation information."""

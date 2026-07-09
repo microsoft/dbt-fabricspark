@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.12.10
+
+### Features
+
+- Made the `AzureCliCredential` subprocess timeout configurable via a new optional `azure_cli_process_timeout` credential/profile field (int, default `10` — no behavior change unless set). Under high-concurrency dbt builds (many threads), the token-refresh storm in the token's last ~5 minutes spawns many concurrent `az account get-access-token` subprocesses. Occasional host CPU contention or auth-relay latency can push one `az` invocation past `azure-identity`'s default 10s subprocess timeout, killing the process and failing a dbt node with "Failed to invoke the Azure CLI". Previously the only remedy was patching the installed package at image-build time. The value is now threaded through to `AzureCliCredential(process_timeout=...)` in `livysession.py`, so operators can raise it (e.g. `azure_cli_process_timeout: 60`) from `profiles.yml`. ([#236](https://github.com/microsoft/dbt-fabricspark/issues/236))
+
+### Bug Fixes
+
+- Fixed `dbt source freshness` failing on Fabric Spark with "Expected a timestamp value ... but received value of type 'str' instead". Fabric's Livy statement-result API returns `timestamp`, `timestamp_ntz` and `date` columns to Python as strings, but dbt-core's freshness path (and any `run_query()` caller) expects native `datetime`/`date` objects — matching how real drivers (pyodbc/pyhive) behave in upstream dbt-spark. Both Livy cursor backends (`HighConcurrencyCursor` and `LivyCursor`) now coerce time-typed columns to native Python `datetime`/`date` using the positional column types from the Livy result `schema.fields`. Only columns Livy explicitly types as time types are touched; `None` and unparseable values are passed through unchanged, so a malformed value can never turn a successful query into a failure. ([#237](https://github.com/microsoft/dbt-fabricspark/issues/237))
+
+---
+
 ## v1.12.9
 
 ### Bug Fixes

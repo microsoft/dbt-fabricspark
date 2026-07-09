@@ -99,6 +99,14 @@ class FabricSparkCredentials(Credentials):
     poll_wait: int = 10  # seconds between polls for session start
     poll_statement_wait: float = 0.5  # seconds between polls for statement result
 
+    # Subprocess timeout (seconds) passed to azure-identity's AzureCliCredential
+    # when acquiring/refreshing tokens under authentication='CLI'. Defaults to
+    # azure-identity's own default (10s). Raise it when high-concurrency builds
+    # trigger token-refresh storms that push an `az account get-access-token`
+    # invocation past 10s (which otherwise fails with "Failed to invoke the
+    # Azure CLI"). No effect for other authentication methods.
+    azure_cli_process_timeout: int = 10
+
     def __repr__(self) -> str:
         """Mask sensitive fields in repr to prevent credential leakage in logs/tracebacks."""
         return (

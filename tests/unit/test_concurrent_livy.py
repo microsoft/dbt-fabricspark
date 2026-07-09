@@ -245,6 +245,62 @@ class TestHighConcurrencyCursorExecute:
     @patch("dbt.adapters.fabricspark.concurrent_livy.time.sleep")
     @patch("dbt.adapters.fabricspark.concurrent_livy.requests.get")
     @patch("dbt.adapters.fabricspark.concurrent_livy.requests.post")
+    def test_select_coerces_timestamp_columns(self, mock_post, mock_get, _sleep, _headers):
+        """Timestamp/date columns come back as native datetimes (#237)."""
+        import datetime as dt
+
+        mock_post.return_value = _mock_response(200, {"id": 1, "state": "waiting"})
+        mock_get.return_value = _mock_response(
+            200,
+            {
+                "id": 1,
+                "state": "available",
+                "output": {
+                    "status": "ok",
+                    "data": {
+                        "application/json": {
+                            "schema": {
+                                "fields": [
+                                    {
+                                        "name": "max_loaded_at",
+                                        "type": "timestamp",
+                                        "nullable": True,
+                                    },
+                                    {
+                                        "name": "snapshotted_at",
+                                        "type": "timestamp",
+                                        "nullable": True,
+                                    },
+                                    {"name": "d", "type": "date", "nullable": True},
+                                ]
+                            },
+                            "data": [
+                                ["2024-01-01 12:00:00.123456", "2024-01-02 00:00:00", "2024-03-04"]
+                            ],
+                        }
+                    },
+                },
+            },
+        )
+
+        creds = _make_creds()
+        hc = HighConcurrencySession(creds, creds.spark_config)
+        hc.session_id = "s"
+        hc.repl_id = "r"
+        hc.is_new_session_required = False
+
+        cursor = HighConcurrencyCursor(creds, hc)
+        cursor.execute("SELECT max_loaded_at, snapshotted_at, d FROM src")
+
+        row = cursor.fetchone()
+        assert row[0] == dt.datetime(2024, 1, 1, 12, 0, 0, 123456)
+        assert row[1] == dt.datetime(2024, 1, 2, 0, 0, 0)
+        assert row[2] == dt.date(2024, 3, 4)
+
+    @patch("dbt.adapters.fabricspark.concurrent_livy._get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.concurrent_livy.time.sleep")
+    @patch("dbt.adapters.fabricspark.concurrent_livy.requests.get")
+    @patch("dbt.adapters.fabricspark.concurrent_livy.requests.post")
     def test_ddl_returns_empty_result(self, mock_post, mock_get, _sleep, _headers):
         mock_post.return_value = _mock_response(200, {"id": 1, "state": "waiting"})
         # Fabric returns an envelope without `data` for DDL statements.

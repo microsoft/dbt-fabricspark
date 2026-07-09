@@ -18,6 +18,7 @@ from dbt.adapters.fabricspark.livysession import (
     LivyCursor,
     LivySession,
     LivySessionManager,
+    get_cli_access_token,
     get_default_access_token,
     get_headers,
     read_session_id_from_file,
@@ -148,7 +149,42 @@ class TestIntTestsAuthTokenExpiry:
         assert token.expires_on == 1712345678
 
 
-class TestCreateSessionRetry:
+class TestGetCliAccessToken:
+    """Tests for the configurable AzureCliCredential process_timeout (#236)."""
+
+    @staticmethod
+    def _make_cli_credentials(**overrides) -> FabricSparkCredentials:
+        kwargs = dict(
+            method="livy",
+            livy_mode="fabric",
+            authentication="CLI",
+            workspaceid="1de8390c-9aca-4790-bee8-72049109c0f4",
+            lakehouseid="8c5bc260-bc3a-4898-9ada-01e433d461ba",
+            lakehouse="tests",
+            spark_config={"name": "test-session"},
+        )
+        kwargs.update(overrides)
+        return FabricSparkCredentials(**kwargs)
+
+    def test_default_process_timeout_is_ten(self):
+        credentials = self._make_cli_credentials()
+        assert credentials.azure_cli_process_timeout == 10
+
+        with patch("dbt.adapters.fabricspark.livysession.AzureCliCredential") as mock_cred:
+            mock_cred.return_value.get_token.return_value = MagicMock()
+            get_cli_access_token(credentials)
+
+        mock_cred.assert_called_once_with(process_timeout=10)
+
+    def test_custom_process_timeout_is_threaded_through(self):
+        credentials = self._make_cli_credentials(azure_cli_process_timeout=60)
+
+        with patch("dbt.adapters.fabricspark.livysession.AzureCliCredential") as mock_cred:
+            mock_cred.return_value.get_token.return_value = MagicMock()
+            get_cli_access_token(credentials)
+
+        mock_cred.assert_called_once_with(process_timeout=60)
+
     """Tests for retry logic in LivySession.create_session()."""
 
     def _make_credentials(self):
@@ -938,6 +974,48 @@ class TestFetchmany:
         assert cursor._fetch_index == 0
         # fetchone() should return the first (only) row of the new result
         assert cursor.fetchone() == ("c",)
+
+    def test_execute_coerces_timestamp_columns(self):
+        """LivyCursor.execute normalizes timestamp/date strings to datetimes (#237)."""
+        credentials = FabricSparkCredentials(
+            method="livy",
+            livy_mode="local",
+            spark_config={"name": "test-session"},
+        )
+        mock_session = MagicMock()
+        mock_session.session_id = "s1"
+        mock_session.is_new_session_required = False
+        cursor = LivyCursor(credentials, mock_session)
+
+        result = {
+            "output": {
+                "status": "ok",
+                "data": {
+                    "application/json": {
+                        "data": [["2024-01-01 12:00:00.500000", "2024-03-04", "keep"]],
+                        "schema": {
+                            "fields": [
+                                {"name": "max_loaded_at", "type": "timestamp", "nullable": True},
+                                {"name": "d", "type": "date", "nullable": True},
+                                {"name": "s", "type": "string", "nullable": True},
+                            ]
+                        },
+                    }
+                },
+            }
+        }
+
+        with (
+            patch.object(cursor, "_getLivySQL", return_value="SELECT 1"),
+            patch.object(cursor, "_submitLivyCode", return_value=MagicMock()),
+            patch.object(cursor, "_getLivyResult", return_value=result),
+        ):
+            cursor.execute("SELECT max_loaded_at, d, s FROM src")
+
+        row = cursor.fetchone()
+        assert row[0] == dt.datetime(2024, 1, 1, 12, 0, 0, 500000)
+        assert row[1] == dt.date(2024, 3, 4)
+        assert row[2] == "keep"
 
 
 # --- Tests for token_credential auth path ---

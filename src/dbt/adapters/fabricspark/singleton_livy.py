@@ -19,7 +19,7 @@ from dbt.adapters.exceptions import FailedToConnectError
 from dbt.adapters.fabricspark import livysession as _livy_helpers
 from dbt.adapters.fabricspark._http_utils import parse_retry_after
 from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
-from dbt.adapters.fabricspark.livy_backend import LivyBackend
+from dbt.adapters.fabricspark.livy_backend import LivyBackend, coerce_time_columns
 from dbt.adapters.fabricspark.shortcuts import ShortcutClient
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
@@ -619,6 +619,7 @@ class LivyCursor:
                     if isinstance(values, dict) and "data" in values:
                         self._rows = values["data"]
                         self._schema = values.get("schema", {}).get("fields", [])
+                        coerce_time_columns(self._rows, self._schema)
                     elif isinstance(values, list):
                         self._rows = values
                         self._schema = []
@@ -636,6 +637,7 @@ class LivyCursor:
                 if len(values) >= 1:
                     self._rows = values["data"]
                     self._schema = values["schema"]["fields"]
+                    coerce_time_columns(self._rows, self._schema)
                 else:
                     self._rows = []
                     self._schema = []

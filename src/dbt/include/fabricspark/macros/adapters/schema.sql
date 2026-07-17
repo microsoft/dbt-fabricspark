@@ -58,6 +58,33 @@
   {{ return(adapter.dispatch('ensure_database_exists', 'dbt')(schema_name, database=database, workspace=workspace)) }}
 {% endmacro %}
 
+{% macro fabricspark__get_workspace_name(config=none, node=none) -%}
+  {%- set workspace_name = none -%}
+  {%- if config is not none -%}
+    {%- set workspace_name = config.get('workspace_name') -%}
+    {%- if not workspace_name -%}
+      {%- set meta = config.get('meta') -%}
+      {%- if meta is mapping -%}
+        {%- set workspace_name = meta.get('workspace_name') -%}
+      {%- endif -%}
+    {%- endif -%}
+  {%- endif -%}
+  {%- if not workspace_name and node is not none and node.config is not none -%}
+    {%- set workspace_name = node.config.get('workspace_name') -%}
+    {%- if not workspace_name -%}
+      {%- set meta = node.config.get('meta') -%}
+      {%- if meta is mapping -%}
+        {%- set workspace_name = meta.get('workspace_name') -%}
+      {%- endif -%}
+    {%- endif -%}
+  {%- endif -%}
+  {{ return(workspace_name or target.workspace_name) }}
+{% endmacro %}
+
+{% macro get_workspace_name(config=none, node=none) %}
+  {{ return(adapter.dispatch('get_workspace_name', 'dbt')(config=config, node=node)) }}
+{% endmacro %}
+
 {% macro drop_materialized_lake_view(relation) %}
   {% call statement('drop_mlv') -%}
     drop materialized lake view if exists {{ relation }}
@@ -85,11 +112,7 @@
        non-schema-enabled lakehouse is a parse-time error with a clear
        remediation message. --#}
   {%- set ws_name = none -%}
-  {%- if node is not none and node.config is not none -%}
-    {%- set ws_name = node.config.get('workspace_name') or target.workspace_name -%}
-  {%- elif target.workspace_name -%}
-    {%- set ws_name = target.workspace_name -%}
-  {%- endif -%}
+  {%- set ws_name = get_workspace_name(node=node) -%}
   {%- if ws_name -%}
     {%- do adapter.validate_workspace_name_supported(
         ws_name,

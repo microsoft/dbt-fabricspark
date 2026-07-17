@@ -236,6 +236,16 @@ In this example:
 
 For multi-workspace topologies — e.g. dev workspace reading shared marts from a prod workspace, or a single dbt project orchestrating bronze/silver/gold across separate workspaces — set `workspace_name` on a model's `config()`. The adapter renders the relation as a backtick-quoted four-part name so Fabric Spark routes the statement to the correct workspace catalog. **Both reads (federated `SELECT`) and writes (cross-workspace `CREATE TABLE AS SELECT`) are supported** against schema-enabled lakehouses.
 
+If you set this in `dbt_project.yml`, prefer `+meta.workspace_name` to avoid dbt's custom-config deprecation warning:
+
+```yaml
+models:
+  my_project:
+    marts:
+      +meta:
+        workspace_name: SharedWorkspace
+```
+
 #### Reads — stub-and-`ref` pattern
 
 ```sql

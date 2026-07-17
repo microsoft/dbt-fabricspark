@@ -254,6 +254,35 @@ class TestEnsureDatabaseExists(unittest.TestCase):
         self.assertEqual(result, "create database if not exists myschema")
 
 
+class TestWorkspaceNameMacro(unittest.TestCase):
+    def setUp(self):
+        self.jinja_env = Environment(
+            loader=FileSystemLoader("src/dbt/include/fabricspark/macros/adapters"),
+            extensions=["jinja2.ext.do"],
+        )
+
+    def _render(self, config=None, node=None, target_workspace_name=None):
+        template = self.jinja_env.get_template(
+            "schema.sql",
+            globals={
+                "target": mock.Mock(workspace_name=target_workspace_name),
+                "return": lambda r: r,
+            },
+        )
+        return template.module.fabricspark__get_workspace_name(config=config, node=node).strip()
+
+    def test_prefers_top_level_workspace_name(self):
+        config = {"workspace_name": "top-level", "meta": {"workspace_name": "meta-level"}}
+        self.assertEqual(self._render(config=config, target_workspace_name="profile-ws"), "top-level")
+
+    def test_uses_meta_workspace_name(self):
+        config = {"meta": {"workspace_name": "meta-level"}}
+        self.assertEqual(self._render(config=config, target_workspace_name="profile-ws"), "meta-level")
+
+    def test_falls_back_to_target_workspace_name(self):
+        self.assertEqual(self._render(config={}, target_workspace_name="profile-ws"), "profile-ws")
+
+
 class TestClusteredColsLiquidClustering(unittest.TestCase):
     """Render ``fabricspark__clustered_cols`` and ``fabricspark__file_format_clause``
     in isolation and assert the four semantics branches called out in the

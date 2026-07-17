@@ -92,25 +92,20 @@ class FabricSparkRelation(BaseRelation):
 
     @classmethod
     def create_from(cls, quoting, relation_config, **kwargs):
-        """Pull ``workspace_name`` from the model's ``config()`` into the relation.
+        """Pull ``workspace_name`` from model config into the relation.
 
         ``relation_config.config`` is a ``MaterializationConfig`` mapping that
         carries adapter-specific keys (registered on ``FabricSparkConfig``).
-        For nodes whose config sets ``workspace_name`` (top-level config key),
-        we forward it as the ``workspace`` field on the resulting relation so
-        ``render()`` emits a 4-part name.
+        For nodes whose config sets ``workspace_name`` either as a top-level
+        adapter config or under ``config.meta.workspace_name``, we forward it as
+        the ``workspace`` field on the resulting relation so ``render()`` emits
+        a 4-part name.
 
         When no model-level ``workspace_name`` is set, falls back to the
         profile-level ``workspace_name`` from credentials (``target.workspace_name``).
         """
         if "workspace" not in kwargs:
-            ws_name = None
-            cfg = getattr(relation_config, "config", None)
-            if cfg is not None:
-                try:
-                    ws_name = cfg.get("workspace_name")
-                except Exception:
-                    ws_name = None
+            ws_name = cls._get_workspace_name_from_config(getattr(relation_config, "config", None))
             # Fall back to profile-level workspace_name when model config doesn't set one.
             if not ws_name:
                 creds = getattr(quoting, "credentials", None)
@@ -127,6 +122,32 @@ class FabricSparkRelation(BaseRelation):
         ):
             relation = relation.include(database=True)
         return relation
+
+    @staticmethod
+    def _get_workspace_name_from_config(config) -> Optional[str]:
+        def _safe_get(container, key):
+            if container is None:
+                return None
+
+            getter = getattr(container, "get", None)
+            if callable(getter):
+                try:
+                    return getter(key)
+                except Exception:
+                    return None
+
+            return getattr(container, key, None)
+
+        workspace_name = _safe_get(config, "workspace_name")
+        if workspace_name:
+            return workspace_name
+
+        meta = _safe_get(config, "meta")
+        workspace_name = _safe_get(meta, "workspace_name")
+        if workspace_name:
+            return workspace_name
+
+        return None
 
     @classmethod
     def _identity_requires_database(cls, quoting, relation) -> bool:

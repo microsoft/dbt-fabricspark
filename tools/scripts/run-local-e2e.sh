@@ -118,6 +118,14 @@ echo "--- [incremental_orders] Full-refresh run (regression: must not raise TABL
 dbt run --select incremental_orders --full-refresh --target "${TARGET}"
 
 echo ""
+echo "--- [incremental_orders_delete_insert] Incremental run (delete+insert: replaces matching order_ids) ---"
+dbt run --select incremental_orders_delete_insert --target "${TARGET}"
+
+echo ""
+echo "--- [incremental_orders_delete_insert] Full-refresh run (rebuilds the delta table cleanly) ---"
+dbt run --select incremental_orders_delete_insert --full-refresh --target "${TARGET}"
+
+echo ""
 echo "============================================"
 echo " Resuming remaining dbt lifecycle commands"
 echo "============================================"

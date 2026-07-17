@@ -84,6 +84,16 @@
       {%- call statement('main') -%}
         {{ get_insert_into_sql(tmp_relation, target_relation) }}
       {%- endcall -%}
+    {%- elif strategy == 'delete+insert' -%}
+      {#-- Like microbatch, delete+insert removes matched rows then re-inserts
+           them; issued as separate DELETE and INSERT calls because Fabric Spark
+           cannot run multiple statements in one query. --#}
+      {%- call statement('delete_insert_delete') -%}
+        {{ get_delete_insert_delete_sql(tmp_relation, target_relation, unique_key, incremental_predicates) }}
+      {%- endcall -%}
+      {%- call statement('main') -%}
+        {{ get_insert_into_sql(tmp_relation, target_relation) }}
+      {%- endcall -%}
     {%- else -%}
       {%- call statement('main') -%}
         {{ dbt_spark_get_incremental_sql(strategy, tmp_relation, target_relation, existing_relation, unique_key, incremental_predicates) }}

@@ -21,7 +21,7 @@
 
   {% set invalid_strategy_msg -%}
     Invalid incremental strategy provided: {{ raw_strategy }}
-    Expected one of: 'append', 'merge', 'insert_overwrite', 'microbatch'
+    Expected one of: 'append', 'merge', 'insert_overwrite', 'microbatch', 'delete+insert'
   {%- endset %}
 
   {% set invalid_merge_msg -%}
@@ -35,14 +35,22 @@
     Use the 'append' or 'merge' strategy instead
   {%- endset %}
 
-  {% if raw_strategy not in ['append', 'merge', 'insert_overwrite', 'microbatch'] %}
+  {% set missing_unique_key_msg -%}
+    Invalid incremental strategy provided: {{ raw_strategy }}
+    This strategy requires a `unique_key` to be configured
+  {%- endset %}
+
+  {% if raw_strategy not in ['append', 'merge', 'insert_overwrite', 'microbatch', 'delete+insert'] %}
     {% do exceptions.raise_compiler_error(invalid_strategy_msg) %}
   {%-else %}
-    {% if raw_strategy == 'merge' and file_format not in ['delta'] %}
+    {% if raw_strategy in ['merge', 'delete+insert'] and file_format not in ['delta'] %}
       {% do exceptions.raise_compiler_error(invalid_merge_msg) %}
     {% endif %}
     {% if raw_strategy in ['insert_overwrite', 'microbatch'] and file_format not in ['delta'] %} --  and target.endpoint
       {% do exceptions.raise_compiler_error(invalid_insert_overwrite_endpoint_msg) %}
+    {% endif %}
+    {% if raw_strategy == 'delete+insert' and config.get('unique_key') is none %}
+      {% do exceptions.raise_compiler_error(missing_unique_key_msg) %}
     {% endif %}
   {% endif %}
 

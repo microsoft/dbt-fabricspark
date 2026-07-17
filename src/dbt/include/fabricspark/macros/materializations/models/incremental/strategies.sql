@@ -29,6 +29,38 @@
 {% endmacro %}
 
 
+{% macro get_delete_insert_delete_sql(source_relation, target_relation, unique_key, incremental_predicates) %}
+    {#-- Remove target rows whose unique_key(s) appear in the incoming set so the
+         subsequent INSERT re-materialises them in full. Uses
+         MERGE ... WHEN MATCHED THEN DELETE against a DISTINCT source because
+         Delta Lake does not support subqueries in DELETE conditions; DISTINCT
+         also avoids multiple-source-row match errors on duplicate keys. --#}
+    {%- if unique_key is string -%}
+      {%- set unique_key = [unique_key] -%}
+    {%- endif -%}
+    merge into {{ target_relation }} as DBT_INTERNAL_DEST
+        using (select distinct
+          {%- for key in unique_key %}
+            {{ key }}{% if not loop.last %}, {% endif %}
+          {%- endfor %}
+          from {{ source_relation }}) as DBT_INTERNAL_SOURCE
+        on
+          {%- for key in unique_key %}
+            DBT_INTERNAL_DEST.{{ key }} = DBT_INTERNAL_SOURCE.{{ key }}{% if not loop.last %} and {% endif %}
+          {%- endfor %}
+          {%- if incremental_predicates is not none %}
+            {%- if incremental_predicates is sequence and incremental_predicates is not string %}
+              {%- for predicate in incremental_predicates %}
+                and {{ predicate }}
+              {%- endfor %}
+            {%- else %}
+                and {{ incremental_predicates }}
+            {%- endif %}
+          {%- endif %}
+        when matched then delete
+{% endmacro %}
+
+
 {% macro get_insert_into_sql(source_relation, target_relation) %}
 
     {%- set dest_columns = adapter.get_columns_in_relation(target_relation) -%}

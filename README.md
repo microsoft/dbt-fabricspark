@@ -41,7 +41,7 @@ The `dbt-fabricspark` package contains all of the code enabling dbt to work with
 - **Livy session management** with session reuse and robust connectivity across dbt runs
 - **Lakehouse with schema support** — auto-detects schema-enabled lakehouses and uses three-part naming (`lakehouse.schema.table`)
 - **Lakehouse without schema** — standard two-part naming (`lakehouse.table`)
-- **Materializations**: table, view, incremental (append, merge, insert_overwrite), seed, snapshot
+- **Materializations**: table, view, incremental (append, merge, insert_overwrite, microbatch, delete+insert), seed, snapshot
 - **Fabric Environment support** via `environmentId` configuration
 - **Security**: credential masking, UUID validation, HTTPS + domain validation, thread-safe token refresh
 - **Resilience**: HTTP 5xx retry with exponential backoff, bounded polling with configurable timeouts
@@ -355,6 +355,34 @@ The principal authenticated by your profile (CLI user or SPN) must have read acc
 #### Quoting & casing
 
 Each segment is independently backtick-quoted, so workspace names with spaces or mixed case (e.g. `dbt Fabric Spark 1`) round-trip correctly.
+
+### Incremental strategies
+
+`incremental` models accept these `incremental_strategy` values via `config()`:
+
+| Strategy             | `file_format` | `unique_key`  | Behavior                                                                              |
+| -------------------- | ------------- | ------------- | ------------------------------------------------------------------------------------- |
+| `append` (default)   | any           | optional      | Insert all new rows; no updates or deletes.                                            |
+| `merge`              | `delta`       | optional      | `MERGE INTO` — update matched rows, insert the rest.                                   |
+| `insert_overwrite`   | `delta`       | —             | Overwrite matched partitions (`partition_by`), or the whole table when unpartitioned. |
+| `microbatch`         | `delta`       | —             | Per-batch delete (by `partition_by`) then insert; used by dbt's microbatch.           |
+| `delete+insert`      | `delta`       | **required**  | Delete target rows whose `unique_key`(s) appear in the new data, then insert all new rows. |
+
+`delete+insert` is a key-based full row-replace: it deletes every target row whose
+`unique_key` appears in the incoming set and then inserts all incoming rows. Use it
+instead of `merge` when you want matched keys replaced wholesale rather than updated
+column-by-column. It requires `file_format: delta` and a `unique_key` (a single column
+or a list) — omitting the key raises a compile-time error. Optional
+`incremental_predicates` are ANDed into the delete match to scope it to a window.
+
+```sql
+{{ config(
+    materialized='incremental',
+    incremental_strategy='delete+insert',
+    unique_key='id',
+    file_format='delta'
+) }}
+```
 
 ### Configuration Reference
 

@@ -273,11 +273,15 @@ class TestWorkspaceNameMacro(unittest.TestCase):
 
     def test_prefers_top_level_workspace_name(self):
         config = {"workspace_name": "top-level", "meta": {"workspace_name": "meta-level"}}
-        self.assertEqual(self._render(config=config, target_workspace_name="profile-ws"), "top-level")
+        self.assertEqual(
+            self._render(config=config, target_workspace_name="profile-ws"), "top-level"
+        )
 
     def test_uses_meta_workspace_name(self):
         config = {"meta": {"workspace_name": "meta-level"}}
-        self.assertEqual(self._render(config=config, target_workspace_name="profile-ws"), "meta-level")
+        self.assertEqual(
+            self._render(config=config, target_workspace_name="profile-ws"), "meta-level"
+        )
 
     def test_falls_back_to_target_workspace_name(self):
         self.assertEqual(self._render(config={}, target_workspace_name="profile-ws"), "profile-ws")

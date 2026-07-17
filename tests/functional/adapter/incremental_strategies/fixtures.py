@@ -210,6 +210,51 @@ select cast(3 as bigint) as id, 'anyway' as msg, 'purple' as color
 {% endif %}
 """.lstrip()
 
+delete_insert_unique_key_sql = """
+{{ config(
+    materialized = 'incremental',
+    incremental_strategy = 'delete+insert',
+    file_format = 'delta',
+    unique_key = 'id',
+) }}
+
+{% if not is_incremental() %}
+
+select cast(1 as bigint) as id, 'hello' as msg
+union all
+select cast(2 as bigint) as id, 'goodbye' as msg
+
+{% else %}
+
+select cast(2 as bigint) as id, 'yo' as msg
+union all
+select cast(3 as bigint) as id, 'anyway' as msg
+
+{% endif %}
+""".lstrip()
+
+bad_delete_insert_no_key_sql = """
+{{ config(
+    materialized = 'incremental',
+    incremental_strategy = 'delete+insert',
+    file_format = 'delta',
+) }}
+
+{% if not is_incremental() %}
+
+select cast(1 as bigint) as id, 'hello' as msg
+union all
+select cast(2 as bigint) as id, 'goodbye' as msg
+
+{% else %}
+
+select cast(2 as bigint) as id, 'yo' as msg
+union all
+select cast(3 as bigint) as id, 'anyway' as msg
+
+{% endif %}
+""".lstrip()
+
 #
 # Full Refresh Models (no explicit file_format — reproduces TABLE_OR_VIEW_ALREADY_EXISTS bug)
 #

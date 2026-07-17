@@ -41,7 +41,7 @@ The `dbt-fabricspark` package contains all of the code enabling dbt to work with
 - **Livy session management** with session reuse and robust connectivity across dbt runs
 - **Lakehouse with schema support** — auto-detects schema-enabled lakehouses and uses three-part naming (`lakehouse.schema.table`)
 - **Lakehouse without schema** — standard two-part naming (`lakehouse.table`)
-- **Materializations**: table, view, incremental (append, merge, insert_overwrite), seed, snapshot
+- **Materializations**: table, view, incremental (append, merge, insert_overwrite, microbatch, delete+insert), seed, snapshot
 - **Fabric Environment support** via `environmentId` configuration
 - **Security**: credential masking, UUID validation, HTTPS + domain validation, thread-safe token refresh
 - **Resilience**: HTTP 5xx retry with exponential backoff, bounded polling with configurable timeouts
@@ -356,6 +356,34 @@ The principal authenticated by your profile (CLI user or SPN) must have read acc
 
 Each segment is independently backtick-quoted, so workspace names with spaces or mixed case (e.g. `dbt Fabric Spark 1`) round-trip correctly.
 
+### Incremental strategies
+
+`incremental` models accept these `incremental_strategy` values via `config()`:
+
+| Strategy             | `file_format` | `unique_key`  | Behavior                                                                              |
+| -------------------- | ------------- | ------------- | ------------------------------------------------------------------------------------- |
+| `append` (default)   | any           | optional      | Insert all new rows; no updates or deletes.                                            |
+| `merge`              | `delta`       | optional      | `MERGE INTO` — update matched rows, insert the rest.                                   |
+| `insert_overwrite`   | `delta`       | —             | Overwrite matched partitions (`partition_by`), or the whole table when unpartitioned. |
+| `microbatch`         | `delta`       | —             | Per-batch delete (by `partition_by`) then insert; used by dbt's microbatch.           |
+| `delete+insert`      | `delta`       | **required**  | Delete target rows whose `unique_key`(s) appear in the new data, then insert all new rows. |
+
+`delete+insert` is a key-based full row-replace: it deletes every target row whose
+`unique_key` appears in the incoming set and then inserts all incoming rows. Use it
+instead of `merge` when you want matched keys replaced wholesale rather than updated
+column-by-column. It requires `file_format: delta` and a `unique_key` (a single column
+or a list) — omitting the key raises a compile-time error. Optional
+`incremental_predicates` are ANDed into the delete match to scope it to a window.
+
+```sql
+{{ config(
+    materialized='incremental',
+    incremental_strategy='delete+insert',
+    unique_key='id',
+    file_format='delta'
+) }}
+```
+
 ### Configuration Reference
 
 | Option                  | Type   | Default                               | Description                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -421,12 +449,20 @@ Set `high_concurrency: false` to fall back to the single-session-per-process mod
 serves every thread and statements queue FIFO inside — useful as an escape hatch
 when debugging any problems with the high-concurrency API.
 
-Fabric packs up to **5 REPLs onto one underlying Livy session** (see the
+Fabric packs REPLs onto one underlying Livy session up to
+**`spark.highConcurrency.max`** (the "dynamic session sharing" limit; see the
 ["Limits"](https://learn.microsoft.com/en-us/fabric/data-engineering/high-concurrency-livy#key-concepts)
-note in the Microsoft Learn HC Livy docs). With `threads > 5`, dbt still
-works correctly — Fabric simply spins up a second underlying Livy session
-to host the 6th REPL onwards, and the same `sessionTag` makes future
-acquires snap-attach to whichever underlying session has room.
+note in the Microsoft Learn HC Livy docs), whose **default is 5**. Two things
+count against that limit:
+
+- **one REPL per dbt worker thread** (`threads`), **plus**
+- **dbt's persistent main-thread ("master") connection**, which is also a REPL —
+  it is held for relation-cache listing at startup and again at `on-run-end`.
+
+So a single build holds up to **`threads + 1`** REPLs concurrently. When that
+exceeds the cap, dbt still works correctly — Fabric simply spins up a second
+underlying Livy session to host the overflow REPL(s), and the same `sessionTag`
+makes future acquires snap-attach to whichever underlying session has room.
 
 What that means in practice:
 
@@ -446,9 +482,26 @@ that could surprise — none ship with this adapter today.
 
 Cost tradeoff: each additional underlying Livy session is a separate
 Spark cluster billed for the duration of the run plus the
-`spark.livy.session.idle.timeout` afterwards. Keep `threads ≤ 5` for the
-cheapest profile; raise it only when the extra parallelism beats the
-extra compute spend.
+`spark.livy.session.idle.timeout` afterwards. Because the master connection
+consumes one REPL slot on top of the workers, the single-session ceiling is
+**`threads ≤ spark.highConcurrency.max − 1`** — i.e. **`threads ≤ 4`** at the
+default cap of 5. (`threads: 5` needs 6 REPLs, so it spills to a second session.)
+
+To run `threads ≥ 5` inside one billed session, raise the cap in your profile —
+Fabric honors it at session-create time, no Environment required:
+
+```yaml
+spark_config:
+  name: <your-app-name>
+  conf:
+    spark.highConcurrency.max: "50"   # keep ≥ threads + 1
+```
+
+Alternatively, attach a Fabric
+[Environment](https://learn.microsoft.com/en-us/fabric/data-engineering/create-and-use-environment)
+whose Spark properties set `spark.highConcurrency.max`. Keep the cap ≥ `threads + 1`
+so a single build stays on one billed session; raise `threads` only when the extra
+parallelism beats the extra compute spend.
 
 High-concurrency has no effect in local mode as this is a Fabric specific construct.
 

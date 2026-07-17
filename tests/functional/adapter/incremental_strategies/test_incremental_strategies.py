@@ -4,10 +4,12 @@ from dbt.tests.adapter.simple_seed.test_seed import SeedConfigBase
 from dbt.tests.util import check_relations_equal, run_dbt
 from tests.functional.adapter.incremental_strategies.fixtures import (
     append_delta_sql,
+    bad_delete_insert_no_key_sql,
     bad_file_format_sql,
     bad_merge_not_delta_sql,
     bad_strategy_sql,
     default_append_sql,
+    delete_insert_unique_key_sql,
     delta_merge_no_key_sql,
     delta_merge_unique_key_sql,
     delta_merge_update_columns_sql,
@@ -86,6 +88,7 @@ class TestDeltaStrategies(BaseIncrementalStrategies):
             "merge_no_key.sql": delta_merge_no_key_sql,
             "merge_unique_key.sql": delta_merge_unique_key_sql,
             "merge_update_columns.sql": delta_merge_update_columns_sql,
+            "delete_insert_unique_key.sql": delete_insert_unique_key_sql,
             # Skip: cannot be acnive on any endpoint with grants
             # "insert_overwrite_partitions_delta.sql": insert_overwrite_partitions_delta_sql,
         }
@@ -101,6 +104,7 @@ class TestDeltaStrategies(BaseIncrementalStrategies):
         check_relations_equal(project.adapter, ["merge_no_key", "expected_append"])
         check_relations_equal(project.adapter, ["merge_unique_key", "expected_upsert"])
         check_relations_equal(project.adapter, ["merge_update_columns", "expected_partial_upsert"])
+        check_relations_equal(project.adapter, ["delete_insert_unique_key", "expected_upsert"])
 
     def test_delta_strategies(self, project):
         self.run_and_test(project)
@@ -113,6 +117,7 @@ class TestBadStrategies(BaseIncrementalStrategies):
             "bad_file_format.sql": bad_file_format_sql,
             "bad_merge_not_delta.sql": bad_merge_not_delta_sql,
             "bad_strategy.sql": bad_strategy_sql,
+            "bad_delete_insert_no_key.sql": bad_delete_insert_no_key_sql,
         }
 
     @staticmethod

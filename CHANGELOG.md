@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.12.11
+
+### Features
+
+- Added a `delete+insert` incremental strategy for `incremental` models. Set `incremental_strategy='delete+insert'` with a `unique_key` (single column or list) and `file_format: delta` to get a key-based full row-replace: on each incremental run the adapter deletes every target row whose `unique_key`(s) appear in the newly staged data and then inserts all staged rows, so matched keys are replaced wholesale instead of updated column-by-column as `merge` does. Optional `incremental_predicates` are ANDed into the delete match to scope it to a window. Like the `microbatch` strategy, the delete and insert are issued as two separate statements (Fabric Spark cannot run multiple statements per query), and the delete uses `MERGE ... WHEN MATCHED THEN DELETE` against a `SELECT DISTINCT` of the keys because Delta Lake on Fabric rejects subqueries in `DELETE` conditions (the `DISTINCT` also avoids multiple-source-row match errors on duplicate keys). Omitting `unique_key` or using a non-`delta` `file_format` raises a clear compile-time error. ([#240](https://github.com/microsoft/dbt-fabricspark/issues/240))
+
+---
+
 ## v1.12.10
 
 ### Features

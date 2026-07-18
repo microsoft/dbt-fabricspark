@@ -100,6 +100,21 @@ class TestDuplicateRelationIdentity(unittest.TestCase):
         self.assertEqual(str(rel_dwh), "`wks_dwh`.`lh_dwh`.`dbo`.d_company")
         self.assertNotEqual(str(rel_common), str(rel_dwh))
 
+    def test_cross_workspace_relations_use_meta_identity(self):
+        """workspace_name under config.meta still participates in relation identity."""
+        config = self._config(schema="dbo", lakehouse="bronze")
+        common = _make_node("m_common", database="lh_common", schema="dbo", alias="d_company")
+        common.config.meta = {"workspace_name": "wks_common"}
+        dwh = _make_node("m_dwh", database="lh_dwh", schema="dbo", alias="d_company")
+        dwh.config.meta = {"workspace_name": "wks_dwh"}
+
+        rel_common = FabricSparkRelation.create_from(quoting=config, relation_config=common)
+        rel_dwh = FabricSparkRelation.create_from(quoting=config, relation_config=dwh)
+
+        self.assertEqual(str(rel_common), "`wks_common`.`lh_common`.`dbo`.d_company")
+        self.assertEqual(str(rel_dwh), "`wks_dwh`.`lh_dwh`.`dbo`.d_company")
+        self.assertNotEqual(str(rel_common), str(rel_dwh))
+
     def test_cross_lakehouse_relations_have_distinct_identity(self):
         """Cross-lakehouse without ``workspace_name``: the schema-enabled
         profile fallback (``schema != lakehouse``) still includes the database

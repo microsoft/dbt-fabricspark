@@ -58,6 +58,30 @@
   {{ return(adapter.dispatch('ensure_database_exists', 'dbt')(schema_name, database=database, workspace=workspace)) }}
 {% endmacro %}
 
+{% macro fabricspark__get_workspace_name(config=none, node=none) -%}
+  {#-- Delegate to `adapter.get_workspace_name_from_config()` (Python) rather than
+       reading `config`/`node.config` directly in Jinja: dbt-core's Jinja
+       environment is sandboxed and blocks attribute access to underscore-prefixed
+       names (e.g. `config._extra`), so a real BaseConfig object's top-level
+       `_extra` entries cannot be distinguished from `meta` entries here without
+       calling `config.get('workspace_name')` -- which fires `GetMetaKeyWarning`
+       whenever the key is absent from real fields/`_extra` but present under
+       `meta`, exactly the `meta.workspace_name` case we support. --#}
+  {%- set ns = namespace(workspace_name=none) -%}
+  {%- if node is not none -%}
+    {%- set ns.workspace_name = adapter.get_workspace_name_from_config(node.config) -%}
+  {%- endif -%}
+  {%- if not ns.workspace_name and config is not none -%}
+    {%- set ns.workspace_name = adapter.get_workspace_name_from_config(config) -%}
+  {%- endif -%}
+  {{ return(ns.workspace_name or target.workspace_name) }}
+{% endmacro %}
+
+
+{% macro get_workspace_name(config=none, node=none) %}
+  {{ return(adapter.dispatch('get_workspace_name', 'dbt')(config=config, node=node)) }}
+{% endmacro %}
+
 {% macro drop_materialized_lake_view(relation) %}
   {% call statement('drop_mlv') -%}
     drop materialized lake view if exists {{ relation }}
@@ -85,11 +109,7 @@
        non-schema-enabled lakehouse is a parse-time error with a clear
        remediation message. --#}
   {%- set ws_name = none -%}
-  {%- if node is not none and node.config is not none -%}
-    {%- set ws_name = node.config.get('workspace_name') or target.workspace_name -%}
-  {%- elif target.workspace_name -%}
-    {%- set ws_name = target.workspace_name -%}
-  {%- endif -%}
+  {%- set ws_name = get_workspace_name(node=node) -%}
   {%- if ws_name -%}
     {%- do adapter.validate_workspace_name_supported(
         ws_name,

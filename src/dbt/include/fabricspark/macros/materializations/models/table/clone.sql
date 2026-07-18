@@ -41,7 +41,7 @@
 
       {%- set target_relation = this.incorporate(type='table') -%}
 
-      {%- set workspace_name = config.get('workspace_name') or target.workspace_name -%}
+      {%- set workspace_name = get_workspace_name(config=config, node=model) -%}
       {%- if workspace_name -%}
         {%- set target_relation = target_relation.incorporate(workspace=workspace_name) -%}
       {%- endif -%}

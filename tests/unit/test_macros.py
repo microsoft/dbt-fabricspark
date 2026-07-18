@@ -254,6 +254,66 @@ class TestEnsureDatabaseExists(unittest.TestCase):
         self.assertEqual(result, "create database if not exists myschema")
 
 
+class TestWorkspaceNameMacro(unittest.TestCase):
+    def setUp(self):
+        self.jinja_env = Environment(
+            loader=FileSystemLoader("src/dbt/include/fabricspark/macros/adapters"),
+            extensions=["jinja2.ext.do"],
+        )
+
+    def _render(self, config=None, node=None, target_workspace_name=None):
+        from dbt.adapters.fabricspark.relation import FabricSparkRelation
+
+        template = self.jinja_env.get_template(
+            "schema.sql",
+            globals={
+                "target": mock.Mock(workspace_name=target_workspace_name),
+                "adapter": mock.Mock(
+                    get_workspace_name_from_config=FabricSparkRelation._get_workspace_name_from_config
+                ),
+                "return": lambda r: r,
+            },
+        )
+        return template.module.fabricspark__get_workspace_name(config=config, node=node).strip()
+
+    def test_prefers_top_level_workspace_name(self):
+        config = {"workspace_name": "top-level", "meta": {"workspace_name": "meta-level"}}
+        self.assertEqual(
+            self._render(config=config, target_workspace_name="profile-ws"), "top-level"
+        )
+
+    def test_uses_meta_workspace_name(self):
+        config = {"meta": {"workspace_name": "meta-level"}}
+        self.assertEqual(
+            self._render(config=config, target_workspace_name="profile-ws"), "meta-level"
+        )
+
+    def test_falls_back_to_target_workspace_name(self):
+        self.assertEqual(self._render(config={}, target_workspace_name="profile-ws"), "profile-ws")
+
+    def test_real_node_config_meta_avoids_config_get(self):
+        """A real NodeConfig with only meta.workspace_name set must resolve without
+        ever calling config.get('workspace_name') / config.get('meta') -- the exact
+        call path that fires dbt-core's GetMetaKeyWarning. Regression test for issue
+        #245 / PR #246 bug-bash finding: dbt-core's Jinja environment is sandboxed
+        and blocks attribute access to underscore-prefixed names (e.g. `_extra`), so
+        this resolution must happen via a Python `adapter` method, not directly in
+        the macro."""
+        from dbt.artifacts.resources import NodeConfig
+
+        node_config = NodeConfig()
+        node_config.meta = {"workspace_name": "meta-ws"}
+        node = mock.Mock(config=node_config)
+
+        with mock.patch.object(NodeConfig, "get", wraps=node_config.get) as get_spy:
+            result = self._render(config=None, node=node, target_workspace_name="profile-ws")
+
+        self.assertEqual(result, "meta-ws")
+        for call in get_spy.call_args_list:
+            self.assertNotIn("workspace_name", call.args)
+            self.assertNotIn("meta", call.args)
+
+
 class TestClusteredColsLiquidClustering(unittest.TestCase):
     """Render ``fabricspark__clustered_cols`` and ``fabricspark__file_format_clause``
     in isolation and assert the four semantics branches called out in the

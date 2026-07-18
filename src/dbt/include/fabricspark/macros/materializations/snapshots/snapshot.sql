@@ -84,7 +84,7 @@
   {%- set unique_key = config.get('unique_key') %}
   {%- set file_format = config.get('file_format') or 'delta' -%}
   {%- set grant_config = config.get('grants') -%}
-  {%- set workspace_name = config.get('workspace_name') or target.workspace_name -%}
+  {%- set workspace_name = get_workspace_name(config=config, node=model) -%}
 
   {% set target_relation_exists, target_relation = get_or_create_relation(
           database=model.database,
@@ -114,7 +114,7 @@
   {% endif %}
 
   {#-- Ensure the database/schema exists before creating the snapshot table --#}
-  {% do ensure_database_exists(model.schema, database=model.database, workspace=model.config.get('workspace_name') or target.workspace_name) %}
+  {% do ensure_database_exists(model.schema, database=model.database, workspace=get_workspace_name(config=config, node=model)) %}
 
   {%- if not target_relation.is_table -%}
     {% do exceptions.relation_wrong_type(target_relation, 'table') %}

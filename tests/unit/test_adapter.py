@@ -751,6 +751,58 @@ class TestSparkAdapter(unittest.TestCase):
         finally:
             FabricSparkRelation._schemas_enabled = False
 
+    def test_create_from_model_meta_workspace_name_overrides_profile(self):
+        """Model config.meta.workspace_name takes precedence over the profile-level value."""
+        from dbt.adapters.contracts.relation import RelationConfig
+
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            config = config_from_parts_or_dicts(
+                self.project_cfg,
+                {
+                    "outputs": {
+                        "test": {
+                            "type": "fabricspark",
+                            "method": "livy",
+                            "authentication": "CLI",
+                            "lakehouse": "silver_lh",
+                            "schema": "dbo",
+                            "workspace_name": "profile-ws",
+                            "workspaceid": "1de8390c-9aca-4790-bee8-72049109c0f4",
+                            "lakehouseid": "8c5bc260-bc3a-4898-9ada-01e433d461ba",
+                            "connect_retries": 0,
+                            "connect_timeout": 10,
+                            "threads": 1,
+                            "endpoint": "https://dailyapi.fabric.microsoft.com/v1",
+                            "spark_config": {"name": "test-session"},
+                        }
+                    },
+                    "target": "test",
+                },
+            )
+            relation_config = mock.MagicMock(spec=RelationConfig)
+            relation_config.database = "silver_lh"
+            relation_config.schema = "dbo"
+            relation_config.identifier = "orders"
+            relation_config.quoting_dict = {}
+            relation_config.config = mock.MagicMock()
+            relation_config.config.get = mock.MagicMock(
+                side_effect=lambda key: {
+                    "workspace_name": None,
+                    "meta": {"workspace_name": "meta-ws"},
+                }.get(key)
+            )
+            relation_config.catalog_name = None
+
+            rel = FabricSparkRelation.create_from(config, relation_config)
+            assert rel.workspace == "meta-ws", (
+                "model config.meta.workspace_name must override profile-level workspace_name"
+            )
+            assert "`meta-ws`" in str(rel)
+            assert "profile-ws" not in str(rel)
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
     def test_create_from_no_workspace_when_neither_set(self):
         """create_from produces no workspace when neither model config nor profile sets one."""
         from dbt.adapters.contracts.relation import RelationConfig
@@ -769,6 +821,69 @@ class TestSparkAdapter(unittest.TestCase):
 
             rel = FabricSparkRelation.create_from(config, relation_config)
             assert rel.workspace is None
+        finally:
+            FabricSparkRelation._schemas_enabled = False
+
+    def test_create_from_model_meta_workspace_name_avoids_config_get(self):
+        """Resolving workspace_name from a real NodeConfig with only meta set must not
+        call config.get('workspace_name') / config.get('meta').
+
+        dbt-core's BaseConfig.get() fires GetMetaKeyWarning whenever the requested key
+        is absent as a real field/_extra entry but present under meta -- exactly the
+        meta.workspace_name case this adapter supports. Regression test for the warning
+        found while bug-bashing issue #245 / PR #246: the original fix for #245 traded
+        one warning (CustomKeyInConfigDeprecation) for another (GetMetaKeyWarning) by
+        calling the generic top-level getter before checking meta.
+        """
+        from dbt.adapters.contracts.relation import RelationConfig
+        from dbt.artifacts.resources import NodeConfig
+
+        FabricSparkRelation._schemas_enabled = True
+        try:
+            config = config_from_parts_or_dicts(
+                self.project_cfg,
+                {
+                    "outputs": {
+                        "test": {
+                            "type": "fabricspark",
+                            "method": "livy",
+                            "authentication": "CLI",
+                            "lakehouse": "silver_lh",
+                            "schema": "dbo",
+                            "workspace_name": "profile-ws",
+                            "workspaceid": "1de8390c-9aca-4790-bee8-72049109c0f4",
+                            "lakehouseid": "8c5bc260-bc3a-4898-9ada-01e433d461ba",
+                            "connect_retries": 0,
+                            "connect_timeout": 10,
+                            "threads": 1,
+                            "endpoint": "https://dailyapi.fabric.microsoft.com/v1",
+                            "spark_config": {"name": "test-session"},
+                        }
+                    },
+                    "target": "test",
+                },
+            )
+            node_config = NodeConfig()
+            node_config.meta = {"workspace_name": "meta-ws"}
+
+            relation_config = mock.MagicMock(spec=RelationConfig)
+            relation_config.database = "silver_lh"
+            relation_config.schema = "dbo"
+            relation_config.identifier = "orders"
+            relation_config.quoting_dict = {}
+            relation_config.config = node_config
+            relation_config.catalog_name = None
+
+            with mock.patch.object(NodeConfig, "get", wraps=node_config.get) as get_spy:
+                rel = FabricSparkRelation.create_from(config, relation_config)
+
+            assert rel.workspace == "meta-ws"
+            for call in get_spy.call_args_list:
+                assert "workspace_name" not in call.args and "meta" not in call.args, (
+                    "config.get() must not be called with 'workspace_name' or 'meta' on a "
+                    "real BaseConfig object -- this is the exact call path that fires "
+                    "dbt-core's GetMetaKeyWarning"
+                )
         finally:
             FabricSparkRelation._schemas_enabled = False
 

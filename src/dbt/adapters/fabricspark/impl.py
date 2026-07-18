@@ -117,6 +117,22 @@ class FabricSparkAdapter(SQLAdapter):
     AdapterSpecificConfigs: TypeAlias = FabricSparkConfig
 
     @available
+    def get_workspace_name_from_config(self, config) -> Optional[str]:
+        """Resolve ``workspace_name`` from a model's ``config`` (top-level or
+        ``meta.workspace_name``), exposed to macros via ``adapter``.
+
+        dbt-core's Jinja environment is sandboxed and blocks attribute access
+        to underscore-prefixed names (e.g. ``config._extra``), so this lookup
+        cannot be done safely from within a macro directly -- it must happen
+        in Python, where we can inspect ``_extra``/``meta`` without going
+        through ``BaseConfig.get()`` (which fires ``GetMetaKeyWarning`` when
+        the key is absent from real fields/``_extra`` but present under
+        ``meta``, exactly the ``meta.workspace_name`` case this adapter
+        supports).
+        """
+        return FabricSparkRelation._get_workspace_name_from_config(config)
+
+    @available
     def is_lakehouse_schemas_enabled(self) -> bool:
         """Expose lakehouse_schemas_enabled to macros via adapter.
 

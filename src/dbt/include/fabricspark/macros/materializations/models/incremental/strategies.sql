@@ -73,23 +73,41 @@
 
 {% macro fabricspark__get_merge_sql(target, source, unique_key, dest_columns, incremental_predicates) %}
   {# need dest_columns for merge_exclude_columns, default to use "*" #}
+  {%- set target_alias = config.get('target_alias', 'DBT_INTERNAL_DEST') -%}
+  {%- set source_alias = config.get('source_alias', 'DBT_INTERNAL_SOURCE') -%}
+
   {%- set predicates = [] if incremental_predicates is none else [] + incremental_predicates -%}
   {%- set dest_columns = adapter.get_columns_in_relation(target) -%}
   {%- set merge_update_columns = config.get('merge_update_columns') -%}
   {%- set merge_exclude_columns = config.get('merge_exclude_columns') -%}
   {%- set update_columns = get_merge_update_columns(merge_update_columns, merge_exclude_columns, dest_columns) -%}
 
+  {%- set skip_matched_step = (config.get('skip_matched_step', false) | lower == 'true') -%}
+  {%- set skip_not_matched_step = (config.get('skip_not_matched_step', false) | lower == 'true') -%}
+  {%- set matched_condition = config.get('matched_condition') -%}
+  {%- set not_matched_condition = config.get('not_matched_condition') -%}
+  {%- set not_matched_by_source_action = config.get('not_matched_by_source_action') -%}
+  {%- set not_matched_by_source_condition = config.get('not_matched_by_source_condition') -%}
+
+  {#-- A WHEN NOT MATCHED BY SOURCE clause is only valid with a DELETE or UPDATE
+       action, so emit it solely when the configured action is one of those. --#}
+  {%- set not_matched_by_source_action_trimmed = not_matched_by_source_action | lower | trim(' \n\t') -%}
+  {%- set not_matched_by_source_action_is_set = (
+      not_matched_by_source_action_trimmed == 'delete'
+      or not_matched_by_source_action_trimmed.startswith('update')
+    ) -%}
+
   {% if unique_key %}
       {% if unique_key is sequence and unique_key is not mapping and unique_key is not string %}
           {% for key in unique_key %}
               {% set this_key_match %}
-                  DBT_INTERNAL_SOURCE.{{ key }} = DBT_INTERNAL_DEST.{{ key }}
+                  {{ source_alias }}.{{ key }} = {{ target_alias }}.{{ key }}
               {% endset %}
               {% do predicates.append(this_key_match) %}
           {% endfor %}
       {% else %}
           {% set unique_key_match %}
-              DBT_INTERNAL_SOURCE.{{ unique_key }} = DBT_INTERNAL_DEST.{{ unique_key }}
+              {{ source_alias }}.{{ unique_key }} = {{ target_alias }}.{{ unique_key }}
           {% endset %}
           {% do predicates.append(unique_key_match) %}
       {% endif %}
@@ -99,18 +117,29 @@
 
   {{ sql_header if sql_header is not none }}
 
-  merge into {{ target }} as DBT_INTERNAL_DEST
-      using {{ source }} as DBT_INTERNAL_SOURCE
+  merge into {{ target }} as {{ target_alias }}
+      using {{ source }} as {{ source_alias }}
       on {{ predicates | join(' and ') }}
 
-      when matched then update set
+      {% if not skip_matched_step %}
+      when matched
+        {%- if matched_condition %} and ({{ matched_condition }}){% endif %} then update set
         {% if update_columns -%}{%- for column_name in update_columns %}
-            {{ column_name }} = DBT_INTERNAL_SOURCE.{{ column_name }}
+            {{ column_name }} = {{ source_alias }}.{{ column_name }}
             {%- if not loop.last %}, {%- endif %}
         {%- endfor %}
         {%- else %} * {% endif %}
+      {% endif %}
 
-      when not matched then insert *
+      {% if not skip_not_matched_step %}
+      when not matched
+        {%- if not_matched_condition %} and ({{ not_matched_condition }}){% endif %} then insert *
+      {% endif %}
+
+      {% if not_matched_by_source_action_is_set %}
+      when not matched by source
+        {%- if not_matched_by_source_condition %} and ({{ not_matched_by_source_condition }}){% endif %} then {{ not_matched_by_source_action }}
+      {% endif %}
 {% endmacro %}
 
 

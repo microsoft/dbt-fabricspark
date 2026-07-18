@@ -64,6 +64,16 @@ class FabricSparkConfig(AdapterConfig):
     buckets: Optional[int] = None
     options: Optional[Dict[str, str]] = None
     merge_update_columns: Optional[str] = None
+    merge_exclude_columns: Optional[str] = None
+    skip_matched_step: Optional[bool] = None
+    skip_not_matched_step: Optional[bool] = None
+    matched_condition: Optional[str] = None
+    not_matched_condition: Optional[str] = None
+    not_matched_by_source_action: Optional[str] = None
+    not_matched_by_source_condition: Optional[str] = None
+    target_alias: Optional[str] = None
+    source_alias: Optional[str] = None
+    merge_with_schema_evolution: Optional[bool] = None
     # Cross-workspace 4-part naming. When set on a model's
     # ``{{ config() }}``, the rendered relation becomes
     # ``\`workspace_name\`.\`database\`.\`schema\`.identifier`` — enabling

@@ -363,7 +363,7 @@ Each segment is independently backtick-quoted, so workspace names with spaces or
 | Strategy             | `file_format` | `unique_key`  | Behavior                                                                              |
 | -------------------- | ------------- | ------------- | ------------------------------------------------------------------------------------- |
 | `append` (default)   | any           | optional      | Insert all new rows; no updates or deletes.                                            |
-| `merge`              | `delta`       | optional      | `MERGE INTO` — update matched rows, insert the rest.                                   |
+| `merge`              | `delta`       | optional      | `MERGE INTO` — update matched rows, insert the rest. Supports [advanced merge options](#advanced-merge-options). |
 | `insert_overwrite`   | `delta`       | —             | Overwrite matched partitions (`partition_by`), or the whole table when unpartitioned. |
 | `microbatch`         | `delta`       | —             | Per-batch delete (by `partition_by`) then insert; used by dbt's microbatch.           |
 | `delete+insert`      | `delta`       | **required**  | Delete target rows whose `unique_key`(s) appear in the new data, then insert all new rows. |
@@ -381,6 +381,49 @@ or a list) — omitting the key raises a compile-time error. Optional
     incremental_strategy='delete+insert',
     unique_key='id',
     file_format='delta'
+) }}
+```
+
+#### Advanced `merge` options
+
+When `incremental_strategy='merge'` (on `file_format: delta`) you can shape the
+generated `MERGE INTO` statement with the following optional `config()` keys. All of
+them default to today's behavior, so existing `merge` models are unaffected.
+
+| Config                            | Type   | Default              | Effect                                                                                             |
+| --------------------------------- | ------ | -------------------- | -------------------------------------------------------------------------------------------------- |
+| `target_alias`                    | string | `DBT_INTERNAL_DEST`  | Alias used for the target relation in the `MERGE` (and in your conditions).                         |
+| `source_alias`                    | string | `DBT_INTERNAL_SOURCE`| Alias used for the staged source in the `MERGE` (and in your conditions).                           |
+| `matched_condition`               | string | —                    | Extra predicate `AND (…)` on the `WHEN MATCHED … THEN UPDATE` clause.                               |
+| `not_matched_condition`           | string | —                    | Extra predicate `AND (…)` on the `WHEN NOT MATCHED … THEN INSERT` clause.                           |
+| `skip_matched_step`               | bool   | `false`              | Omit the `WHEN MATCHED` clause entirely (insert-only merge).                                        |
+| `skip_not_matched_step`           | bool   | `false`              | Omit the `WHEN NOT MATCHED` clause entirely (update-only merge).                                    |
+| `not_matched_by_source_condition` | string | —                    | Extra predicate `AND (…)` on the `WHEN NOT MATCHED BY SOURCE` clause.                               |
+| `not_matched_by_source_action`    | string | —                    | Emits `WHEN NOT MATCHED BY SOURCE` when set to `delete` or `update set …` — e.g. propagate deletes. |
+| `merge_with_schema_evolution`     | bool   | `false`              | Enable MERGE schema evolution so new source columns are added to the target automatically. |
+
+`matched_condition`, `not_matched_condition` and `not_matched_by_source_condition`
+should reference the target/source using the aliases above (defaulting to
+`DBT_INTERNAL_DEST` / `DBT_INTERNAL_SOURCE`). `not_matched_by_source_action` only
+produces a clause when it is `delete` or starts with `update`; any other value is
+ignored. `merge_with_schema_evolution` sets the standard Delta
+`spark.databricks.delta.schema.autoMerge.enabled` session setting before the merge
+rather than emitting a proprietary SQL clause, so it works
+on Fabric Runtime 1.3 (Spark 3.5 / Delta Lake 3.2) and local Livy alike. These options
+require Fabric Runtime 1.3 or newer.
+
+```sql
+{{ config(
+    materialized='incremental',
+    incremental_strategy='merge',
+    unique_key='order_id',
+    file_format='delta',
+    target_alias='t',
+    source_alias='s',
+    matched_condition='s.updated_at > t.updated_at',
+    not_matched_by_source_condition="t.status <> 'archived'",
+    not_matched_by_source_action='delete',
+    merge_with_schema_evolution=true
 ) }}
 ```
 

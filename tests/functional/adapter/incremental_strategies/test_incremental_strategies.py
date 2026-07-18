@@ -17,11 +17,23 @@ from tests.functional.adapter.incremental_strategies.fixtures import (
     insert_overwrite_no_partitions_sql,
     insert_overwrite_partitions_sql,
     merge_full_refresh_sql,
+    merge_matched_condition_sql,
+    merge_not_matched_by_source_delete_sql,
+    merge_not_matched_by_source_update_sql,
+    merge_schema_evolution_sql,
+    merge_skip_matched_sql,
+    merge_skip_not_matched_sql,
 )
 from tests.functional.adapter.incremental_strategies.seeds import (
     expected_append_csv,
+    expected_matched_condition_csv,
+    expected_merge_schema_evolution_csv,
+    expected_not_matched_by_source_delete_csv,
+    expected_not_matched_by_source_update_csv,
     expected_overwrite_csv,
     expected_partial_upsert_csv,
+    expected_skip_matched_csv,
+    expected_skip_not_matched_csv,
     expected_upsert_csv,
 )
 
@@ -107,6 +119,123 @@ class TestDeltaStrategies(BaseIncrementalStrategies):
         check_relations_equal(project.adapter, ["delete_insert_unique_key", "expected_upsert"])
 
     def test_delta_strategies(self, project):
+        self.run_and_test(project)
+
+
+class BaseAdvancedMerge(BaseIncrementalStrategies):
+    """Shared driver for the advanced ``merge`` option scenarios.
+
+    Each subclass supplies a single model plus its expected seed and asserts the
+    materialized relation matches the expected one after two runs (create, then
+    incremental merge).
+    """
+
+    model_name: str = ""
+    expected_name: str = ""
+
+    def run_and_test(self, project):
+        self.seed_and_run_twice()
+        project.run_sql(f"REFRESH TABLE {{schema}}.{self.expected_name}")
+        check_relations_equal(project.adapter, [self.model_name, self.expected_name])
+
+
+class TestMergeSkipMatched(BaseAdvancedMerge):
+    model_name = "merge_skip_matched"
+    expected_name = "expected_skip_matched"
+
+    @pytest.fixture(scope="class")
+    def seeds(self):
+        return {"expected_skip_matched.csv": expected_skip_matched_csv}
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {"merge_skip_matched.sql": merge_skip_matched_sql}
+
+    def test_skip_matched(self, project):
+        self.run_and_test(project)
+
+
+class TestMergeSkipNotMatched(BaseAdvancedMerge):
+    model_name = "merge_skip_not_matched"
+    expected_name = "expected_skip_not_matched"
+
+    @pytest.fixture(scope="class")
+    def seeds(self):
+        return {"expected_skip_not_matched.csv": expected_skip_not_matched_csv}
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {"merge_skip_not_matched.sql": merge_skip_not_matched_sql}
+
+    def test_skip_not_matched(self, project):
+        self.run_and_test(project)
+
+
+class TestMergeMatchedCondition(BaseAdvancedMerge):
+    model_name = "merge_matched_condition"
+    expected_name = "expected_matched_condition"
+
+    @pytest.fixture(scope="class")
+    def seeds(self):
+        return {"expected_matched_condition.csv": expected_matched_condition_csv}
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {"merge_matched_condition.sql": merge_matched_condition_sql}
+
+    def test_matched_condition(self, project):
+        self.run_and_test(project)
+
+
+class TestMergeNotMatchedBySourceDelete(BaseAdvancedMerge):
+    model_name = "merge_not_matched_by_source_delete"
+    expected_name = "expected_not_matched_by_source_delete"
+
+    @pytest.fixture(scope="class")
+    def seeds(self):
+        return {
+            "expected_not_matched_by_source_delete.csv": expected_not_matched_by_source_delete_csv
+        }
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {"merge_not_matched_by_source_delete.sql": merge_not_matched_by_source_delete_sql}
+
+    def test_not_matched_by_source_delete(self, project):
+        self.run_and_test(project)
+
+
+class TestMergeNotMatchedBySourceUpdate(BaseAdvancedMerge):
+    model_name = "merge_not_matched_by_source_update"
+    expected_name = "expected_not_matched_by_source_update"
+
+    @pytest.fixture(scope="class")
+    def seeds(self):
+        return {
+            "expected_not_matched_by_source_update.csv": expected_not_matched_by_source_update_csv
+        }
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {"merge_not_matched_by_source_update.sql": merge_not_matched_by_source_update_sql}
+
+    def test_not_matched_by_source_update(self, project):
+        self.run_and_test(project)
+
+
+class TestMergeSchemaEvolution(BaseAdvancedMerge):
+    model_name = "merge_schema_evolution"
+    expected_name = "expected_merge_schema_evolution"
+
+    @pytest.fixture(scope="class")
+    def seeds(self):
+        return {"expected_merge_schema_evolution.csv": expected_merge_schema_evolution_csv}
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {"merge_schema_evolution.sql": merge_schema_evolution_sql}
+
+    def test_schema_evolution(self, project):
         self.run_and_test(project)
 
 

@@ -14,6 +14,7 @@
   {%- set language = model['language'] -%}
   {%- set on_schema_change = incremental_validate_on_schema_change(config.get('on_schema_change'), default='ignore') -%}
   {%- set incremental_predicates = config.get('predicates', none) or config.get('incremental_predicates', none) -%}
+  {%- set merge_schema_evolution = (strategy == 'merge') and (config.get('merge_with_schema_evolution', false) | lower == 'true') -%}
   {%- set target_relation = this -%}
   {%- set existing_relation = load_relation(this) -%}
   {%- set tmp_relation = this.incorporate(path = {"identifier": this.identifier ~ '__dbt_tmp'}) -%}
@@ -95,6 +96,13 @@
         {{ get_insert_into_sql(tmp_relation, target_relation) }}
       {%- endcall -%}
     {%- else -%}
+      {#-- Fabric Spark / open-source Delta enable MERGE schema evolution through the
+           session conf, not a SQL clause, so set it before the merge statement. --#}
+      {%- if merge_schema_evolution -%}
+        {%- call statement('enable_schema_evolution') -%}
+          set spark.databricks.delta.schema.autoMerge.enabled = true
+        {%- endcall -%}
+      {%- endif -%}
       {%- call statement('main') -%}
         {{ dbt_spark_get_incremental_sql(strategy, tmp_relation, target_relation, existing_relation, unique_key, incremental_predicates) }}
       {%- endcall -%}

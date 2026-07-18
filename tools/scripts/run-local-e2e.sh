@@ -93,7 +93,7 @@ dbt debug --target "${TARGET}"
 dbt clean --target "${TARGET}"
 dbt seed --target "${TARGET}" --full-refresh
 dbt run --target "${TARGET}"
-dbt test --target "${TARGET}"
+dbt test --exclude tag:merge_options --target "${TARGET}"
 
 echo ""
 echo "============================================"
@@ -124,6 +124,14 @@ dbt run --select incremental_orders_delete_insert --target "${TARGET}"
 echo ""
 echo "--- [incremental_orders_delete_insert] Full-refresh run (rebuilds the delta table cleanly) ---"
 dbt run --select incremental_orders_delete_insert --full-refresh --target "${TARGET}"
+
+echo ""
+echo "--- [incremental_orders_merge_options] Incremental run (advanced merge: matched_condition + when not matched by source delete + schema evolution) ---"
+dbt run --select incremental_orders_merge_options --target "${TARGET}"
+
+echo ""
+echo "--- [incremental_orders_merge_options] dbt test asserts the CDC merge produced the expected rows ---"
+dbt test --select incremental_orders_merge_options --target "${TARGET}"
 
 echo ""
 echo "============================================"

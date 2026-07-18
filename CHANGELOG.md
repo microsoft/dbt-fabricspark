@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.12.12
+
+### Features
+
+- Added advanced `merge` configuration options to the `merge` incremental strategy (`file_format: delta`), giving models full control over the generated `MERGE INTO` statement. Nine new optional `config()` keys are recognized: `target_alias` / `source_alias` (rename the target/source relations in the statement and in your conditions), `matched_condition` / `not_matched_condition` / `not_matched_by_source_condition` (append `AND (<cond>)` to the respective `WHEN` clauses), `skip_matched_step` / `skip_not_matched_step` (omit the `WHEN MATCHED` or `WHEN NOT MATCHED` clause), `not_matched_by_source_action` (emit a `WHEN NOT MATCHED BY SOURCE` clause when set to `delete` or `update set ...` — e.g. to propagate source deletes for CDC), and `merge_with_schema_evolution` (add new source columns to the target automatically). Schema evolution is applied by setting the standard Delta `spark.databricks.delta.schema.autoMerge.enabled` session setting before the merge rather than emitting a proprietary `WITH SCHEMA EVOLUTION` SQL clause, so it works on open-source Delta Lake 3.2 (Fabric Runtime 1.3) and local Livy, which reject that clause. Every option defaults to the previous behavior, so existing `merge` models render byte-identical SQL and are fully backward compatible. The clauses require Fabric Runtime 1.3 (Spark 3.5 / Delta Lake 3.2) or newer. ([#247](https://github.com/microsoft/dbt-fabricspark/issues/247))
+
+---
+
 ## v1.12.11
 
 ### Features

@@ -138,6 +138,27 @@ class FabricSparkRelation(BaseRelation):
 
             return getattr(container, key, None)
 
+        # Real dbt-core BaseConfig objects store adapter-specific top-level keys in
+        # `_extra`. We resolve `workspace_name` via direct attribute/dict access here
+        # rather than `config.get("workspace_name")`, because `BaseConfig.get()` fires
+        # `GetMetaKeyWarning` whenever the key is absent from real fields/`_extra` but
+        # present under `meta` -- exactly the `meta.workspace_name` case we support.
+        extra = getattr(config, "_extra", None) if config is not None else None
+        if isinstance(extra, dict):
+            workspace_name = getattr(config, "workspace_name", None) or extra.get("workspace_name")
+            if workspace_name:
+                return workspace_name
+
+            meta = getattr(config, "meta", None)
+            if isinstance(meta, dict):
+                workspace_name = meta.get("workspace_name")
+                if workspace_name:
+                    return workspace_name
+
+            return None
+
+        # Fallback for mock/mapping-style configs (e.g. unit tests) that don't
+        # expose a real `_extra` dict.
         workspace_name = _safe_get(config, "workspace_name")
         if workspace_name:
             return workspace_name

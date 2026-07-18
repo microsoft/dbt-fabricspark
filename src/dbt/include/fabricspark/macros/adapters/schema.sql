@@ -59,27 +59,24 @@
 {% endmacro %}
 
 {% macro fabricspark__get_workspace_name(config=none, node=none) -%}
-  {%- set workspace_name = none -%}
-  {%- if config is not none -%}
-    {%- set workspace_name = config.get('workspace_name') -%}
-    {%- if not workspace_name -%}
-      {%- set meta = config.get('meta') -%}
-      {%- if meta is mapping -%}
-        {%- set workspace_name = meta.get('workspace_name') -%}
-      {%- endif -%}
-    {%- endif -%}
+  {#-- Delegate to `adapter.get_workspace_name_from_config()` (Python) rather than
+       reading `config`/`node.config` directly in Jinja: dbt-core's Jinja
+       environment is sandboxed and blocks attribute access to underscore-prefixed
+       names (e.g. `config._extra`), so a real BaseConfig object's top-level
+       `_extra` entries cannot be distinguished from `meta` entries here without
+       calling `config.get('workspace_name')` -- which fires `GetMetaKeyWarning`
+       whenever the key is absent from real fields/`_extra` but present under
+       `meta`, exactly the `meta.workspace_name` case we support. --#}
+  {%- set ns = namespace(workspace_name=none) -%}
+  {%- if node is not none -%}
+    {%- set ns.workspace_name = adapter.get_workspace_name_from_config(node.config) -%}
   {%- endif -%}
-  {%- if not workspace_name and node is not none and node.config is not none -%}
-    {%- set workspace_name = node.config.get('workspace_name') -%}
-    {%- if not workspace_name -%}
-      {%- set meta = node.config.get('meta') -%}
-      {%- if meta is mapping -%}
-        {%- set workspace_name = meta.get('workspace_name') -%}
-      {%- endif -%}
-    {%- endif -%}
+  {%- if not ns.workspace_name and config is not none -%}
+    {%- set ns.workspace_name = adapter.get_workspace_name_from_config(config) -%}
   {%- endif -%}
-  {{ return(workspace_name or target.workspace_name) }}
+  {{ return(ns.workspace_name or target.workspace_name) }}
 {% endmacro %}
+
 
 {% macro get_workspace_name(config=none, node=none) %}
   {{ return(adapter.dispatch('get_workspace_name', 'dbt')(config=config, node=node)) }}

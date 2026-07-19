@@ -73,6 +73,15 @@ class FabricSparkCredentials(Credentials):
     # Ignored (with a warning) when the lakehouse is not schema-enabled.
     # Precedence: model config(workspace_name=...) > profile workspace_name > none.
     workspace_name: Optional[str] = None
+
+    # Opt-in identifier quoting for case-sensitive table names. When True, the
+    # adapter backtick-quotes the identifier segment of every relation so Fabric
+    # Spark preserves the original casing instead of folding it to lowercase.
+    # Requires ``spark.sql.caseSensitive: "true"`` in ``spark_config.conf`` for
+    # Spark to resolve the mixed-case identifiers; the connection manager warns
+    # when the pairing is missing. Defaults to False (unquoted, lowercase-folded)
+    # so existing projects render byte-identical SQL.
+    quote_identifiers: bool = False
     # Default ``None`` so the adapter does NOT send
     # ``spark.livy.session.idle.timeout`` in the session ``conf``. Fabric
     # treats that key as session-immutable, so its presence (even when the
@@ -299,4 +308,12 @@ class FabricSparkCredentials(Credentials):
 
     def _connection_keys(self) -> Tuple[str, ...]:
         # Intentionally excludes client_secret, accessToken, tenant_id
-        return "workspaceid", "lakehouseid", "lakehouse", "endpoint", "schema", "workspace_name"
+        return (
+            "workspaceid",
+            "lakehouseid",
+            "lakehouse",
+            "endpoint",
+            "schema",
+            "workspace_name",
+            "quote_identifiers",
+        )

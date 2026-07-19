@@ -50,6 +50,26 @@ for logger_name in [
 NUMBERS = DECIMALS + (int, float)
 
 
+def warn_if_quote_identifiers_without_case_sensitivity(creds) -> None:
+    """Warn when ``quote_identifiers`` is on but Spark case sensitivity is off.
+
+    Backtick-quoting preserves identifier casing in the emitted SQL, but Fabric
+    Spark still folds identifiers to lowercase at resolution time unless
+    ``spark.sql.caseSensitive`` is ``"true"`` in the session ``conf``. Both are
+    required together for case-sensitive table names to round-trip.
+    """
+    if not creds.quote_identifiers:
+        return
+    case_sensitive = str(creds.spark_config.get("conf", {}).get("spark.sql.caseSensitive"))
+    if case_sensitive.lower() != "true":
+        logger.warning(
+            "quote_identifiers is enabled but spark_config.conf['spark.sql.caseSensitive'] "
+            "is not 'true'. Backtick-quoted identifiers preserve casing in the emitted SQL, "
+            "but Spark will still fold them unless case-sensitive resolution is enabled. Set "
+            'spark_config.conf: { "spark.sql.caseSensitive": "true" } in your profile.'
+        )
+
+
 class FabricSparkConnectionMethod(StrEnum):
     LIVY = "livy"
 
@@ -163,6 +183,8 @@ class FabricSparkConnectionManager(SQLConnectionManager):
         FabricSparkRelation._identifier_prefix = (
             creds.identifier_prefix if not creds.lakehouse_schemas_enabled else ""
         )
+        FabricSparkRelation._quote_identifiers = creds.quote_identifiers
+        warn_if_quote_identifiers_without_case_sensitivity(creds)
 
         for i in range(1 + creds.connect_retries):
             try:

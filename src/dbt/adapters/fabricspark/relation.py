@@ -44,7 +44,18 @@ class FabricSparkRelation(BaseRelation):
     _schemas_enabled: ClassVar[bool] = False
     _identifier_prefix: ClassVar[str] = ""
 
-    quote_policy: Policy = field(default_factory=lambda: FabricSparkQuotePolicy())
+    # Set once by the connection manager from ``credentials.quote_identifiers``.
+    # When True, the identifier segment is backtick-quoted on every relation so
+    # Fabric Spark preserves casing instead of folding to lowercase. Honored by
+    # both the ``quote_policy`` default_factory (macro ``create()`` paths) and
+    # the ``create_from`` override below (model / ``ref`` / ``source`` paths).
+    _quote_identifiers: ClassVar[bool] = False
+
+    quote_policy: Policy = field(
+        default_factory=lambda: FabricSparkQuotePolicy(
+            identifier=FabricSparkRelation._quote_identifiers
+        )
+    )
     include_policy: Policy = field(
         default_factory=lambda: FabricSparkIncludePolicy(
             database=FabricSparkRelation._schemas_enabled,
@@ -104,6 +115,15 @@ class FabricSparkRelation(BaseRelation):
         When no model-level ``workspace_name`` is set, falls back to the
         profile-level ``workspace_name`` from credentials (``target.workspace_name``).
         """
+        if cls._quote_identifiers:
+            # Base ``create_from`` deep-merges the parse-time project ``quoting``
+            # dict (computed while ``_quote_identifiers`` was still False) over
+            # the default quote policy, which would clobber the identifier back
+            # to unquoted. A ``quote_policy`` kwarg has the highest merge
+            # precedence, so force identifier quoting here for these relations.
+            quote_policy = dict(kwargs.get("quote_policy") or {})
+            quote_policy["identifier"] = True
+            kwargs["quote_policy"] = quote_policy
         if "workspace" not in kwargs:
             ws_name = cls._get_workspace_name_from_config(getattr(relation_config, "config", None))
             # Fall back to profile-level workspace_name when model config doesn't set one.

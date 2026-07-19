@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.12.13
+
+### Features
+
+- Added an opt-in `quote_identifiers` profile flag (default `false`) for case-sensitive table names. When enabled, the adapter backtick-quotes every relation's identifier so Fabric Spark preserves casing instead of folding to lowercase. Case-sensitive resolution also requires `spark.sql.caseSensitive: "true"` under `spark_config.conf` (session-wide, also affects columns); the adapter warns at connection time if it's missing. Defaults to off, so existing projects render byte-identical SQL. ([#251](https://github.com/microsoft/dbt-fabricspark/issues/251))
+
+### Documentation
+
+- Documented native cross-workspace `source()` resolution: setting `workspace_name` under a source's `config` in `sources.yml` renders `{{ source(...) }}`, freshness, and source tests as a 4-part `` `workspace`.`lakehouse`.`schema`.identifier `` name, mirroring model `config(workspace_name=...)`. No adapter change required — docs and unit tests only. Schema-enabled lakehouses only. ([#250](https://github.com/microsoft/dbt-fabricspark/issues/250))
+
+---
+
 ## v1.12.12
 
 ### Features

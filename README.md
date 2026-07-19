@@ -366,6 +366,48 @@ The principal authenticated by your profile (CLI user or SPN) must have read acc
 
 Each segment is independently backtick-quoted, so workspace names with spaces or mixed case (e.g. `dbt Fabric Spark 1`) round-trip correctly.
 
+#### Sources
+
+`{{ source(...) }}` supports cross-workspace 4-part naming too — declare `workspace_name` under a source's (or table's) `config` block in `sources.yml`, just like models use `config(workspace_name=...)`. Source reads, freshness, and generic tests on sources all render the 4-part name against the remote workspace (schema-enabled lakehouses only).
+
+```yaml
+# models/sources.yml
+sources:
+  - name: my_bronze_source
+    database: remote_lakehouse
+    schema: my_schema
+    config:
+      workspace_name: RemoteWorkspaceName
+    tables:
+      - name: my_table
+```
+
+`select * from {{ source('my_bronze_source', 'my_table') }}` then resolves to `` `RemoteWorkspaceName`.`remote_lakehouse`.`my_schema`.my_table ``.
+
+### Case-sensitive identifiers
+
+By default the adapter renders identifiers **unquoted**, so Fabric Spark folds them to lowercase (`MyTable` → `mytable`). To preserve exact casing, set `quote_identifiers: true` — but **two settings are required together**:
+
+```yaml
+# profiles.yml
+my_profile:
+  outputs:
+    prod:
+      type: fabricspark
+      quote_identifiers: true
+      spark_config:
+        name: my-session
+        conf:
+          spark.sql.caseSensitive: "true"
+```
+
+- **`quote_identifiers: true`** backtick-quotes every relation's identifier so the emitted SQL preserves casing.
+- **`spark.sql.caseSensitive: "true"`** (under `spark_config.conf`) makes Spark _resolve_ the mixed-case names instead of folding them. The adapter warns at connection time if `quote_identifiers` is on without it.
+
+> ⚠️ `spark.sql.caseSensitive` is **session-wide and affects columns too** — it changes column resolution across every model (joins, `select *`, schema comparisons, `MERGE`/incremental matching can break if column casing is inconsistent). Enable only when you need case-sensitive object names.
+
+Both settings default to off, so existing projects render byte-identical SQL.
+
 ### Incremental strategies
 
 `incremental` models accept these `incremental_strategy` values via `config()`:
@@ -449,6 +491,7 @@ require Fabric Runtime 1.3 or newer.
 | `lakehouse`             | string | —                                     | Lakehouse name                                                                                                                                                                                                                                                                                                                                                                                            |
 | `schema`                | string | —                                     | Schema name. Must equal `lakehouse` for non-schema lakehouses, must differ from `lakehouse` for schema-enabled (e.g., `dbo`)                                                                                                                                                                                                                                                                              |
 | `workspace_name`        | string | —                                     | Optional default workspace for cross-workspace 4-part naming. When set and the lakehouse has schemas enabled, all relations without a model-level `workspace_name` will be rendered with this workspace prefix. Ignored for non-schema lakehouses. Exposed as `target.workspace_name` in Jinja. |
+| `quote_identifiers`     | bool   | `false`                               | When `true`, backtick-quotes table identifiers so Fabric Spark preserves their casing instead of folding to lowercase. Requires `spark_config.conf` `{ "spark.sql.caseSensitive": "true" }` to take effect (the adapter warns if it's missing). Session-wide — also affects column resolution. See [Case-sensitive identifiers](#case-sensitive-identifiers). |
 | `threads`               | int    | `1`                                   | Number of threads for parallel execution                                                                                                                                                                                                                                                                                                                                                                  |
 | **Authentication**      |        |                                       |                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `authentication`        | string | `CLI`                                 | Auth method: `CLI`, `SPN`, or `fabric_notebook`                                                                                                                                                                                                                                                                                                                                                           |

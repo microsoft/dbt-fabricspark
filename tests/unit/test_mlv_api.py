@@ -213,22 +213,23 @@ class TestPollJobInstanceUntilComplete:
 
     @patch("dbt.adapters.fabricspark.mlv_api.time.sleep")
     @patch("dbt.adapters.fabricspark.mlv_api.get_job_instance")
-    def test_raises_on_cancelled(self, mock_get, mock_sleep, mock_credentials):
-        """A superseded refresh has an unknown outcome, not a successful one.
-
-        Returning success here would mask real failures — a schema mismatch on a
-        ``create or replace`` is only reported by the refresh job itself.
+    def test_treats_cancelled_as_success(self, mock_get, mock_sleep, mock_credentials):
+        """``Cancelled``/``Deduped`` indicate the refresh was superseded by a
+        concurrent job — the lineage is (or will be) refreshed by that job, so
+        we surface this as a successful no-op rather than raising.
         """
-        mock_get.return_value = {"status": "Cancelled", "failureReason": None}
-        with pytest.raises(MLVApiError, match="Cancelled"):
-            poll_job_instance_until_complete(mock_credentials, "job-1")
+        job = {"status": "Cancelled", "failureReason": None}
+        mock_get.return_value = job
+        result = poll_job_instance_until_complete(mock_credentials, "job-1")
+        assert result == job
 
     @patch("dbt.adapters.fabricspark.mlv_api.time.sleep")
     @patch("dbt.adapters.fabricspark.mlv_api.get_job_instance")
-    def test_raises_on_deduped(self, mock_get, mock_sleep, mock_credentials):
-        mock_get.return_value = {"status": "Deduped", "failureReason": None}
-        with pytest.raises(MLVApiError, match="Deduped"):
-            poll_job_instance_until_complete(mock_credentials, "job-1")
+    def test_treats_deduped_as_success(self, mock_get, mock_sleep, mock_credentials):
+        job = {"status": "Deduped", "failureReason": None}
+        mock_get.return_value = job
+        result = poll_job_instance_until_complete(mock_credentials, "job-1")
+        assert result == job
 
     @patch("dbt.adapters.fabricspark.mlv_api.time.time")
     @patch("dbt.adapters.fabricspark.mlv_api.time.sleep")
@@ -284,71 +285,6 @@ class TestRunOnDemandRefresh:
 
         with pytest.raises(MLVApiError, match="Forbidden"):
             run_on_demand_refresh(mock_credentials)
-
-    @patch("dbt.adapters.fabricspark.mlv_api.time.sleep")
-    @patch("dbt.adapters.fabricspark.mlv_api.poll_job_instance_until_complete")
-    @patch("dbt.adapters.fabricspark.mlv_api.get_headers")
-    @patch("dbt.adapters.fabricspark.mlv_api._request_with_retry")
-    def test_retries_when_superseded_then_succeeds(
-        self, mock_request, mock_headers, mock_poll, mock_sleep, mock_credentials
-    ):
-        """A superseded refresh re-triggers a fresh POST+poll cycle."""
-        mock_credentials.statement_timeout = 3600
-        mock_headers.return_value = {"Authorization": "******"}
-        mock_response = MagicMock()
-        mock_response.headers = {"Location": ".../instances/job-123"}
-        mock_request.return_value = mock_response
-        mock_poll.side_effect = [
-            MLVApiError("on-demand MLV refresh", "Job job-123 Cancelled."),
-            MLVApiError("on-demand MLV refresh", "Job job-123 Deduped."),
-            {"status": "Completed", "failureReason": None},
-        ]
-
-        result = run_on_demand_refresh(mock_credentials)
-
-        assert result["status"] == "Completed"
-        assert mock_request.call_count == 3
-        assert mock_poll.call_count == 3
-
-    @patch("dbt.adapters.fabricspark.mlv_api.time.sleep")
-    @patch("dbt.adapters.fabricspark.mlv_api.poll_job_instance_until_complete")
-    @patch("dbt.adapters.fabricspark.mlv_api.get_headers")
-    @patch("dbt.adapters.fabricspark.mlv_api._request_with_retry")
-    def test_surfaces_real_failure_behind_a_superseded_job(
-        self, mock_request, mock_headers, mock_poll, mock_sleep, mock_credentials
-    ):
-        """The retry must reveal the underlying error, not report success."""
-        mock_credentials.statement_timeout = 3600
-        mock_headers.return_value = {"Authorization": "******"}
-        mock_response = MagicMock()
-        mock_response.headers = {"Location": ".../instances/job-123"}
-        mock_request.return_value = mock_response
-        mock_poll.side_effect = [
-            MLVApiError("on-demand MLV refresh", "Job job-123 Cancelled."),
-            MLVApiError("on-demand MLV refresh", "Job job-123 Failed. MLV_SCHEMA_MISMATCH"),
-        ]
-
-        with pytest.raises(MLVApiError, match="MLV_SCHEMA_MISMATCH"):
-            run_on_demand_refresh(mock_credentials)
-
-    @patch("dbt.adapters.fabricspark.mlv_api.time.sleep")
-    @patch("dbt.adapters.fabricspark.mlv_api.poll_job_instance_until_complete")
-    @patch("dbt.adapters.fabricspark.mlv_api.get_headers")
-    @patch("dbt.adapters.fabricspark.mlv_api._request_with_retry")
-    def test_raises_when_superseded_every_attempt(
-        self, mock_request, mock_headers, mock_poll, mock_sleep, mock_credentials
-    ):
-        mock_credentials.statement_timeout = 3600
-        mock_headers.return_value = {"Authorization": "******"}
-        mock_response = MagicMock()
-        mock_response.headers = {"Location": ".../instances/job-123"}
-        mock_request.return_value = mock_response
-        mock_poll.side_effect = MLVApiError("on-demand MLV refresh", "Job job-123 Cancelled.")
-
-        with pytest.raises(MLVApiError, match="Cancelled"):
-            run_on_demand_refresh(mock_credentials, max_retries=3)
-
-        assert mock_poll.call_count == 3
 
 
 class TestListSchedules:

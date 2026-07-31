@@ -14,6 +14,10 @@ Run with:
 """
 
 import os
+import threading
+import time
+from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 
@@ -35,6 +39,93 @@ skip_no_schema = pytest.mark.skipif(
     not _schema_enabled_configured(),
     reason="Schema-enabled lakehouse not configured (SCHEMA_NAME == LAKEHOUSE_NAME or not set)",
 )
+
+
+# ---------------------------------------------------------------------------
+# Cross-worker serialization
+# ---------------------------------------------------------------------------
+
+# ``RefreshMaterializedLakeViews`` is a *lakehouse-wide* job: it refreshes every
+# MLV in the lakehouse, not just the one the model created. Every MLV test class
+# shares one lakehouse, and ``--dist=loadscope`` runs classes on separate xdist
+# workers, so an unrelated class creating or dropping an MLV makes another
+# class's refresh fail with MLV_NOT_FOUND / MLV_RUNTIME_ERROR. Workers also share
+# Livy sessions, so the session-scoped ``trident.artifact.type`` conf that
+# ``mlv_allow_schema_evolution`` sets around its CREATE OR REPLACE can be
+# observed by a concurrent class and silently permit a replace that must fail.
+#
+# Both races are inherent to the shared lakehouse, so MLV classes take a lock for
+# their whole lifetime — including project teardown, which is when MLVs are
+# dropped.
+
+_MLV_LOCK_PATH = Path("logs/test-runs/mlv-lakehouse.lock")
+_MLV_LOCK_TIMEOUT_SECONDS = 5400
+_MLV_LOCK_HEARTBEAT_SECONDS = 15
+_MLV_LOCK_STALE_SECONDS = 120
+_MLV_LOCK_POLL_SECONDS = 2.0
+
+
+@contextmanager
+def _lakehouse_lock():
+    _MLV_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    owner = f"{os.environ.get('PYTEST_XDIST_WORKER', 'controller')}:{os.getpid()}"
+    deadline = time.time() + _MLV_LOCK_TIMEOUT_SECONDS
+
+    while True:
+        try:
+            fd = os.open(_MLV_LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, owner.encode())
+            os.close(fd)
+            break
+        except FileExistsError:
+            try:
+                since_heartbeat = time.time() - _MLV_LOCK_PATH.stat().st_mtime
+            except FileNotFoundError:
+                continue
+            # The holder heartbeats the lock, so a lapsed one means the owning
+            # worker died — steal it rather than wedging the whole suite.
+            if since_heartbeat > _MLV_LOCK_STALE_SECONDS:
+                _MLV_LOCK_PATH.unlink(missing_ok=True)
+                continue
+            if time.time() > deadline:
+                raise TimeoutError(
+                    f"Timed out after {_MLV_LOCK_TIMEOUT_SECONDS}s waiting for the MLV "
+                    f"lakehouse lock at {_MLV_LOCK_PATH}."
+                )
+            time.sleep(_MLV_LOCK_POLL_SECONDS)
+
+    released = threading.Event()
+
+    def _heartbeat():
+        while not released.wait(_MLV_LOCK_HEARTBEAT_SECONDS):
+            try:
+                os.utime(_MLV_LOCK_PATH, None)
+            except FileNotFoundError:
+                return
+
+    beat = threading.Thread(target=_heartbeat, daemon=True)
+    beat.start()
+    try:
+        yield
+    finally:
+        released.set()
+        beat.join(timeout=_MLV_LOCK_HEARTBEAT_SECONDS)
+        _MLV_LOCK_PATH.unlink(missing_ok=True)
+
+
+@pytest.fixture(scope="class", autouse=True)
+def serialize_mlv_lakehouse_access():
+    """Give each MLV test class exclusive use of the shared lakehouse.
+
+    Autouse and class-scoped so it is set up before the class-scoped ``project``
+    fixture and torn down after it, which keeps the lock held while dbt drops the
+    test schema.
+    """
+    if not _schema_enabled_configured():
+        yield
+        return
+    with _lakehouse_lock():
+        yield
 
 
 # ---------------------------------------------------------------------------

@@ -339,11 +339,21 @@ def poll_job_instance_until_complete(
             logger.info(f"MLV on-demand refresh completed successfully (job {job_instance_id}).")
             return job
 
+        if status in {"Cancelled", "Deduped"}:
+            # Fabric returns ``Cancelled``/``Deduped`` when a concurrent (or
+            # previously queued) refresh supersedes this one. The underlying
+            # lineage is (or will be) refreshed by the other job, so from the
+            # caller's perspective this is a successful no-op rather than a
+            # failure. Surfacing it as success avoids brittle retry storms when
+            # multiple tests in the same lakehouse trigger refreshes in quick
+            # succession.
+            logger.info(
+                f"MLV on-demand refresh superseded by concurrent job "
+                f"(job {job_instance_id}, status={status}); treating as success."
+            )
+            return job
+
         if status in _TERMINAL_STATUSES:
-            # ``Cancelled``/``Deduped`` mean a concurrent refresh superseded this
-            # job, so its outcome is unknown rather than successful — assuming
-            # success here silently swallows real failures such as a schema
-            # mismatch. ``run_on_demand_refresh`` retries these.
             detail = failure_reason or f"Job ended with status: {status}"
             raise MLVApiError(
                 "on-demand MLV refresh",

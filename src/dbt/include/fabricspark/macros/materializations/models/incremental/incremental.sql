@@ -97,15 +97,13 @@
       {%- endcall -%}
     {%- else -%}
       {#-- Fabric Spark / open-source Delta enable MERGE schema evolution through the
-           session conf, not a SQL clause, so set it before the merge statement. --#}
-      {%- if merge_schema_evolution -%}
-        {%- call statement('enable_schema_evolution') -%}
-          set spark.databricks.delta.schema.autoMerge.enabled = true
-        {%- endcall -%}
-      {%- endif -%}
+           session conf, not a SQL clause, so set it around the merge statement and
+           put it back afterwards — Livy sessions outlive the model. --#}
+      {%- set previous_schema_evolution = adapter.set_schema_evolution(merge_schema_evolution) -%}
       {%- call statement('main') -%}
         {{ dbt_spark_get_incremental_sql(strategy, tmp_relation, target_relation, existing_relation, unique_key, incremental_predicates) }}
       {%- endcall -%}
+      {%- do adapter.restore_schema_evolution(previous_schema_evolution) -%}
     {%- endif -%}
     {#-- Drop the staging view after the DML completes so it does not
          appear in catalog/list_relations. --#}
@@ -113,6 +111,8 @@
       drop view if exists {{ tmp_relation }}
     {%- endcall %}
   {%- endif -%}
+
+  {% do optimize(target_relation) %}
 
   {% set should_revoke = should_revoke(existing_relation, full_refresh_mode) %}
   {% do apply_grants(target_relation, grant_config, should_revoke) %}

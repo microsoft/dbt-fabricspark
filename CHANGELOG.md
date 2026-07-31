@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.13.0
+
+### Features
+
+- The adapter now runs `OPTIMIZE` on the target relation after every `table`, `incremental` and `snapshot` build, so downstream joins are no longer slowed down by the small files each write leaves behind. `OPTIMIZE` is cheap when there is nothing to compact, and running it inside the materialization means it is scheduled by dbt's own thread pool rather than by a hand-rolled `post_hook`. Only Delta relations are optimized — `view`, `ephemeral`, `seed`, `materialized_lake_view` and shallow `clone` materializations are never touched, and a non-Delta `file_format` is skipped. Because file compaction is maintenance rather than part of the model's contract, a failed `OPTIMIZE` logs a warning and the model still succeeds; it is also exempt from the connection retry loop, so a failure under `retry_all` is skipped immediately instead of stalling the run through every backoff. The feature can be disabled at three levels, highest precedence first: the `DBT_FABRICSPARK_SKIP_OPTIMIZE` environment variable (an unconditional kill switch that needs no project edits), `{{ config(auto_optimize=false) }}` on an individual model, and a new `auto_optimize: false` profile flag. Both the `optimize` and `get_optimize_sql` macros are dispatched, so projects can override the emitted SQL. **This is a behavior change**: existing Delta models gain one extra Spark job per run — set `auto_optimize: false` in `profiles.yml` to keep the previous behavior. ([#254](https://github.com/microsoft/dbt-fabricspark/issues/254))
+
+### Fixes
+
+- Fixed the `merge_with_schema_evolution` incremental option leaking its session state into every later statement. The option is applied by setting the `spark.databricks.delta.schema.autoMerge.enabled` Spark conf, which was switched on before the merge but never switched back. Because Livy sessions are reused across models, across dbt invocations and — with `reuse_session` — across runs, one model using the option silently turned on schema evolution for every subsequent `MERGE` in that session. The worst symptom was silent snapshot corruption: a snapshot merge would absorb dbt's internal `dbt_change_type` and `dbt_unique_key` staging columns into the snapshot table, and the *next* snapshot run would then fail permanently with `[AMBIGUOUS_REFERENCE] Reference \`snapshotted_data\`.\`dbt_unique_key\` is ambiguous`. The conf is now captured before the merge and restored afterwards, and snapshots explicitly pin it off for the duration of their own merge, so a snapshot can no longer be corrupted by an unrelated model. A conf set deliberately through `spark_config.conf` is preserved.
+
+- Fixed on-demand `materialized_lake_view` refreshes reporting success when Fabric superseded them. A refresh job that ends in the `Cancelled` or `Deduped` state was treated as a successful no-op, on the assumption that the concurrent job which replaced it would refresh the same lineage. That assumption hides the outcome the caller actually needs: when a `create or replace` changed an MLV's schema, the resulting `MLV_SCHEMA_MISMATCH` was reported by the refresh job, so a superseded refresh silently swallowed the error and the model succeeded with a stale definition. A superseded job's outcome is now treated as unknown and the full trigger-and-poll cycle is retried — the path the refresh helper already implemented but could never reach — so the real terminal status is surfaced. Retries remain bounded by the refresh helper's own attempt limit and by the overall `statement_timeout` budget, and a refresh that is superseded on every attempt now fails loudly instead of silently.
+
+---
+
 ## v1.12.12
 
 ### Features

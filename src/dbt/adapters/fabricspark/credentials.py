@@ -116,6 +116,14 @@ class FabricSparkCredentials(Credentials):
     # Azure CLI"). No effect for other authentication methods.
     azure_cli_process_timeout: int = 10
 
+    # Run ``OPTIMIZE`` on Delta relations after every ``table``, ``incremental``
+    # and ``snapshot`` build. Compacting the small files each write leaves behind
+    # is what makes downstream joins fast, and ``OPTIMIZE`` is a cheap no-op when
+    # there is nothing to compact. Set to False to disable it project-wide;
+    # individual models can override with ``config(auto_optimize=...)`` and the
+    # ``DBT_FABRICSPARK_SKIP_OPTIMIZE`` environment variable disables it outright.
+    auto_optimize: bool = True
+
     def __repr__(self) -> str:
         """Mask sensitive fields in repr to prevent credential leakage in logs/tracebacks."""
         return (
@@ -316,4 +324,5 @@ class FabricSparkCredentials(Credentials):
             "schema",
             "workspace_name",
             "quote_identifiers",
+            "auto_optimize",
         )

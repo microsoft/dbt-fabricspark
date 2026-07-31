@@ -54,6 +54,32 @@ TABLE_OR_VIEW_NOT_FOUND_MESSAGES = (
     "NoSuchTableException",
 )
 
+SKIP_OPTIMIZE_ENV_VAR = "DBT_FABRICSPARK_SKIP_OPTIMIZE"
+SCHEMA_EVOLUTION_CONF = "spark.databricks.delta.schema.autoMerge.enabled"
+TRUTHY_STRINGS = frozenset({"1", "true", "t", "yes", "y", "on"})
+FALSEY_STRINGS = frozenset({"0", "false", "f", "no", "n", "off"})
+
+
+def _as_bool(value: Any, default: Optional[bool]) -> Optional[bool]:
+    """Coerce a Jinja/YAML/env value to a bool, returning ``default`` if absent.
+
+    Jinja hands string values through unconverted, so ``auto_optimize: "false"``
+    and ``AUTO_OPTIMIZE=0`` must be read as False rather than as truthy strings.
+    Unrecognized strings fall back to ``default`` instead of guessing.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in TRUTHY_STRINGS:
+            return True
+        if normalized in FALSEY_STRINGS:
+            return False
+        return default
+    return bool(value)
+
 
 @dataclass
 class FabricSparkConfig(AdapterConfig):
@@ -85,6 +111,10 @@ class FabricSparkConfig(AdapterConfig):
     # Fabric Livy supports cross-workspace via 3-part
     # ``CREATE DATABASE IF NOT EXISTS \`WS2\`.\`lh\`.\`schema\``` DDL.
     workspace_name: Optional[str] = None
+    # Opt out of the automatic post-build ``OPTIMIZE`` for a single model.
+    # Precedence: DBT_FABRICSPARK_SKIP_OPTIMIZE env var > this key > the
+    # profile's ``auto_optimize`` > enabled.
+    auto_optimize: Optional[bool] = None
 
 
 class FabricSparkAdapter(SQLAdapter):
@@ -218,6 +248,101 @@ class FabricSparkAdapter(SQLAdapter):
             return conn.credentials.is_local_mode
         except Exception:
             return False
+
+    @available
+    def should_auto_optimize(
+        self,
+        auto_optimize: Any = None,
+        file_format: Any = None,
+        relation_is_delta: Any = None,
+    ) -> bool:
+        """Resolve whether a post-build ``OPTIMIZE`` should run for this model.
+
+        Non-Delta relations are always skipped. ``relation_is_delta`` alone is
+        not a sufficient test: it is False for a table being created for the
+        first time without an explicit ``file_format``, and None for ``this`` in
+        the incremental materialization. An unset ``file_format`` means Delta,
+        because the adapter then emits no ``using`` clause and both Fabric and
+        the local Spark install default to the Delta provider.
+
+        Opt-out precedence, highest first:
+
+        1. ``DBT_FABRICSPARK_SKIP_OPTIMIZE`` env var — an unconditional kill
+           switch so operators can stop OPTIMIZE without editing any project.
+        2. The model's ``config(auto_optimize=...)`` when explicitly set.
+        3. The profile's ``auto_optimize``.
+        4. Enabled.
+        """
+        is_delta = file_format is None or file_format == "delta" or bool(relation_is_delta)
+        if not is_delta:
+            return False
+
+        if _as_bool(os.environ.get(SKIP_OPTIMIZE_ENV_VAR), default=False):
+            return False
+
+        resolved = _as_bool(auto_optimize, default=None)
+        if resolved is not None:
+            return resolved
+
+        creds = getattr(self.config, "credentials", None)
+        return bool(_as_bool(getattr(creds, "auto_optimize", None), default=True))
+
+    @available
+    def run_optimize(self, sql: str) -> bool:
+        """Execute an ``OPTIMIZE`` statement, downgrading failures to a warning.
+
+        File compaction is maintenance, not part of the model's contract, so a
+        transient Livy error or a Delta concurrent-modification conflict must
+        never fail an otherwise-successful build.  Retries are suppressed for the
+        same reason: waiting out ``connect_retries`` backoffs to re-attempt a
+        best-effort compaction would cost far more than the compaction is worth.
+        """
+        try:
+            with self.connections.no_retry():
+                self.execute(sql, auto_begin=False, fetch=False)
+        except Exception as exc:
+            logger.warning(f"OPTIMIZE failed and was skipped; the model itself succeeded: {exc}")
+            return False
+        return True
+
+    def _read_schema_evolution(self) -> str:
+        try:
+            _, result = self.execute(f"set {SCHEMA_EVOLUTION_CONF}", auto_begin=False, fetch=True)
+            for row in result.rows:
+                value = str(row[-1]).strip().lower()
+                return "true" if value == "true" else "false"
+        except Exception as exc:
+            logger.debug(f"Could not read {SCHEMA_EVOLUTION_CONF}: {exc}")
+        return "false"
+
+    @available
+    def set_schema_evolution(self, enabled: bool) -> str:
+        """Force the Delta MERGE schema-evolution session conf on or off.
+
+        Returns the value that was in effect beforehand, or an empty string when
+        it already matched and nothing was changed.  Livy sessions are reused
+        across models and runs, so leaving this conf set would silently apply
+        schema evolution to every later MERGE — including snapshot merges, which
+        would then absorb dbt's internal staging columns and corrupt the table.
+        """
+        desired = "true" if enabled else "false"
+        previous = self._read_schema_evolution()
+        if previous == desired:
+            return ""
+        self.execute(f"set {SCHEMA_EVOLUTION_CONF} = {desired}", auto_begin=False, fetch=False)
+        return previous
+
+    @available
+    def restore_schema_evolution(self, previous: str) -> None:
+        """Undo a :meth:`set_schema_evolution` call, tolerating a failed statement."""
+        if not previous:
+            return
+        try:
+            self.execute(
+                f"set {SCHEMA_EVOLUTION_CONF} = {previous}", auto_begin=False, fetch=False
+            )
+        except Exception as exc:
+            logger.warning(f"Could not restore {SCHEMA_EVOLUTION_CONF} to {previous}: {exc}")
 
     @available
     def mlv_run_on_demand(self, lakehouse_id: Optional[str] = None) -> Dict[str, Any]:

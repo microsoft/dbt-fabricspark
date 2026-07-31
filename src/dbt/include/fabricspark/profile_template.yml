@@ -43,6 +43,10 @@ prompts:
         hint: When true, backtick-quotes table identifiers so Fabric Spark preserves their casing instead of folding to lowercase. Requires spark.sql.caseSensitive=true under spark_config.conf to take effect. Session-wide (also affects column resolution). Defaults to false.
         type: 'bool'
         default: false
+      auto_optimize:
+        hint: When true (default), the adapter runs OPTIMIZE on Delta relations after every table, incremental and snapshot build so downstream joins are not slowed down by small-file fragmentation. Individual models can override with config(auto_optimize=false), and the DBT_FABRICSPARK_SKIP_OPTIMIZE environment variable disables it outright.
+        type: 'bool'
+        default: true
   schema:
     hint: 'default schema that dbt will build objects in'
   threads:

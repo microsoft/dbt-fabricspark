@@ -81,3 +81,25 @@ models:
         description: Amount of the order (AUD) paid for by gift card
         tests:
           - not_null
+
+  - name: complex_type_contract
+    description: Enforced contract over ARRAY, MAP and STRUCT columns
+    config:
+      contract:
+        enforced: true
+
+    columns:
+      - name: order_id
+        data_type: int
+
+      - name: tag_list
+        data_type: array<string>
+
+      - name: attributes
+        data_type: map<string,int>
+
+      - name: shipping_address
+        data_type: struct<city:string,postcode:int>
+
+      - name: line_items
+        data_type: array<struct<sku:string,qty:int>>

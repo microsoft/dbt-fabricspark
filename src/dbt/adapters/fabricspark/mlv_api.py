@@ -39,6 +39,16 @@ _THROTTLE_ERROR_CODES = {
     "RequestBlocked",
 }
 
+# Error codes where the refresh job could not resolve the MLV or the lakehouse
+# backing it. Fabric's item metadata is eventually consistent, so a refresh
+# triggered right after CREATE can outrun it, and a concurrent worker can drop
+# an MLV between the POST and the job running. Both resolve on retry.
+_NOT_FOUND_ERROR_CODES = {
+    "MLV_NOT_FOUND",
+    "MLV_LINEAGE_NOT_FOUND",
+    "MLV_ARTIFACT_NOT_FOUND",
+}
+
 # Cache: workspace_id -> {lakehouse_name -> lakehouse_id}
 _lakehouse_id_cache: Dict[str, Dict[str, str]] = {}
 
@@ -391,8 +401,10 @@ def run_on_demand_refresh(
 
     Transient conditions that trigger a retry of the full POST+poll cycle:
     - ``Cancelled`` / ``Deduped``: concurrent refresh superseded this one.
-    - ``MLV_NOT_FOUND`` / ``MLV_LINEAGE_NOT_FOUND``: concurrent worker dropped
-      an MLV between POST and job execution.
+    - ``MLV_NOT_FOUND`` / ``MLV_LINEAGE_NOT_FOUND`` / ``MLV_ARTIFACT_NOT_FOUND``:
+      the job could not resolve the MLV or its lakehouse, either because Fabric's
+      item metadata had not caught up with a just-created MLV or because a
+      concurrent worker dropped one between POST and job execution.
     - ``Failed`` with a throttle error code (e.g. ``MLV_SPARK_JOB_CAPACITY_THROTTLING``):
       Fabric couldn't allocate Spark capacity; retry after backoff.
 
@@ -443,8 +455,7 @@ def run_on_demand_refresh(
             transient = (
                 "Cancelled" in msg
                 or "Deduped" in msg
-                or "MLV_NOT_FOUND" in msg
-                or "MLV_LINEAGE_NOT_FOUND" in msg
+                or any(code in msg for code in _NOT_FOUND_ERROR_CODES)
             )
             # Also retry Failed jobs when Fabric reports a throttle error code.
             if not transient and "Failed" in msg:

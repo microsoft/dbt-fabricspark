@@ -558,3 +558,79 @@ class TestBuildAcquirePayloadIdleTimeout:
             == "11111111-2222-3333-4444-555555555555"
         )
         assert "spark.livy.session.idle.timeout" not in payload["conf"]
+
+
+# --------------------------------------------------------------------------- #
+# _build_acquire_payload — verbatim spark_config forwarding                    #
+# --------------------------------------------------------------------------- #
+
+
+class TestBuildAcquirePayloadForwarding:
+    """The HC payload forwards spark_config verbatim.
+
+    It previously copied a fixed 16-key allowlist and dropped everything else
+    without a log line, while the singleton path POSTed the whole dict. The
+    same profile therefore behaved differently depending on ``high_concurrency``
+    with no way to tell what was actually sent.
+    """
+
+    def test_allowlisted_keys_still_forwarded(self):
+        creds = _make_creds()
+        hc = HighConcurrencySession(creds, creds.spark_config)
+        payload = hc._build_acquire_payload()
+        assert payload["name"] == "test-session"
+        assert payload["numExecutors"] == 4
+
+    @pytest.mark.parametrize(
+        "key,value",
+        [
+            ("heartbeatTimeoutInSecond", 3600),
+            ("queue", "default"),
+            ("proxyUser", "svc-dbt"),
+            ("kind", "sql"),
+            ("someFutureFabricKey", {"nested": True}),
+        ],
+    )
+    def test_previously_dropped_keys_are_forwarded(self, key, value):
+        creds = _make_creds(spark_config={"name": "test-session", key: value})
+        hc = HighConcurrencySession(creds, creds.spark_config)
+        payload = hc._build_acquire_payload()
+        assert payload[key] == value
+
+    def test_session_tag_is_injected(self):
+        creds = _make_creds()
+        hc = HighConcurrencySession(creds, creds.spark_config)
+        assert hc._build_acquire_payload()["sessionTag"] == hc.session_tag
+
+    def test_user_session_tag_is_overridden_with_warning(self):
+        creds = _make_creds(spark_config={"name": "test-session", "sessionTag": "mine"})
+        hc = HighConcurrencySession(creds, creds.spark_config)
+        with patch.object(concurrent_livy.logger, "warning") as mock_warn:
+            payload = hc._build_acquire_payload()
+        assert payload["sessionTag"] == hc.session_tag
+        assert mock_warn.call_count == 1
+        assert "mine" in mock_warn.call_args[0][0]
+
+    def test_matching_user_session_tag_does_not_warn(self):
+        creds = _make_creds()
+        hc = HighConcurrencySession(creds, creds.spark_config)
+        hc.spark_config = {"name": "test-session", "sessionTag": hc.session_tag}
+        with patch.object(concurrent_livy.logger, "warning") as mock_warn:
+            hc._build_acquire_payload()
+        mock_warn.assert_not_called()
+
+    def test_user_conf_survives_alongside_injected_conf(self):
+        creds = _make_creds(
+            spark_config={"name": "test-session", "conf": {"spark.dbt.canary": "alive"}},
+            environmentId="11111111-2222-3333-4444-555555555555",
+        )
+        hc = HighConcurrencySession(creds, creds.spark_config)
+        conf = hc._build_acquire_payload()["conf"]
+        assert conf["spark.dbt.canary"] == "alive"
+        assert conf["spark.fabric.environment.id"] == "11111111-2222-3333-4444-555555555555"
+
+    def test_payload_build_does_not_mutate_credentials_spark_config(self):
+        creds = _make_creds(spark_config={"name": "test-session", "conf": {"a": "b"}})
+        hc = HighConcurrencySession(creds, creds.spark_config)
+        hc._build_acquire_payload()
+        assert creds.spark_config == {"name": "test-session", "conf": {"a": "b"}}

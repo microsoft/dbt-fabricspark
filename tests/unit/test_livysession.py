@@ -1222,3 +1222,82 @@ class _BadReturnTypeCredential:
 
     def get_token(self, *scopes, **kwargs):
         return "not-an-access-token"
+
+
+class TestCreateSessionPayload:
+    """The singleton create_session POSTs spark_config verbatim.
+
+    Local mode previously built ``{"kind": "sql"}`` and copied only ``kind``,
+    so ``spark_config.conf`` never reached local Livy at all — a third distinct
+    behavior alongside the Fabric singleton path (verbatim) and the
+    high-concurrency path (allowlisted).
+    """
+
+    def _make_credentials(self, livy_mode="local"):
+        return FabricSparkCredentials(
+            method="livy",
+            livy_mode=livy_mode,
+            livy_url="http://localhost:8998",
+            spark_config={"name": "test-session"},
+        )
+
+    def _posted_body(self, mock_post):
+        return json.loads(mock_post.call_args.kwargs["data"])
+
+    @patch("dbt.adapters.fabricspark.livysession.get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.livysession.requests.post")
+    @patch("dbt.adapters.fabricspark.livysession.LivySession.wait_for_session_start")
+    def test_local_mode_forwards_conf(self, mock_wait, mock_post, mock_headers):
+        mock_post.return_value = MagicMock(status_code=201, **{"json.return_value": {"id": 1}})
+        session = LivySession(self._make_credentials())
+
+        session.create_session({"name": "app", "conf": {"spark.dbt.canary": "alive"}})
+
+        body = self._posted_body(mock_post)
+        assert body["conf"] == {"spark.dbt.canary": "alive"}
+        assert body["name"] == "app"
+
+    @patch("dbt.adapters.fabricspark.livysession.get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.livysession.requests.post")
+    @patch("dbt.adapters.fabricspark.livysession.LivySession.wait_for_session_start")
+    def test_local_mode_defaults_kind_to_sql(self, mock_wait, mock_post, mock_headers):
+        mock_post.return_value = MagicMock(status_code=201, **{"json.return_value": {"id": 1}})
+        session = LivySession(self._make_credentials())
+
+        session.create_session({"name": "app"})
+
+        assert self._posted_body(mock_post)["kind"] == "sql"
+
+    @patch("dbt.adapters.fabricspark.livysession.get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.livysession.requests.post")
+    @patch("dbt.adapters.fabricspark.livysession.LivySession.wait_for_session_start")
+    def test_local_mode_honors_explicit_kind(self, mock_wait, mock_post, mock_headers):
+        mock_post.return_value = MagicMock(status_code=201, **{"json.return_value": {"id": 1}})
+        session = LivySession(self._make_credentials())
+
+        session.create_session({"name": "app", "kind": "pyspark"})
+
+        assert self._posted_body(mock_post)["kind"] == "pyspark"
+
+    @patch("dbt.adapters.fabricspark.livysession.get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.livysession.requests.post")
+    @patch("dbt.adapters.fabricspark.livysession.LivySession.wait_for_session_start")
+    def test_fabric_mode_forwards_verbatim(self, mock_wait, mock_post, mock_headers):
+        mock_post.return_value = MagicMock(status_code=201, **{"json.return_value": {"id": 1}})
+        credentials = FabricSparkCredentials(
+            method="livy",
+            livy_mode="fabric",
+            authentication="CLI",
+            workspaceid="1de8390c-9aca-4790-bee8-72049109c0f4",
+            lakehouseid="8c5bc260-bc3a-4898-9ada-01e433d461ba",
+            lakehouse="tests",
+            endpoint="https://api.fabric.microsoft.com/v1",
+            spark_config={"name": "test-session"},
+        )
+        session = LivySession(credentials)
+        spark_config = {"name": "app", "conf": {"a": "b"}, "someFutureKey": 1}
+
+        session.create_session(spark_config)
+
+        assert self._posted_body(mock_post) == spark_config
+        assert "kind" not in self._posted_body(mock_post)

@@ -71,6 +71,41 @@ def warn_if_quote_identifiers_without_case_sensitivity(creds) -> None:
         )
 
 
+def render_spark_type(type_code: Any) -> str:
+    """Render a Spark JSON schema type as its SQL DDL string.
+
+    Livy reports primitive column types as plain strings (``"string"``,
+    ``"decimal(10,2)"``) but complex ones as nested dicts, e.g.
+    ``{"type": "array", "elementType": "string", "containsNull": True}``.
+    Rendering the whole structure rather than just the top-level kind keeps
+    model contracts honest — ``array<string>`` and ``array<int>`` must not
+    compare equal.
+    """
+    if isinstance(type_code, str):
+        return type_code
+    if not isinstance(type_code, dict):
+        return str(type_code)
+
+    kind = type_code.get("type")
+    if kind == "array":
+        return f"array<{render_spark_type(type_code.get('elementType'))}>"
+    if kind == "map":
+        key = render_spark_type(type_code.get("keyType"))
+        value = render_spark_type(type_code.get("valueType"))
+        return f"map<{key},{value}>"
+    if kind == "struct":
+        fields = type_code.get("fields") or []
+        rendered = ",".join(
+            f"{field.get('name')}:{render_spark_type(field.get('type'))}"
+            for field in fields
+            if isinstance(field, dict)
+        )
+        return f"struct<{rendered}>"
+    if isinstance(kind, str):
+        return kind
+    return str(type_code)
+
+
 class FabricSparkConnectionMethod(StrEnum):
     LIVY = "livy"
 
@@ -315,16 +350,18 @@ class FabricSparkConnectionManager(SQLConnectionManager):
             logger.debug(f"Error closing connection {err}")
 
     @classmethod
-    def data_type_code_to_name(cls, type_code: Union[type, str]) -> str:  # type: ignore
+    def data_type_code_to_name(cls, type_code: Union[type, str, dict]) -> str:  # type: ignore
         """
-        :param Union[type, str] type_code: The sql to execute.
-            * type_code is a python type (!) in pyodbc https://github.com/mkleehammer/pyodbc/wiki/Cursor#description, and a string for other spark runtimes.
+        :param Union[type, str, dict] type_code: The sql to execute.
+            * type_code is a python type (!) in pyodbc https://github.com/mkleehammer/pyodbc/wiki/Cursor#description, a string for primitive spark types, and a nested dict for complex spark types (array/map/struct).
             * ignoring the type annotation on the signature for this adapter instead of updating the base class because this feels like a really special case.
         :return: stringified the cursor type_code
         :rtype: str
         """
         if isinstance(type_code, str):
             return type_code
+        if isinstance(type_code, dict):
+            return render_spark_type(type_code)
         return type_code.__name__.upper()
 
     @classmethod

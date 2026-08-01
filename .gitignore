@@ -337,3 +337,5 @@ node_modules/
 
 # nx
 .nx/*
+# Livy session handle written by the adapter when no session_id_file is configured
+livy-session-id.txt

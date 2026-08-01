@@ -171,9 +171,18 @@
 
   {% endif %}
 
+  {#-- Snapshots manage their own schema through create_columns, so Delta must not
+       auto-merge the staging relation's dbt_change_type / dbt_unique_key columns
+       into the target. --#}
+  {%- set previous_schema_evolution = adapter.set_schema_evolution(false) -%}
+
   {% call statement('main') %}
       {{ final_sql }}
   {% endcall %}
+
+  {%- do adapter.restore_schema_evolution(previous_schema_evolution) -%}
+
+  {% do optimize(target_relation) %}
 
   {% set should_revoke = should_revoke(target_relation_exists, full_refresh_mode) %}
   {% do apply_grants(target_relation, grant_config, should_revoke) %}

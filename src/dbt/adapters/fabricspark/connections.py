@@ -1,4 +1,5 @@
 import os
+import threading
 import time
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
@@ -115,6 +116,25 @@ class FabricSparkConnectionManager(SQLConnectionManager):
     connection_managers = {}
     spark_version = None
     mlv_prereq_error: Optional[str] = None
+
+    # Best-effort maintenance statements must never enter the retry loop: with
+    # ``retry_all`` a single failure would otherwise stall the run for
+    # ``connect_retries`` × 60 s before the caller can decide to ignore it.
+    _no_retry_state = threading.local()
+
+    @classmethod
+    @contextmanager
+    def no_retry(cls) -> Generator[None, None, None]:
+        previous = getattr(cls._no_retry_state, "enabled", False)
+        cls._no_retry_state.enabled = True
+        try:
+            yield
+        finally:
+            cls._no_retry_state.enabled = previous
+
+    @classmethod
+    def retries_disabled(cls) -> bool:
+        return getattr(cls._no_retry_state, "enabled", False)
 
     @contextmanager
     def exception_handler(self, sql: str) -> Generator[None, None, None]:
@@ -421,6 +441,9 @@ class FabricSparkConnectionManager(SQLConnectionManager):
             try:
                 cursor.execute(sql, bindings)
             except Exception as e:
+                if self.retries_disabled():
+                    raise e
+
                 is_type_retryable = (
                     isinstance(e, retryable_exceptions) if retryable_exceptions else False
                 )

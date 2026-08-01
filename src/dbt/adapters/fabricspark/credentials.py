@@ -325,4 +325,6 @@ class FabricSparkCredentials(Credentials):
             "workspace_name",
             "quote_identifiers",
             "auto_optimize",
+            "high_concurrency",
+            "spark_config",
         )

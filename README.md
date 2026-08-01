@@ -559,7 +559,7 @@ models:
 | `accessToken`           | string | —                                     | Direct access token (optional)                                                                                                                                                                                                                                                                                                                                                                            |
 | **Environment**         |        |                                       |                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `environmentId`         | string | —                                     | Fabric Environment ID for Spark configuration                                                                                                                                                                                                                                                                                                                                                             |
-| `spark_config`          | dict   | `{}`                                  | Spark session configuration (must include `name` key)                                                                                                                                                                                                                                                                                                                                                     |
+| `spark_config`          | dict   | `{}`                                  | Spark session configuration (must include `name` key). Forwarded verbatim to the Livy session-create call in every mode; echoed by `dbt debug` and logged at `--debug`. See [Inspecting `spark_config`](#inspecting-spark_config).                                                                                                                                                                          |
 | **Session Management**  |        |                                       |                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `reuse_session`         | bool   | `false`                               | Keep Livy sessions alive for reuse across runs                                                                                                                                                                                                                                                                                                                                                            |
 | `session_id_file`       | string | `./livy-session-id.txt`               | Path to file storing session ID for reuse                                                                                                                                                                                                                                                                                                                                                                 |
@@ -580,6 +580,27 @@ models:
 | `shortcuts_json_str`    | string | —                                     | JSON string defining shortcuts                                                                                                                                                                                                                                                                                                                                                                            |
 | `livy_mode`             | string | `fabric`                              | `fabric` for Fabric cloud, `local` for local Livy                                                                                                                                                                                                                                                                                                                                                         |
 | `livy_url`              | string | `http://localhost:8998`               | Local Livy URL (local mode only)                                                                                                                                                                                                                                                                                                                                                                          |
+
+### Inspecting `spark_config`
+
+`spark_config` is forwarded **verbatim** to the Livy session-create call in every mode —
+high-concurrency, singleton Fabric, and local. Only `sessionTag` is adapter-owned (it drives
+high-concurrency session packing), and `spark.fabric.environment.id` /
+`spark.livy.session.idle.timeout` are merged into `conf` when `environmentId` /
+`session_idle_timeout` are set.
+
+To see exactly what was sent:
+
+```bash
+dbt debug          # echoes spark_config and high_concurrency
+dbt run --debug    # logs the full session-create payload
+```
+
+If a `conf` key does not appear to take effect, the payload log tells you whether the adapter
+sent it. A Fabric [resource profile](https://learn.microsoft.com/en-us/fabric/data-engineering/configure-resource-profile-configurations)
+is applied *after* the session `conf`, so a key the profile defines (for example
+`spark.sql.parquet.vorder.default`) overrides the value requested in `spark_config.conf`.
+Keys the profile does not define are unaffected.
 
 ### Authentication Modes
 

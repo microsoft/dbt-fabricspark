@@ -192,11 +192,11 @@ class LivySession:
         logger.debug("Creating Livy session (this may take a few minutes)")
 
         if self.is_local_mode:
-            session_data = {"kind": "sql"}
-            if "kind" in spark_config:
-                session_data["kind"] = spark_config["kind"]
+            session_data = {"kind": "sql", **spark_config}
         else:
             session_data = spark_config
+
+        logger.debug(f"Creating Livy session with payload: {json.dumps(session_data)}")
 
         max_create_retries = 5
         for attempt in range(max_create_retries):

@@ -133,7 +133,9 @@ class HighConcurrencySession:
         """
         payload = self._build_acquire_payload()
         url = self.connect_url + "/highConcurrencySessions"
-        logger.debug(f"Acquiring HC session (sessionTag={self.session_tag})")
+        logger.debug(
+            f"Acquiring HC session (sessionTag={self.session_tag}): {json.dumps(payload)}"
+        )
 
         response = None
         max_retries = 5
@@ -193,30 +195,17 @@ class HighConcurrencySession:
         )
 
     def _build_acquire_payload(self) -> dict[str, Any]:
-        cfg = dict(self.spark_config)
+        payload: dict[str, Any] = dict(self.spark_config)
         # The HC payload accepts the same conf/numExecutors/etc. as the
-        # singleton /sessions POST — we just add the sessionTag.
-        payload: dict[str, Any] = {"sessionTag": self.session_tag}
-        for key in (
-            "name",
-            "conf",
-            "driverMemory",
-            "driverCores",
-            "executorMemory",
-            "executorCores",
-            "numExecutors",
-            "jars",
-            "files",
-            "pyFiles",
-            "archives",
-            "args",
-            "className",
-            "file",
-            "tags",
-            "artifactName",
-        ):
-            if key in cfg:
-                payload[key] = cfg[key]
+        # singleton /sessions POST — we just add the sessionTag, which drives
+        # server-side session packing and therefore always wins.
+        if "sessionTag" in payload and payload["sessionTag"] != self.session_tag:
+            logger.warning(
+                f"spark_config.sessionTag={payload['sessionTag']!r} is overridden by the "
+                f"adapter-derived sessionTag={self.session_tag!r}, which controls "
+                f"high-concurrency session packing."
+            )
+        payload["sessionTag"] = self.session_tag
 
         conf = dict(payload.get("conf") or {})
         if self.credential.environmentId:

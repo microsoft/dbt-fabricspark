@@ -529,3 +529,17 @@ def test_apply_lakehouse_properties_no_warning_when_schemas_enabled() -> None:
 
     assert credentials.lakehouse_schemas_enabled is True
     mock_logger.warning.assert_not_called()
+
+
+def test_spark_config_in_connection_keys() -> None:
+    """spark_config appears in _connection_keys() so dbt debug echoes what was configured."""
+    kwargs = _base_fabric_kwargs()
+    kwargs["spark_config"] = {"name": "app", "conf": {"spark.dbt.canary": "alive"}}
+    credentials = FabricSparkCredentials(**kwargs)
+    assert "spark_config" in credentials._connection_keys()
+
+
+def test_high_concurrency_in_connection_keys() -> None:
+    """high_concurrency decides which backend sends spark_config, so dbt debug must show it."""
+    credentials = FabricSparkCredentials(**_base_fabric_kwargs())
+    assert "high_concurrency" in credentials._connection_keys()

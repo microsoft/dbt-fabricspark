@@ -286,6 +286,90 @@ class TestRunOnDemandRefresh:
         with pytest.raises(MLVApiError, match="Forbidden"):
             run_on_demand_refresh(mock_credentials)
 
+    @pytest.mark.parametrize(
+        "failure_reason",
+        [
+            "Job failed. failureReason: {'errorCode': 'MLV_NOT_FOUND'}",
+            "Job failed. failureReason: {'errorCode': 'MLV_LINEAGE_NOT_FOUND'}",
+            "Job failed. failureReason: {'errorCode': 'MLV_ARTIFACT_NOT_FOUND', "
+            "'message': 'references a lakehouse that no longer exists or cannot be "
+            "resolved', 'isRetriable': False}",
+            "Job ended with status 'Cancelled'",
+            "Job ended with status 'Deduped'",
+        ],
+    )
+    @patch("dbt.adapters.fabricspark.mlv_api.time.sleep")
+    @patch("dbt.adapters.fabricspark.mlv_api.poll_job_instance_until_complete")
+    @patch("dbt.adapters.fabricspark.mlv_api.get_headers")
+    @patch("dbt.adapters.fabricspark.mlv_api._request_with_retry")
+    def test_retries_transient_failures(
+        self,
+        mock_request,
+        mock_headers,
+        mock_poll,
+        mock_sleep,
+        failure_reason,
+        mock_credentials,
+    ):
+        mock_headers.return_value = {"Authorization": "******"}
+        mock_credentials.statement_timeout = 3600
+        mock_response = MagicMock()
+        mock_response.headers = {"Location": "https://api.fabric.microsoft.com/.../job-123"}
+        mock_request.return_value = mock_response
+        mock_poll.side_effect = [
+            MLVApiError("on-demand MLV refresh", failure_reason),
+            {"status": "Completed", "failureReason": None},
+        ]
+
+        result = run_on_demand_refresh(mock_credentials)
+
+        assert result["status"] == "Completed"
+        assert mock_poll.call_count == 2
+
+    @patch("dbt.adapters.fabricspark.mlv_api.time.sleep")
+    @patch("dbt.adapters.fabricspark.mlv_api.poll_job_instance_until_complete")
+    @patch("dbt.adapters.fabricspark.mlv_api.get_headers")
+    @patch("dbt.adapters.fabricspark.mlv_api._request_with_retry")
+    def test_does_not_retry_permanent_failure(
+        self, mock_request, mock_headers, mock_poll, mock_sleep, mock_credentials
+    ):
+        mock_headers.return_value = {"Authorization": "******"}
+        mock_credentials.statement_timeout = 3600
+        mock_response = MagicMock()
+        mock_response.headers = {"Location": "https://api.fabric.microsoft.com/.../job-123"}
+        mock_request.return_value = mock_response
+        mock_poll.side_effect = MLVApiError(
+            "on-demand MLV refresh",
+            "Job failed. failureReason: {'errorCode': 'MLV_SYNTAX_ERROR'}",
+        )
+
+        with pytest.raises(MLVApiError, match="MLV_SYNTAX_ERROR"):
+            run_on_demand_refresh(mock_credentials)
+
+        assert mock_poll.call_count == 1
+
+    @patch("dbt.adapters.fabricspark.mlv_api.time.sleep")
+    @patch("dbt.adapters.fabricspark.mlv_api.poll_job_instance_until_complete")
+    @patch("dbt.adapters.fabricspark.mlv_api.get_headers")
+    @patch("dbt.adapters.fabricspark.mlv_api._request_with_retry")
+    def test_raises_after_exhausting_retries(
+        self, mock_request, mock_headers, mock_poll, mock_sleep, mock_credentials
+    ):
+        mock_headers.return_value = {"Authorization": "******"}
+        mock_credentials.statement_timeout = 3600
+        mock_response = MagicMock()
+        mock_response.headers = {"Location": "https://api.fabric.microsoft.com/.../job-123"}
+        mock_request.return_value = mock_response
+        mock_poll.side_effect = MLVApiError(
+            "on-demand MLV refresh",
+            "Job failed. failureReason: {'errorCode': 'MLV_ARTIFACT_NOT_FOUND'}",
+        )
+
+        with pytest.raises(MLVApiError, match="MLV_ARTIFACT_NOT_FOUND"):
+            run_on_demand_refresh(mock_credentials, max_retries=3)
+
+        assert mock_poll.call_count == 3
+
 
 class TestListSchedules:
     @patch("dbt.adapters.fabricspark.mlv_api.get_headers")

@@ -13,9 +13,12 @@ session global is visible. Without ``inprocess``, ``spark`` would be
 undefined.
 
 This is a spike: no lakehouse schema-detection, no high-concurrency
-multi-REPL support (privy serializes inprocess calls behind a single lock on
-the server side, so concurrent dbt threads queue FIFO), and no retry/backoff
-sophistication beyond a simple health-check + wait loop.
+multi-REPL support, and no retry/backoff sophistication beyond a simple
+health-check + wait loop. Concurrent dbt threads do run in parallel — privy
+captures stdout/stderr per thread and dispatches inprocess calls on a thread
+pool, so statements execute simultaneously against the notebook's shared
+``spark`` session (setting ``PRIVY_SERIALIZE_INPROCESS=1`` forces them back
+to one-at-a-time).
 
 The notebook run is never cancelled by this module (not even on process
 exit) — a filesystem cache (``privy-notebook-job.json`` in the cwd) lets

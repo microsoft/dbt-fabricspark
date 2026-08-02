@@ -1891,6 +1891,9 @@ dependencies = [
 cli = [
     { name = "azure-cli" },
 ]
+privy = [
+    { name = "privy" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -1914,9 +1917,10 @@ requires-dist = [
     { name = "dbt-adapters", specifier = ">=1.7,<2.0" },
     { name = "dbt-common", specifier = ">=1.10,<2.0" },
     { name = "dbt-core", specifier = ">=1.8.0" },
+    { name = "privy", marker = "extra == 'privy'", url = "https://rakirahman.blob.core.windows.net/public/whls/privy-0.0.1-py3-none-any.whl" },
     { name = "requests", specifier = ">=2.32.0" },
 ]
-provides-extras = ["cli"]
+provides-extras = ["cli", "privy"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2643,6 +2647,28 @@ sdist = { url = "https://files.pythonhosted.org/packages/ed/d3/c6c64067759e87af9
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9b/fb/a70a4214956182e0d7a9099ab17d50bfcba1056188e9b14f35b9e2b62a0d/portalocker-2.10.1-py3-none-any.whl", hash = "sha256:53a5984ebc86a025552264b459b46a2086e269b21823cb572f8f28ee759e45bf", size = 18423, upload-time = "2024-07-13T23:15:32.602Z" },
 ]
+
+[[package]]
+name = "privy"
+version = "0.0.1"
+source = { url = "https://rakirahman.blob.core.windows.net/public/whls/privy-0.0.1-py3-none-any.whl" }
+dependencies = [
+    { name = "requests" },
+    { name = "websocket-client" },
+]
+wheels = [
+    { url = "https://rakirahman.blob.core.windows.net/public/whls/privy-0.0.1-py3-none-any.whl", hash = "sha256:3b89ed11f1cf9b1b14fe375759e7a44ec5bcef9915f118e011760bac9f3d5d46" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "build", marker = "extra == 'dev'", specifier = ">=1.2" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "requests", specifier = ">=2.31" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
+    { name = "websocket-client", specifier = ">=1.7" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "protobuf"

@@ -1,0 +1,19 @@
+privy_demo:
+  target: privy
+  outputs:
+    privy:
+      type: fabricspark
+      method: privy
+      privy_relay_namespace: "{{ env_var('PRIVY_RELAY_NAMESPACE') }}"
+      privy_relay_path: "{{ env_var('PRIVY_RELAY_PATH') }}"
+      privy_relay_keyrule: "{{ env_var('PRIVY_RELAY_KEYRULE') }}"
+      privy_relay_key: "{{ env_var('PRIVY_RELAY_KEY') }}"
+      privy_notebook_url: "{{ env_var('PRIVY_NOTEBOOK_URL') }}"
+      endpoint: "{{ env_var('FABRIC_ENDPOINT', 'https://api.fabric.microsoft.com/v1') }}"
+      authentication: "{{ env_var('FABRIC_AUTH_METHOD', 'CLI') }}"
+      schema: dbo
+      threads: 1
+      privy_auto_start_notebook: true
+      privy_ready_timeout: 900
+      spark_config:
+        name: "dbt-privy-demo"

@@ -43,6 +43,7 @@ dependencies = [
 
 [project.optional-dependencies]
 cli = ["azure-cli>=2.84.0"]
+privy = ["privy @ https://rakirahman.blob.core.windows.net/public/whls/privy-0.0.1-py3-none-any.whl"]
 
 [dependency-groups]
 dev = [
@@ -67,6 +68,9 @@ dev = [
 [tool.uv]
 default-groups = "all"
 prerelease = "allow"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [project.urls]
 homepage = "https://github.com/microsoft/dbt-fabricspark"

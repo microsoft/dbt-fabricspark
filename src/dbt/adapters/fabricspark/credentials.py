@@ -124,6 +124,32 @@ class FabricSparkCredentials(Credentials):
     # ``DBT_FABRICSPARK_SKIP_OPTIMIZE`` environment variable disables it outright.
     auto_optimize: bool = True
 
+    # --- Privy connection method (experimental) ---------------------------
+    # ``method: privy`` sends statements to a Fabric notebook (running
+    # ``privy.RelayServer``) over an Azure Relay Hybrid Connection instead of
+    # the Livy REST API. Requires the ``privy`` extra
+    # (``pip install dbt-fabricspark[privy]``). Exempt from the
+    # workspaceid/lakehouseid/lakehouse requirements below (like local mode) —
+    # only these fields are needed.
+    privy_relay_namespace: Optional[str] = None
+    privy_relay_path: Optional[str] = None
+    privy_relay_keyrule: Optional[str] = None
+    privy_relay_key: Optional[str] = None
+    # Browser URL of the Fabric notebook hosting the RelayServer, e.g.
+    # https://<host>/groups/<workspaceId>/synapsenotebooks/<notebookId>. The
+    # workspace and notebook GUIDs are parsed out of this URL to trigger the
+    # notebook via the Fabric Job Scheduler API when the relay is unreachable.
+    privy_notebook_url: Optional[str] = None
+    # When True (default), the adapter tries to start the notebook (via the
+    # Fabric REST API) if the relay doesn't respond to a health check. Set to
+    # False to manage the run yourself and have the adapter only act as a
+    # Privy client.
+    privy_auto_start_notebook: bool = True
+    # Max seconds to keep pinging the relay for readiness (after an auto-start
+    # trigger, or while waiting for a manually-started run) before giving up.
+    # Independent of session_start_timeout (which is Livy-session-specific).
+    privy_ready_timeout: int = 900
+
     def __repr__(self) -> str:
         """Mask sensitive fields in repr to prevent credential leakage in logs/tracebacks."""
         return (
@@ -137,6 +163,11 @@ class FabricSparkCredentials(Credentials):
             f"credential_class={self.credential_class!r}, "
             f"credential_kwargs_keys={sorted(map(str, self.credential_kwargs.keys()))!r}, "
             f"workspace_name={self.workspace_name!r}, "
+            f"privy_relay_namespace={self.privy_relay_namespace!r}, "
+            f"privy_relay_path={self.privy_relay_path!r}, "
+            f"privy_notebook_url={self.privy_notebook_url!r}, "
+            f"privy_ready_timeout={self.privy_ready_timeout!r}, "
+            f"privy_relay_key='***', "
             f"accessToken='***')"
         )
 
@@ -158,6 +189,10 @@ class FabricSparkCredentials(Credentials):
         return self.livy_mode == "local"
 
     @property
+    def is_privy_mode(self) -> bool:
+        return self.method == "privy"
+
+    @property
     def resolved_session_id_file(self) -> str:
         if self.session_id_file:
             return self.session_id_file
@@ -173,8 +208,10 @@ class FabricSparkCredentials(Credentials):
         if self.method is None:
             raise DbtRuntimeError("Must specify `method` in profile")
 
-        # Fabric-specific validations
-        if not self.is_local_mode:
+        # Fabric-specific validations. Skipped for local mode and for privy
+        # mode — privy talks to whatever lakehouse the notebook is already
+        # attached to, so it has no use for workspaceid/lakehouseid/lakehouse.
+        if not self.is_local_mode and not self.is_privy_mode:
             if self.endpoint is None:
                 raise DbtRuntimeError("Must specify `endpoint` in profile for Fabric mode")
             if self.workspaceid is None:
@@ -184,25 +221,48 @@ class FabricSparkCredentials(Credentials):
             if self.lakehouse is None:
                 raise DbtRuntimeError("Must specify `lakehouse` in profile for Fabric mode")
 
+        if self.is_privy_mode:
+            if not self.privy_relay_namespace:
+                raise DbtRuntimeError(
+                    "Must specify `privy_relay_namespace` in profile for method=privy"
+                )
+            if not self.privy_relay_path:
+                raise DbtRuntimeError(
+                    "Must specify `privy_relay_path` in profile for method=privy"
+                )
+            if not self.privy_relay_keyrule:
+                raise DbtRuntimeError(
+                    "Must specify `privy_relay_keyrule` in profile for method=privy"
+                )
+            if not self.privy_relay_key:
+                raise DbtRuntimeError("Must specify `privy_relay_key` in profile for method=privy")
+            if not self.privy_notebook_url:
+                raise DbtRuntimeError(
+                    "Must specify `privy_notebook_url` in profile for method=privy"
+                )
+
         # schema defaults to lakehouse name if not provided by user.
         # For schema-enabled lakehouses, user can override this in profiles.yml.
-        # For local mode without lakehouse, defaults to "default" (Spark's default database).
+        # For local/privy mode without lakehouse, defaults to "default" (Spark's default database).
         if self.schema is None:
             if self.lakehouse is not None:
                 self.schema = self.lakehouse
-            elif self.is_local_mode:
+            elif self.is_local_mode or self.is_privy_mode:
                 self.schema = "default"
 
         # database is always set to lakehouse name for relation rendering.
         # In non-schema mode, include_policy.database=False excludes it from SQL.
         # In schema-enabled mode, include_policy.database=True renders three-part names.
-        # For local mode without lakehouse, defaults to "default".
+        # For local/privy mode without lakehouse, defaults to "default".
         if self.lakehouse is not None:
             self.database = self.lakehouse
-        elif self.is_local_mode:
+        elif self.is_local_mode or self.is_privy_mode:
             self.database = "default"
 
-        # Security validations (Fabric mode only)
+        # Security validations (Fabric mode only). Privy still makes one real
+        # Fabric API call (triggering the notebook run), so endpoint/UUID
+        # validation stays active for it; workspaceid/lakehouseid are simply
+        # None for privy and _validate_uuid tolerates that.
         if not self.is_local_mode:
             self._validate_uuid(self.workspaceid, "workspaceid")
             self._validate_uuid(self.lakehouseid, "lakehouseid")
@@ -285,6 +345,8 @@ class FabricSparkCredentials(Credentials):
     def unique_field(self) -> str:
         if self.is_local_mode:
             return self.livy_url
+        if self.is_privy_mode:
+            return f"{self.privy_relay_namespace}/{self.privy_relay_path}"
         return self.lakehouseid
 
     def _validate_endpoint(self) -> None:
@@ -315,7 +377,8 @@ class FabricSparkCredentials(Credentials):
             )
 
     def _connection_keys(self) -> Tuple[str, ...]:
-        # Intentionally excludes client_secret, accessToken, tenant_id
+        # Intentionally excludes client_secret, accessToken, tenant_id,
+        # privy_relay_key, privy_relay_keyrule
         return (
             "workspaceid",
             "lakehouseid",
@@ -327,4 +390,10 @@ class FabricSparkCredentials(Credentials):
             "auto_optimize",
             "high_concurrency",
             "spark_config",
+            "method",
+            "privy_relay_namespace",
+            "privy_relay_path",
+            "privy_notebook_url",
+            "privy_auto_start_notebook",
+            "privy_ready_timeout",
         )

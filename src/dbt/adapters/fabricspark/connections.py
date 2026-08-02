@@ -37,6 +37,7 @@ from dbt.adapters.fabricspark.livysession import (
     LivySessionManager,
     get_lakehouse_properties,
 )
+from dbt.adapters.fabricspark.privysession import PrivyConnectionManager, PrivyConnectionWrapper
 from dbt.adapters.fabricspark.relation import FabricSparkRelation
 from dbt.adapters.sql import SQLConnectionManager
 
@@ -108,6 +109,7 @@ def render_spark_type(type_code: Any) -> str:
 
 class FabricSparkConnectionMethod(StrEnum):
     LIVY = "livy"
+    PRIVY = "privy"
 
 
 class FabricSparkConnectionWrapper(ABC):
@@ -228,7 +230,7 @@ class FabricSparkConnectionManager(SQLConnectionManager):
         handle: FabricSparkConnectionWrapper = None
 
         # Fetch lakehouse properties and detect schema support (Fabric mode only).
-        if not creds.is_local_mode:
+        if not creds.is_local_mode and not creds.is_privy_mode:
             lakehouse_props = get_lakehouse_properties(creds)
             creds.apply_lakehouse_properties(lakehouse_props)
 
@@ -256,6 +258,11 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                         if use_hc
                         else LivySessionConnectionWrapper(raw_handle)
                     )
+                    connection.state = ConnectionState.OPEN
+
+                elif creds.method == FabricSparkConnectionMethod.PRIVY:
+                    raw_handle = PrivyConnectionManager.connect(creds)
+                    handle = PrivyConnectionWrapper(raw_handle, creds)
                     connection.state = ConnectionState.OPEN
 
                 else:

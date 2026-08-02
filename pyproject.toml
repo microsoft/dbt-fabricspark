@@ -43,7 +43,7 @@ dependencies = [
 
 [project.optional-dependencies]
 cli = ["azure-cli>=2.84.0"]
-privy = ["privy @ https://rakirahman.blob.core.windows.net/public/whls/privy-0.0.1-py3-none-any.whl"]
+privy = ["privy @ https://rakirahman.blob.core.windows.net/public/whls/privy-0.1.0-py3-none-any.whl"]
 
 [dependency-groups]
 dev = [

@@ -47,10 +47,6 @@
     {%- call statement('ensure_database_exists') -%}
       create database if not exists {{ schema_name }}
     {%- endcall -%}
-  {% else %}
-    {%- call statement('ensure_database_exists') -%}
-      select 1
-    {%- endcall -%}
   {% endif %}
 {% endmacro %}
 

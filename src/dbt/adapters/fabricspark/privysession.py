@@ -401,6 +401,15 @@ class PrivyConnectionManager:
         """
 
 
+_NODE_ID_RE = re.compile(r'"node_id"\s*:\s*"([^"]+)"')
+
+
+def _job_group_for(sql: str) -> str:
+    """Derive a Spark job-group id from dbt's query comment."""
+    match = _NODE_ID_RE.search(sql[:1024])
+    return match.group(1) if match else "dbt"
+
+
 def _build_exec_snippet(sql: str, marker: str) -> str:
     """Build the Python snippet run (inprocess) on the notebook side.
 
@@ -408,17 +417,41 @@ def _build_exec_snippet(sql: str, marker: str) -> str:
     ``{"data": [...], "schema": {"fields": [...]}}`` shape Livy's statement
     API returns, and prints it between two copies of a unique marker so the
     client can find it even if the query itself prints other output.
+
+    ``inprocess`` mode shares the notebook kernel's thread-local Spark
+    properties, so without an explicit ``setJobGroup`` every job inherits the
+    description Fabric set on its own start-up cell and is unattributable in
+    the Spark UI.
+
+    DDL/DML statements are executed eagerly by ``spark.sql`` and expose no
+    output schema; collecting them would only round-trip an empty list.
+
+    The job group is cleared via ``setLocalProperty(..., None)`` rather than
+    ``clearJobGroup()`` because some Fabric runtimes do not expose the latter.
     """
     sql_literal = json.dumps(sql)
     marker_literal = json.dumps(marker)
+    group_literal = json.dumps(_job_group_for(sql))
+    description_literal = json.dumps(" ".join(sql.split())[:400])
     return (
         "import json as __privy_json\n"
-        f"__privy_df = spark.sql({sql_literal})\n"
-        "__privy_rows = [list(__privy_row) for __privy_row in __privy_df.collect()]\n"
-        "__privy_fields = [\n"
-        "    {'name': __f.name, 'type': __f.dataType.simpleString(), 'nullable': __f.nullable}\n"
-        "    for __f in __privy_df.schema.fields\n"
-        "]\n"
+        f"spark.sparkContext.setJobGroup({group_literal}, {description_literal}, True)\n"
+        "try:\n"
+        f"    __privy_df = spark.sql({sql_literal})\n"
+        "    __privy_fields = [\n"
+        "        {'name': __f.name, 'type': __f.dataType.simpleString(),"
+        " 'nullable': __f.nullable}\n"
+        "        for __f in __privy_df.schema.fields\n"
+        "    ]\n"
+        "    __privy_rows = (\n"
+        "        [list(__privy_row) for __privy_row in __privy_df.collect()]\n"
+        "        if __privy_fields\n"
+        "        else []\n"
+        "    )\n"
+        "finally:\n"
+        "    for __privy_prop in ("
+        "'spark.jobGroup.id', 'spark.job.description', 'spark.job.interruptOnCancel'):\n"
+        "        spark.sparkContext.setLocalProperty(__privy_prop, None)\n"
         f"print({marker_literal})\n"
         "print(__privy_json.dumps("
         "{'data': __privy_rows, 'schema': {'fields': __privy_fields}}, default=str))\n"

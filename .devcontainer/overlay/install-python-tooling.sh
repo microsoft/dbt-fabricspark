@@ -5,7 +5,7 @@
 # changes:
 #
 
-VERSION="1.13.0" # "latest"
+VERSION="1.13.1" # "latest"
 INSTALL_PATH="/usr/local/bin"
 RUNNER_OS="Linux"
 RUNNER_ARCH="X64"

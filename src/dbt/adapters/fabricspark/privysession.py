@@ -2,9 +2,7 @@
 
 Sends ``spark.sql(...)`` statements to a Fabric notebook running
 ``privy.RelayServer`` over an Azure Relay Hybrid Connection, instead of the
-Livy REST API. Requires the ``privy`` package (``pip install
-dbt-fabricspark[privy]``), lazily imported so ``method: livy`` users never
-need it installed.
+Livy REST API.
 
 Every statement is sent with ``mode="inprocess"``: privy's default
 ``mode="subprocess"`` spawns a fresh, isolated Python interpreter with no
@@ -75,9 +73,9 @@ def _import_relay_client() -> Any:
         from privy import RelayClient
     except ImportError as exc:
         raise DbtRuntimeError(
-            "method=privy requires the `privy` package. Install it with "
-            "`pip install dbt-fabricspark[privy]` (or add the `privy` extra "
-            "to your uv/pip install of dbt-fabricspark)."
+            "method=privy requires the `privy` package, which should be bundled with "
+            "dbt-fabricspark. Try reinstalling dbt-fabricspark, or `pip install privy` "
+            "directly if this is a stripped-down/offline environment."
         ) from exc
     return RelayClient
 

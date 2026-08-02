@@ -127,10 +127,9 @@ class FabricSparkCredentials(Credentials):
     # --- Privy connection method (experimental) ---------------------------
     # ``method: privy`` sends statements to a Fabric notebook (running
     # ``privy.RelayServer``) over an Azure Relay Hybrid Connection instead of
-    # the Livy REST API. Requires the ``privy`` extra
-    # (``pip install dbt-fabricspark[privy]``). Exempt from the
-    # workspaceid/lakehouseid/lakehouse requirements below (like local mode) —
-    # only these fields are needed.
+    # the Livy REST API. ``privy`` is bundled as a core dependency of this
+    # package. Exempt from the workspaceid/lakehouseid/lakehouse requirements
+    # below (like local mode) — only these fields are needed.
     privy_relay_namespace: Optional[str] = None
     privy_relay_path: Optional[str] = None
     privy_relay_keyrule: Optional[str] = None

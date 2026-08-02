@@ -1884,15 +1884,13 @@ dependencies = [
     { name = "dbt-adapters" },
     { name = "dbt-common" },
     { name = "dbt-core" },
+    { name = "privy" },
     { name = "requests" },
 ]
 
 [package.optional-dependencies]
 cli = [
     { name = "azure-cli" },
-]
-privy = [
-    { name = "privy" },
 ]
 
 [package.dev-dependencies]
@@ -1917,10 +1915,10 @@ requires-dist = [
     { name = "dbt-adapters", specifier = ">=1.7,<2.0" },
     { name = "dbt-common", specifier = ">=1.10,<2.0" },
     { name = "dbt-core", specifier = ">=1.8.0" },
-    { name = "privy", marker = "extra == 'privy'", url = "https://rakirahman.blob.core.windows.net/public/whls/privy-0.1.0-py3-none-any.whl" },
+    { name = "privy", url = "https://rakirahman.blob.core.windows.net/public/whls/privy-0.1.0-py3-none-any.whl" },
     { name = "requests", specifier = ">=2.32.0" },
 ]
-provides-extras = ["cli", "privy"]
+provides-extras = ["cli"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2650,14 +2648,14 @@ wheels = [
 
 [[package]]
 name = "privy"
-version = "0.0.1"
+version = "0.1.0"
 source = { url = "https://rakirahman.blob.core.windows.net/public/whls/privy-0.1.0-py3-none-any.whl" }
 dependencies = [
     { name = "requests" },
     { name = "websocket-client" },
 ]
 wheels = [
-    { url = "https://rakirahman.blob.core.windows.net/public/whls/privy-0.1.0-py3-none-any.whl", hash = "sha256:3b89ed11f1cf9b1b14fe375759e7a44ec5bcef9915f118e011760bac9f3d5d46" },
+    { url = "https://rakirahman.blob.core.windows.net/public/whls/privy-0.1.0-py3-none-any.whl", hash = "sha256:777cfa492e6cc008cf5138364a44e9113cde6fecbe095cb4325263b38f8cbb70" },
 ]
 
 [package.metadata]

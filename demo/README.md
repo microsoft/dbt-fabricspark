@@ -20,7 +20,7 @@ dbt won't try to trigger a run itself.
 cd /workspaces/dbt-fabricspark
 uv build
 python3 -m venv demo/.venv
-demo/.venv/bin/pip install "$(ls dist/dbt_fabricspark-*-py3-none-any.whl)[privy]"
+demo/.venv/bin/pip install "$(ls dist/dbt_fabricspark-*-py3-none-any.whl)"
 ```
 
 ## 3. Run dbt

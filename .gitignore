@@ -339,3 +339,6 @@ node_modules/
 .nx/*
 # Livy session handle written by the adapter when no session_id_file is configured
 livy-session-id.txt
+# Privy notebook job cache written by the adapter (privysession.py) to reuse
+# a triggered notebook run across separate dbt invocations
+privy-notebook-job.json

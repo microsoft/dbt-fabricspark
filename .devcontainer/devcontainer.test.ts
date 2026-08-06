@@ -62,6 +62,21 @@ describe('Devcontainer Tests', () => {
     },
   );
 
+  test('Spark memory allocation does not truncate a valid percentage to zero', () => {
+    const script = readFileSync(
+      join(workspaceRoot, '.devcontainer', 'overlay', 'post-attach-commands.sh'),
+      'utf-8',
+    );
+    const calcRam = script.match(/calc_ram\(\) \{[\s\S]*?\n\}/)?.[0];
+
+    expect(calcRam).toBeDefined();
+    const output = execSync(
+      `bash -c '${calcRam}; calc_ram 10 7'`,
+      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] },
+    ).trim();
+    expect(output).toBe('1');
+  });
+
   test('Verify base image tools', () => {
     const output = execSync(
       'docker exec spark-devcontainer-test bash -c "hatch --version && /opt/spark/bin/spark-submit --version 2>&1"',

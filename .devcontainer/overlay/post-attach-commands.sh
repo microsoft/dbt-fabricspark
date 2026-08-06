@@ -80,7 +80,7 @@ validate_range() {
 calc_ram() {
     local pct=$1
     local total=$2
-    echo $(( (total * pct) / 100 ))
+    echo $(( (total * pct + 99) / 100 ))
 }
 
 calc_cores_clamped() {

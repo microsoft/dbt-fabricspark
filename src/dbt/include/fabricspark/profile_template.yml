@@ -47,6 +47,14 @@ prompts:
         hint: When true (default), the adapter runs OPTIMIZE on Delta relations after every table, incremental and snapshot build so downstream joins are not slowed down by small-file fragmentation. Individual models can override with config(auto_optimize=false), and the DBT_FABRICSPARK_SKIP_OPTIMIZE environment variable disables it outright.
         type: 'bool'
         default: true
+      api_calls_per_minute:
+        hint: Process-wide Fabric REST call ceiling per minute, shared across dbt threads for this endpoint and identity. Default 150 leaves headroom under Fabric's per-identity quota for other tooling and concurrent dbt processes. Set to 0 to disable the limiter; shared Retry-After backoff still applies. Ignored in local mode.
+        type: 'int'
+        default: 150
+      adaptive_polling:
+        hint: When true, Fabric high-concurrency mode uses one extra monitor REPL per underlying Livy session to read Spark task telemetry and reduce statement polling. If spark.highConcurrency.max is not set in spark_config.conf, the adapter sizes it to max(5, min(threads + 2, 50)); explicit user values are respected. Falls back safely to schedule-based polling if telemetry is unavailable. Ignored in local mode.
+        type: 'bool'
+        default: false
   schema:
     hint: 'default schema that dbt will build objects in'
   threads:

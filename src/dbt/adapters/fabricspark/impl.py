@@ -156,6 +156,14 @@ class FabricSparkAdapter(SQLAdapter):
     ConnectionManager: TypeAlias = FabricSparkConnectionManager
     AdapterSpecificConfigs: TypeAlias = FabricSparkConfig
 
+    def __init__(self, config, mp_context) -> None:
+        super().__init__(config, mp_context)
+        # Size the REPL packing cap before the first session is acquired.
+        creds = getattr(config, "credentials", None)
+        threads = getattr(config, "threads", None)
+        if creds is not None and isinstance(threads, int) and threads > 0:
+            creds.dbt_threads = threads
+
     @available
     def get_workspace_name_from_config(self, config) -> Optional[str]:
         """Resolve ``workspace_name`` from a model's ``config`` (top-level or

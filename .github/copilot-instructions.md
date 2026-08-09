@@ -91,3 +91,9 @@ When in doubt, **ask** rather than guess. The maintainers prefer a question to a
 ## Do not commit without review
 
 The repo owner reviews all changes before merge — open a PR and wait for review. Don't run `git commit` autonomously on `main`, and follow [Conventional Commits](https://www.conventionalcommits.org/) for PR titles (the PR template will remind you).
+
+## Adversarial review
+
+Before finishing any coding session, start an adversarial review agent who reads the above instructions and criticizes your work.
+
+Specially minimizing verbose commentary and enforcing SOLID/OOP/DRY code.

@@ -108,6 +108,19 @@ class FabricSparkCredentials(Credentials):
     poll_wait: int = 10  # seconds between polls for session start
     poll_statement_wait: float = 0.5  # seconds between polls for statement result
 
+    # Process-local Fabric REST ceiling. The service quota is per identity, so
+    # the default leaves headroom for other processes sharing the principal.
+    # Local mode is never governed. 0 disables only this limiter.
+    api_calls_per_minute: int = 150
+
+    # Telemetry-driven statement polling uses one extra high-concurrency REPL
+    # per Livy session to pace polls from Spark task counters.
+    # Fabric high-concurrency mode only; ignored in local mode.
+    adaptive_polling: bool = False
+
+    # Stamped by the adapter so REPL packing leaves room for the monitor.
+    dbt_threads: Optional[int] = field(default=None, init=False)
+
     # Subprocess timeout (seconds) passed to azure-identity's AzureCliCredential
     # when acquiring/refreshing tokens under authentication='CLI'. Defaults to
     # azure-identity's own default (10s). Raise it when high-concurrency builds
@@ -168,6 +181,11 @@ class FabricSparkCredentials(Credentials):
         if self.is_local_mode:
             return self.livy_url
         return f"{self.endpoint}/workspaces/{self.workspaceid}/lakehouses/{self.lakehouseid}/livyapi/versions/2023-12-01"
+
+    @property
+    def throttle_identity(self) -> str:
+        """Return the per-principal key used for Fabric quota sharing."""
+        return self.client_id or self.credential_class or self.authentication or "default"
 
     def __post_init__(self) -> None:
         if self.method is None:
@@ -326,5 +344,7 @@ class FabricSparkCredentials(Credentials):
             "quote_identifiers",
             "auto_optimize",
             "high_concurrency",
+            "adaptive_polling",
+            "api_calls_per_minute",
             "spark_config",
         )

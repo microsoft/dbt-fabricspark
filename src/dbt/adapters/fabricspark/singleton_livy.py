@@ -6,10 +6,12 @@ import json
 import re
 import threading
 import time
+import uuid
 from types import TracebackType
 from typing import Any, Optional
 
 import requests
+from dbt_common.events.contextvars import get_node_info
 from dbt_common.exceptions import DbtDatabaseError, DbtRuntimeError
 from dbt_common.utils.encoding import DECIMALS
 from requests.models import Response
@@ -17,15 +19,61 @@ from requests.models import Response
 from dbt.adapters.events.logging import AdapterLogger
 from dbt.adapters.exceptions import FailedToConnectError
 from dbt.adapters.fabricspark import livysession as _livy_helpers
-from dbt.adapters.fabricspark._http_utils import parse_retry_after
+from dbt.adapters.fabricspark.adaptive_polling import (
+    MIN_INTERVAL,
+    PollScheduler,
+    TelemetrySnapshot,
+    duration_store,
+    sql_shape,
+    stats_path_for,
+)
 from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
 from dbt.adapters.fabricspark.livy_backend import LivyBackend, coerce_time_columns
 from dbt.adapters.fabricspark.shortcuts import ShortcutClient
+from dbt.adapters.fabricspark.throttle import (
+    PRIORITY_BACKGROUND,
+    PRIORITY_CRITICAL,
+    PRIORITY_NORMAL,
+    governor_for_credentials,
+    parse_retry_after,
+)
+from dbt.adapters.fabricspark.throttle import (
+    governed as _governed,
+)
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
+
+# Teardown and cancel run under dbt's connection-manager lock and on the
+# interpreter-exit path, so they must never park on the throttle gate.
+_TEARDOWN_TIMEOUT = 15
+_TEARDOWN_GOVERNOR_WAIT = 5.0
+
+# Lets ambiguous POSTs be reconciled against Livy's statement list.
+_SUBMIT_MARKER_PREFIX = "dbt-fabricspark-submit:"
+_RECONCILE_ATTEMPTS = 4
+_RECONCILE_BACKOFF = 1.5
+
+# Cap exponential retry sleeps so they stay within `statement_timeout`.
+_MAX_RETRY_BACKOFF = 30.0
+
 NUMBERS = DECIMALS + (int, float)
 
 _session_lock = threading.Lock()
+
+
+def _sleep_until(wait: float, deadline: Optional[float]) -> None:
+    if deadline is not None:
+        wait = min(wait, max(deadline - time.monotonic(), 0.0))
+    if wait > 0:
+        time.sleep(wait)
+
+
+class _AdoptedSubmission:
+    def __init__(self, statement_id: int) -> None:
+        self._statement_id = statement_id
+
+    def json(self) -> dict:
+        return {"id": self._statement_id}
 
 
 def _get_headers(credentials: FabricSparkCredentials, tokenPrint: bool = False) -> dict[str, str]:
@@ -39,6 +87,7 @@ class LivySession:
         self.session_id = None
         self.is_new_session_required = True
         self.is_local_mode = credentials.is_local_mode
+        self.governor = governor_for_credentials(credentials)
 
     def __enter__(self) -> LivySession:
         return self
@@ -70,7 +119,10 @@ class LivySession:
             logger.debug(f"Attempting to reuse existing session: {session_id}")
             self.session_id = session_id
 
-            res = requests.get(
+            res = _governed(
+                self.governor,
+                PRIORITY_NORMAL,
+                requests.get,
                 self.connect_url + "/sessions/" + session_id,
                 headers=_get_headers(self.credential, False),
                 timeout=self.credential.http_timeout,
@@ -147,7 +199,10 @@ class LivySession:
         deadline = time.time() + self.credential.session_start_timeout
 
         while time.time() < deadline:
-            res = requests.get(
+            res = _governed(
+                self.governor,
+                PRIORITY_NORMAL,
+                requests.get,
                 self.connect_url + "/sessions/" + session_id,
                 headers=_get_headers(self.credential, False),
                 timeout=self.credential.http_timeout,
@@ -201,7 +256,10 @@ class LivySession:
         max_create_retries = 5
         for attempt in range(max_create_retries):
             try:
-                response = requests.post(
+                response = _governed(
+                    self.governor,
+                    PRIORITY_NORMAL,
+                    requests.post,
                     self.connect_url + "/sessions",
                     data=json.dumps(session_data),
                     headers=_get_headers(self.credential, False),
@@ -260,7 +318,10 @@ class LivySession:
                     f"{self.session_id} to start. Increase `session_start_timeout` in profiles.yml."
                 )
             try:
-                response = requests.get(
+                response = _governed(
+                    self.governor,
+                    PRIORITY_NORMAL,
+                    requests.get,
                     self.connect_url + "/sessions/" + self.session_id,
                     headers=_get_headers(self.credential, False),
                     timeout=self.credential.http_timeout,
@@ -310,8 +371,13 @@ class LivySession:
                     time.sleep(self.credential.poll_wait)
 
     def delete_session(self) -> None:
+        if self.session_id is None:
+            return
         try:
-            res = requests.delete(
+            res = _governed(
+                self.governor,
+                PRIORITY_NORMAL,
+                requests.delete,
                 self.connect_url + "/sessions/" + self.session_id,
                 headers=_get_headers(self.credential, False),
                 timeout=self.credential.http_timeout,
@@ -329,7 +395,10 @@ class LivySession:
             logger.error("Session ID is None")
             return False
         try:
-            res = requests.get(
+            res = _governed(
+                self.governor,
+                PRIORITY_NORMAL,
+                requests.get,
                 self.connect_url + "/sessions/" + self.session_id,
                 headers=_get_headers(self.credential, False),
                 timeout=self.credential.http_timeout,
@@ -368,6 +437,10 @@ class LivyCursor:
         self.session_id = livy_session.session_id
         self.livy_session = livy_session
         self.is_local_mode = credential.is_local_mode
+        self.governor = governor_for_credentials(credential)
+        self.active_statement_id: Optional[str] = None
+        self._active_sql: Optional[str] = None
+        self._duration_store = duration_store(stats_path_for(credential))
 
     def __enter__(self) -> LivyCursor:
         return self
@@ -405,6 +478,84 @@ class LivyCursor:
     def close(self) -> None:
         self._rows = None
 
+    def cancel(self) -> None:
+        """Best-effort cancel of the statement currently being polled."""
+        statement_id = self.active_statement_id
+        if not statement_id:
+            return
+        try:
+            # Ctrl-C runs under dbt's connection-manager lock, so it must not
+            # park on the throttle gate.
+            url = (
+                self.connect_url
+                + "/sessions/"
+                + str(self.session_id)
+                + "/statements/"
+                + statement_id
+                + "/cancel"
+            )
+            resp = _governed(
+                self.governor,
+                PRIORITY_CRITICAL,
+                requests.post,
+                url,
+                headers=_get_headers(self.credential, False),
+                timeout=min(self.credential.http_timeout, _TEARDOWN_TIMEOUT),
+                governor_deadline=time.monotonic() + _TEARDOWN_GOVERNOR_WAIT,
+            )
+            logger.debug(f"Cancel of statement {statement_id} returned HTTP {resp.status_code}")
+        except Exception as exc:
+            logger.debug(f"Cancel of statement {statement_id} failed: {exc}")
+
+    def _statements_url(self) -> str:
+        return self.connect_url + "/sessions/" + str(self.session_id) + "/statements"
+
+    def _find_submitted_statement(self, marker: str) -> tuple[str, Optional[int]]:
+        """Look for an already-accepted statement carrying ``marker``.
+
+        Returns ``("found", id)``, ``("absent", None)`` when the list was read
+        successfully and the statement is definitely not there, or
+        ``("unknown", None)`` when the lookup itself failed. Only ``absent`` is
+        safe to resubmit because the original POST may already be running
+        side-effecting DDL/DML.
+        """
+        deadline = time.monotonic() + max(self.credential.http_timeout, 30)
+        read_the_list = False
+        for attempt in range(_RECONCILE_ATTEMPTS):
+            try:
+                res = _governed(
+                    self.governor,
+                    PRIORITY_CRITICAL,
+                    requests.get,
+                    self._statements_url(),
+                    headers=_get_headers(self.credential, False),
+                    timeout=self.credential.http_timeout,
+                    governor_deadline=deadline,
+                )
+                if res.status_code < 400:
+                    body = res.json()
+                    listing = body.get("statements") if isinstance(body, dict) else None
+                    if isinstance(listing, list):
+                        for statement in listing:
+                            if not isinstance(statement, dict):
+                                continue
+                            if marker in (statement.get("code") or ""):
+                                statement_id = statement.get("id")
+                                if statement_id is None:
+                                    return "unknown", None
+                                return "found", statement_id
+                        # If Livy stops echoing `code`, lookup cannot safely prove
+                        # absence for side-effecting DDL/DML.
+                        if not listing or any("code" in s for s in listing):
+                            read_the_list = True
+            except Exception as exc:
+                logger.debug(f"Could not reconcile ambiguous Livy submit: {exc}")
+            # Livy may publish the statement late, and a later lookup failure
+            # must not discard earlier evidence of absence.
+            if attempt < _RECONCILE_ATTEMPTS - 1 and time.monotonic() < deadline:
+                _sleep_until(_RECONCILE_BACKOFF * (attempt + 1), deadline)
+        return ("absent" if read_the_list else "unknown"), None
+
     def _submitLivyCode(self, code) -> Response:
         if self.livy_session.is_new_session_required:
             LivySessionManager._connect_impl(self.credential)
@@ -412,15 +563,20 @@ class LivyCursor:
             self.livy_session = LivySessionManager.livy_global_session
             self.session_id = self.livy_session.session_id
 
-        data = {"code": code, "kind": "sql"}
-        url = self.connect_url + "/sessions/" + self.session_id + "/statements"
-        logger.debug(f"Submitted: {data} {url}")
+        url = self._statements_url()
 
         max_retries = 5
         res = None
         for attempt in range(max_retries):
+            # A fresh marker keeps two landed submissions distinguishable.
+            marker = f"{_SUBMIT_MARKER_PREFIX}{uuid.uuid4().hex}"
+            data = {"code": f"/* {marker} */\n{code}", "kind": "sql"}
+            logger.debug(f"Submitted: {data} {url}")
             try:
-                res = requests.post(
+                res = _governed(
+                    self.governor,
+                    PRIORITY_BACKGROUND,
+                    requests.post,
                     url,
                     data=json.dumps(data),
                     headers=_get_headers(self.credential, False),
@@ -432,6 +588,20 @@ class LivyCursor:
                 requests.exceptions.Timeout,
                 requests.exceptions.ChunkedEncodingError,
             ) as exc:
+                outcome, adopted = self._find_submitted_statement(marker)
+                if outcome == "found":
+                    logger.debug(
+                        f"Livy submit hit {type(exc).__name__} but statement {adopted} is "
+                        f"already running; adopting it instead of resubmitting"
+                    )
+                    return _AdoptedSubmission(adopted)  # type: ignore[arg-type,return-value]
+                if outcome == "unknown":
+                    raise DbtRuntimeError(
+                        f"Livy statement submit failed with {type(exc).__name__} and the "
+                        f"statement list could not be read, so it is unknown whether the "
+                        f"statement is running. Refusing to resubmit, which could execute this "
+                        f"statement twice. Original error: {exc}"
+                    ) from exc
                 if attempt >= max_retries - 1:
                     raise DbtRuntimeError(
                         f"Livy statement submit failed after {max_retries} retries: {exc}"
@@ -439,22 +609,34 @@ class LivyCursor:
                 wait_time = 2**attempt * 1
                 logger.debug(
                     f"Livy statement submit got transient network error "
-                    f"({type(exc).__name__}: {exc}), retrying in {wait_time}s "
-                    f"(attempt {attempt + 1}/{max_retries})"
+                    f"({type(exc).__name__}: {exc}) and did not reach Livy, retrying in "
+                    f"{wait_time}s (attempt {attempt + 1}/{max_retries})"
                 )
                 time.sleep(wait_time)
                 continue
             if res.status_code == 429:
-                retry_after = parse_retry_after(res)
-                wait_time = max(retry_after, 2**attempt * 1)
-                logger.debug(
-                    f"Livy statement submit got HTTP 429, "
-                    f"retrying in {wait_time:.0f}s (attempt {attempt + 1}/{max_retries})"
-                )
+                wait_time = max(parse_retry_after(res), 1.0)
+                logger.debug(f"Livy statement submit got HTTP 429, retrying in {wait_time:.0f}s")
                 time.sleep(wait_time)
                 continue
             if res.status_code < 500:
                 break
+            # A 5xx can arrive after Livy accepted the statement, so reconcile
+            # before resubmitting side-effecting DDL/DML.
+            outcome, adopted = self._find_submitted_statement(marker)
+            if outcome == "found":
+                logger.debug(
+                    f"Livy submit returned HTTP {res.status_code} but statement {adopted} is "
+                    f"already running; adopting it instead of resubmitting"
+                )
+                return _AdoptedSubmission(adopted)  # type: ignore[arg-type,return-value]
+            if outcome == "unknown":
+                raise DbtRuntimeError(
+                    f"Livy statement submit returned HTTP {res.status_code} and the statement "
+                    f"list could not be read, so it is unknown whether the statement is "
+                    f"running. Refusing to resubmit, which could execute this statement "
+                    f"twice. Response: {res.text}"
+                )
             if attempt < max_retries - 1:
                 wait_time = 2**attempt * 1
                 logger.debug(
@@ -485,35 +667,92 @@ class LivyCursor:
         code = re.sub(r"\s*/\*(.|\n)*?\*/\s*", "\n", sql, flags=re.DOTALL).strip()
         return code
 
-    def _getLivyResult(self, res_obj) -> Response:
+    def _statement_keys(self) -> tuple[Optional[str], Optional[str]]:
+        """Identity used to look up and record this statement's runtime.
+
+        The shape is part of the specific key because one dbt node issues very
+        different statements — a CTAS, a ``describe``, the post-build
+        ``OPTIMIZE`` — and blending them would stall the fast ones.
+        """
+        shape = sql_shape(self._active_sql) if self._active_sql else None
+        node_key = None
+        try:
+            node_info = get_node_info()
+        except Exception:
+            node_info = None
+        if node_info:
+            unique_id = node_info.get("unique_id")
+            if unique_id:
+                node_key = f"node:{unique_id}|{shape or 'unknown'}"
+        shape_key = f"shape:{shape}" if shape else None
+        return node_key, shape_key
+
+    def _new_scheduler(self, statement_id: str) -> PollScheduler:
+        node_key, shape_key = self._statement_keys()
+        return PollScheduler(
+            predicted_duration=self._duration_store.predict(node_key, shape_key),
+            min_interval=max(self.credential.poll_statement_wait / 2, MIN_INTERVAL),
+            statement_id=statement_id,
+        )
+
+    def _record_duration(self, duration: float) -> None:
+        node_key, shape_key = self._statement_keys()
+        for key in (node_key, shape_key):
+            self._duration_store.record(key, duration)
+
+    @staticmethod
+    def _observe_livy_progress(
+        scheduler: PollScheduler, progress: Any, observed_at: float, elapsed: float
+    ) -> None:
+        if not isinstance(progress, float) or not (0.0 < progress < 1.0):
+            return
+        total_tasks = 10000
+        completed_tasks = max(0, min(int(progress * total_tasks), total_tasks - 1))
+        scheduler.observe(
+            TelemetrySnapshot(
+                total_tasks=total_tasks,
+                completed_tasks=completed_tasks,
+                known_jobs=1,
+                observed_at=observed_at,
+            ),
+            elapsed,
+        )
+
+    def _getLivyResult(self, res_obj) -> dict:
         json_res = res_obj.json()
         statement_id = repr(json_res["id"])
+        self.active_statement_id = statement_id
         url = self.connect_url + "/sessions/" + self.session_id + "/statements/" + statement_id
+        started_at = time.monotonic()
         deadline = (
-            (time.time() + self.credential.statement_timeout)
+            (started_at + self.credential.statement_timeout)
             if self.credential.statement_timeout > 0
             else None
         )
         consecutive_failures = 0
+        last_running_elapsed = 0.0
         max_poll_retries = 30
-        _poll_interval = 0.3
-        _poll_interval_cap = max(self.credential.poll_statement_wait * 3, 1.5)
+        scheduler = self._new_scheduler(statement_id)
         # 404 can appear transiently right after submit before the statement id
         # is registered, or when the Fabric Livy service briefly loses track of
         # the session/statement. Retry with exponential backoff before giving up.
         not_found_retries = 0
         max_not_found_retries = 20
         while True:
-            if deadline is not None and time.time() > deadline:
+            if deadline is not None and time.monotonic() > deadline:
                 raise DbtDatabaseError(
                     f"Timeout ({self.credential.statement_timeout}s) waiting for statement "
                     f"{statement_id} to complete. Increase `statement_timeout` in profiles.yml."
                 )
             try:
-                poll_res = requests.get(
+                poll_res = _governed(
+                    self.governor,
+                    PRIORITY_CRITICAL,
+                    requests.get,
                     url,
                     headers=_get_headers(self.credential, False),
                     timeout=self.credential.http_timeout,
+                    governor_deadline=deadline,
                 )
             except (
                 requests.exceptions.SSLError,
@@ -527,38 +766,36 @@ class LivyCursor:
                         f"Livy statement poll failed after {max_poll_retries} retries "
                         f"({type(exc).__name__}: {exc})"
                     )
-                wait_time = min(2 ** (consecutive_failures - 1), 30)
+                wait_time = min(2 ** (consecutive_failures - 1), _MAX_RETRY_BACKOFF)
                 logger.debug(
                     f"Livy statement poll got transient network error "
                     f"({type(exc).__name__}: {exc}), retrying in {wait_time}s "
                     f"(attempt {consecutive_failures}/{max_poll_retries})"
                 )
-                time.sleep(wait_time)
+                _sleep_until(wait_time, deadline)
                 continue
             if poll_res.status_code == 429:
                 consecutive_failures += 1
-                retry_after = parse_retry_after(poll_res)
-                wait_time = max(retry_after, 2 ** (consecutive_failures - 1) * 1)
-                logger.debug(
-                    f"Livy statement poll got HTTP 429, "
-                    f"retrying in {wait_time:.0f}s (attempt {consecutive_failures}/{max_poll_retries})"
-                )
-                time.sleep(wait_time)
                 if consecutive_failures > max_poll_retries:
                     raise DbtRuntimeError(
                         f"Livy statement poll failed after {max_poll_retries} retries "
                         f"(HTTP 429): {poll_res.text}"
                     )
+                # Critical polls bypass the capacity gate so work can drain, but
+                # still sleep to avoid burning the retry budget immediately.
+                wait_time = max(parse_retry_after(poll_res), 1.0)
+                logger.debug(f"Livy statement poll got HTTP 429, retrying in {wait_time:.0f}s")
+                _sleep_until(wait_time, deadline)
                 continue
             if poll_res.status_code >= 500:
                 consecutive_failures += 1
                 if consecutive_failures <= max_poll_retries:
-                    wait_time = 2 ** (consecutive_failures - 1) * 1
+                    wait_time = min(2 ** (consecutive_failures - 1), _MAX_RETRY_BACKOFF)
                     logger.debug(
                         f"Livy statement poll got HTTP {poll_res.status_code}, "
                         f"retrying in {wait_time}s (attempt {consecutive_failures}/{max_poll_retries})"
                     )
-                    time.sleep(wait_time)
+                    _sleep_until(wait_time, deadline)
                     continue
                 raise DbtRuntimeError(
                     f"Livy statement poll failed after {max_poll_retries} retries "
@@ -571,7 +808,7 @@ class LivyCursor:
                     f"Livy statement poll got HTTP 404, retrying in {wait_time:.2f}s "
                     f"(not-found attempt {not_found_retries}/{max_not_found_retries})"
                 )
-                time.sleep(wait_time)
+                _sleep_until(wait_time, deadline)
                 continue
             if poll_res.status_code >= 400:
                 if (
@@ -593,14 +830,29 @@ class LivyCursor:
                 )
 
             if res["state"] == "available":
+                # Record the last known-running elapsed time, not the final
+                # detection latency that includes this loop's sleep.
+                self._record_duration(last_running_elapsed)
                 return res
             elif res["state"] in ("error", "cancelled", "cancelling"):
                 error_msg = res.get("output", {}).get("evalue", "Unknown error")
                 raise DbtDatabaseError(
                     f"Statement {statement_id} failed with state '{res['state']}': {error_msg}"
                 )
-            time.sleep(_poll_interval)
-            _poll_interval = min(_poll_interval * 1.5, _poll_interval_cap)
+            now = time.monotonic()
+            elapsed = now - started_at
+            last_running_elapsed = elapsed
+            self._observe_livy_progress(scheduler, res.get("progress"), now, elapsed)
+            plan = scheduler.next_interval(elapsed)
+            if deadline is not None:
+                plan_interval = min(plan.interval, max(deadline - time.monotonic(), 0.0))
+            else:
+                plan_interval = plan.interval
+            logger.debug(
+                f"Statement {statement_id}: elapsed={elapsed:.1f}s "
+                f"next poll in {plan_interval:.2f}s ({plan.reason})"
+            )
+            _sleep_until(plan_interval, deadline)
 
     def execute(self, sql: str, *parameters: Any) -> None:
         if len(parameters) > 0:
@@ -609,7 +861,12 @@ class LivyCursor:
         # Reset fetch position for the new query
         self._fetch_index = 0
 
-        res = self._getLivyResult(self._submitLivyCode(self._getLivySQL(sql)))
+        code = self._getLivySQL(sql)
+        self._active_sql = code
+        try:
+            res = self._getLivyResult(self._submitLivyCode(code))
+        finally:
+            self.active_statement_id = None
         logger.debug(res)
         if res["output"]["status"] == "ok":
             if self.is_local_mode:
@@ -927,7 +1184,8 @@ class LivySessionConnectionWrapper(object):
         return self
 
     def cancel(self):
-        logger.debug("NotImplemented: cancel")
+        if self._cursor is not None:
+            self._cursor.cancel()
 
     def close(self):
         self.handle.close()

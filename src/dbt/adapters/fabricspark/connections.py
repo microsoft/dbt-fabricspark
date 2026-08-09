@@ -28,6 +28,7 @@ from dbt.adapters.contracts.connection import (
 from dbt.adapters.events.logging import AdapterLogger
 from dbt.adapters.events.types import AdapterEventDebug, ConnectionUsed, SQLQuery, SQLQueryStatus
 from dbt.adapters.exceptions import FailedToConnectError
+from dbt.adapters.fabricspark.adaptive_polling import flush_duration_stores
 from dbt.adapters.fabricspark.concurrent_livy import (
     HighConcurrencyConnectionWrapper,
     HighConcurrencySessionManager,
@@ -336,6 +337,7 @@ class FabricSparkConnectionManager(SQLConnectionManager):
             except Exception as ex:
                 logger.debug(f"connection manager disconnect raised: {ex}")
         self.connection_managers.clear()
+        flush_duration_stores()
 
     @classmethod
     def close(cls, connection) -> None:

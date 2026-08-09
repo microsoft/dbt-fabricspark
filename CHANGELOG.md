@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.13.1
+
+### Features
+
+- Added a process-wide throttle governor for the adapter's Fabric REST calls (Livy, MLV and shortcuts). Fabric's REST quota is enforced **per identity**, so a 429 seen by one dbt thread now parks every thread behind a shared `Retry-After` gate instead of letting the others keep draining the same bucket. Adds `api_calls_per_minute` (default `150`); set it to `0` to disable the rate limiter while keeping shared 429 backoff. ([#261](https://github.com/microsoft/dbt-fabricspark/issues/261))
+- Statement polling now follows an elapsed-proportional schedule that learns each model's typical runtime, rather than a fixed interval. Long-running models are polled far less often while short ones still return promptly, with no configuration required. Measured against live Fabric at 6 threads on an identical workload, this cut polling API calls from 427 to 143 (3.0x) at the same wall-clock time. ([#261](https://github.com/microsoft/dbt-fabricspark/issues/261))
+- Added an opt-in `adaptive_polling` setting (default `false`) that drives poll scheduling from Spark task telemetry in high-concurrency mode. The adapter attaches one monitor REPL per underlying Livy session and reads Spark task counters for in-flight statements. Telemetry is advisory only — completion and failure are still resolved exclusively by authoritative Livy statement GETs — and polling falls back to the schedule whenever the monitor is unavailable. When enabled and `spark.highConcurrency.max` is not set in `spark_config.conf`, the adapter sets it to `max(5, min(threads + 2, 50))` so the monitor has a REPL slot; explicit user values are respected. ([#261](https://github.com/microsoft/dbt-fabricspark/issues/261))
+
+### Fixes
+
+- Fixed a correctness bug where a submit that failed with a network error or 5xx could execute side-effecting SQL twice. Because the response was lost, the adapter could not tell whether Fabric had already accepted the statement, and retried by resubmitting it — double-applying an `INSERT` or `MERGE`. Submits now carry a unique marker that lets the adapter find and adopt an already-running statement, and it refuses to resubmit when it cannot confirm the statement is absent. Applies to both the singleton and high-concurrency backends. ([#261](https://github.com/microsoft/dbt-fabricspark/issues/261))
+- Implemented best-effort `cancel()` for both Livy backends. Adapter cancellation was a no-op, so an interrupted dbt run left statements running on the cluster; it now asks Fabric to cancel the active statement. ([#261](https://github.com/microsoft/dbt-fabricspark/issues/261))
+- Bounded the retry backoff in the singleton statement poll loop. An unbroken run of 5xx responses grew the sleep exponentially without a ceiling, so a sustained Fabric outage could park a run for far longer than `statement_timeout` with no output and no error. All poll-loop waits are now capped and respect the statement deadline. ([#261](https://github.com/microsoft/dbt-fabricspark/issues/261))
+
+---
+
 ## v1.13.0
 
 ### Features

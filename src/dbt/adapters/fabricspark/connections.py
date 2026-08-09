@@ -28,11 +28,13 @@ from dbt.adapters.contracts.connection import (
 from dbt.adapters.events.logging import AdapterLogger
 from dbt.adapters.events.types import AdapterEventDebug, ConnectionUsed, SQLQuery, SQLQueryStatus
 from dbt.adapters.exceptions import FailedToConnectError
-from dbt.adapters.fabricspark.adaptive_polling import flush_duration_stores
+from dbt.adapters.fabricspark.adaptive_polling import duration_store
 from dbt.adapters.fabricspark.concurrent_livy import (
     HighConcurrencyConnectionWrapper,
     HighConcurrencySessionManager,
+    shutdown_monitors,
 )
+from dbt.adapters.fabricspark.errors import AmbiguousSubmissionError
 from dbt.adapters.fabricspark.livysession import (
     LivySessionConnectionWrapper,
     LivySessionManager,
@@ -330,6 +332,10 @@ class FabricSparkConnectionManager(SQLConnectionManager):
         ``reuse_session`` is true the HC sessions are kept alive instead, so the
         underlying Livy session stays warm for the next invocation (mirroring
         the singleton backend); the manager itself handles that distinction.
+
+        Telemetry monitors and learned statement runtimes are per-invocation:
+        releasing them here keeps monitor REPLs from accumulating against the
+        packing cap, and keeps timings from one target out of the next.
         """
         for manager in self.connection_managers.values():
             try:
@@ -337,7 +343,11 @@ class FabricSparkConnectionManager(SQLConnectionManager):
             except Exception as ex:
                 logger.debug(f"connection manager disconnect raised: {ex}")
         self.connection_managers.clear()
-        flush_duration_stores()
+        try:
+            shutdown_monitors()
+        except Exception as ex:
+            logger.debug(f"telemetry monitor shutdown raised: {ex}")
+        duration_store().clear()
 
     @classmethod
     def close(cls, connection) -> None:
@@ -476,10 +486,19 @@ class FabricSparkConnectionManager(SQLConnectionManager):
             A success sees the try exit cleanly and avoid any recursive
             retries. Failure begins a sleep and retry routine.
             """
-            retry_limit = connection.credentials.connect_retries or 3
+            retry_limit = connection.credentials.connect_retries
+            if retry_limit is None:
+                retry_limit = 3
             try:
                 cursor.execute(sql, bindings)
             except Exception as e:
+                # An ambiguous submission may already be executing on the
+                # cluster, so no layer may retry it — a resubmit could
+                # double-apply side-effecting DML/DDL. Checked first so no later
+                # classification (type, message, or the retry_all fallback) can
+                # reintroduce a retry path.
+                if isinstance(e, AmbiguousSubmissionError):
+                    raise
                 if self.retries_disabled():
                     raise e
 

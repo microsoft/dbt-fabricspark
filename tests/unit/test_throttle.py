@@ -129,6 +129,17 @@ def test_penalize_takes_the_latest_deadline_and_never_shortens_it():
     assert clock.now >= start + 60
 
 
+def test_a_zero_retry_after_still_enforces_the_minimum_backoff():
+    """A backend may answer 429 with ``Retry-After: 0``; honouring that verbatim
+    turns the retry loop into a busy-wait, the exact failure the governor exists
+    to prevent."""
+    gov, clock = _governor(budget=100)
+    assert gov.penalize(0) >= 1.0
+    start = clock.now
+    gov.acquire(PRIORITY_CRITICAL)
+    assert clock.now >= start + 1.0
+
+
 def test_jitter_spreads_resumption_to_avoid_a_thundering_herd():
     jitters = iter([0.5, 3.0, 1.75])
     gov, _ = _governor(budget=100, jitter=lambda a, b: next(jitters))
@@ -144,6 +155,15 @@ def test_jitter_is_bounded_by_the_retry_after():
     gov, _ = _governor(budget=100, jitter=lambda a, b: b)
     wait = gov.penalize(2)
     assert wait <= 2 + 2 + 0.001
+
+
+def test_penalty_jitter_stays_a_small_nudge_for_a_large_retry_after():
+    """Jitter spreads resumption to avoid a thundering herd, but it must stay a
+    small additive nudge; a large Retry-After must not grow a proportionally
+    large random tail on top of an already-long pause."""
+    gov, _ = _governor(budget=100, jitter=lambda a, b: b)
+    wait = gov.penalize(100)
+    assert wait <= 100 + 6
 
 
 def test_note_response_ignores_success():
@@ -212,6 +232,15 @@ def test_missing_retry_after_still_produces_a_non_zero_pause():
     gov, _ = _governor(budget=100)
     gov.note_response(_response())
     assert gov.snapshot()["gate_remaining"] > 0
+
+
+def test_a_429_without_retry_after_backs_off_beyond_the_busy_loop_floor():
+    """With no Retry-After header the governor must still pause meaningfully.
+    Collapsing to the 1s anti-busy-loop floor would keep hammering a throttled
+    backend at ~60 calls/min instead of standing down."""
+    gov, _ = _governor(budget=100)
+    gov.note_response(_response())
+    assert gov.snapshot()["gate_remaining"] >= 5
 
 
 def test_window_slides_so_throughput_recovers():

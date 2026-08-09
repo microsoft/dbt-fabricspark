@@ -1,10 +1,21 @@
 import json
 import time
+from typing import Optional
 
 import requests
 
 from dbt.adapters.events.logging import AdapterLogger
+from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
 from dbt.adapters.fabricspark.shortcut import Shortcut, TargetName
+from dbt.adapters.fabricspark.throttle import (
+    PRIORITY_BACKGROUND,
+    PRIORITY_CRITICAL,
+    PRIORITY_NORMAL,
+    governor_for_credentials,
+)
+from dbt.adapters.fabricspark.throttle import (
+    governed as _governed,
+)
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
 DEFAULT_POLL_WAIT = 30
@@ -17,6 +28,7 @@ class ShortcutClient:
         workspace_id: str,
         item_id: str,
         endpoint: str = "https://api.fabric.microsoft.com/v1",
+        credentials: Optional[FabricSparkCredentials] = None,
     ):
         """
         Initializes a ShortcutClient object.
@@ -25,11 +37,17 @@ class ShortcutClient:
             token (str): The API token to use for creating shortcuts.
             workspace_id (str): The workspace ID to use for creating shortcuts.
             item_id (str): The item ID to use for creating shortcuts.
+            endpoint (str): The Fabric REST endpoint base URL.
+            credentials (FabricSparkCredentials): When supplied, shortcut REST
+                calls share the same per-identity throttle governor as the Livy
+                and MLV clients, so their calls draw on the shared Fabric budget
+                and a 429 seen here parks the gate for every other client.
         """
         self.token = token
         self.workspace_id = workspace_id
         self.item_id = item_id
         self.endpoint = endpoint
+        self.governor = governor_for_credentials(credentials)
 
     def parse_json(self, json_str: str) -> list:
         """
@@ -96,7 +114,9 @@ class ShortcutClient:
         """
         headers = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
         shortcut_url = f"{self.endpoint}/workspaces/{self.workspace_id}/items/{self.item_id}/shortcuts/{shortcut.path}/{shortcut.shortcut_name}"
-        response = requests.get(shortcut_url, headers=headers)
+        response = _governed(
+            self.governor, PRIORITY_NORMAL, requests.get, shortcut_url, headers=headers
+        )
         # check if the error is ItemNotFound
         if response.status_code == 404:
             return False
@@ -127,7 +147,9 @@ class ShortcutClient:
         logger.debug(
             f"Deleting shortcut {shortcut_name} at {shortcut_path} from workspace {self.workspace_id} and item {self.item_id}"
         )
-        response = requests.delete(connect_url, headers=headers)
+        response = _governed(
+            self.governor, PRIORITY_CRITICAL, requests.delete, connect_url, headers=headers
+        )
         time.sleep(DEFAULT_POLL_WAIT)
         response.raise_for_status()
 
@@ -147,5 +169,12 @@ class ShortcutClient:
         headers = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
         target_body = shortcut.get_target_body()
         body = {"path": shortcut.path, "name": shortcut.shortcut_name, "target": target_body}
-        response = requests.post(connect_url, headers=headers, data=json.dumps(body))
+        response = _governed(
+            self.governor,
+            PRIORITY_BACKGROUND,
+            requests.post,
+            connect_url,
+            headers=headers,
+            data=json.dumps(body),
+        )
         response.raise_for_status()

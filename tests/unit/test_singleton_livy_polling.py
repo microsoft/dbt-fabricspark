@@ -184,7 +184,7 @@ def test_duration_is_recorded_on_success(mock_get, mock_monotonic, _headers, moc
     cursor = _cursor(_credentials("local"))
     cursor._active_sql = "select 1"
     cursor._duration_store = MagicMock()
-    cursor._duration_store.predict.return_value = None
+    cursor._duration_store.estimate.return_value = (None, 0)
     mock_node_info.return_value = {"unique_id": "model.test.example"}
     mock_monotonic.side_effect = [100.0, 104.0, 104.0, 130.0]
     mock_get.side_effect = [_waiting(), _available()]

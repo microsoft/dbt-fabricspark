@@ -24,11 +24,10 @@ from dbt.adapters.fabricspark.adaptive_polling import (
     PollScheduler,
     TelemetrySource,
     duration_store,
-    flush_duration_stores,
     sql_shape,
-    stats_path_for,
 )
 from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
+from dbt.adapters.fabricspark.errors import AmbiguousSubmissionError
 from dbt.adapters.fabricspark.livy_backend import LivyBackend, coerce_time_columns
 from dbt.adapters.fabricspark.shortcuts import ShortcutClient
 from dbt.adapters.fabricspark.telemetry import MonitorTelemetrySource
@@ -45,9 +44,9 @@ from dbt.adapters.fabricspark.throttle import (
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
 NUMBERS = DECIMALS + (int, float)
-_MAX_RETRY_BACKOFF = 30
 
-# Lets ambiguous POSTs be reconciled against Livy's statement list.
+# Injected into the submitted SQL as a comment so an ambiguous POST can be
+# reconciled against Livy's statement list instead of blindly resubmitted.
 _SUBMIT_MARKER_PREFIX = "dbt-fabricspark-submit:"
 
 # Livy may publish an accepted statement after the failed POST returns.
@@ -103,7 +102,6 @@ _shortcuts_done_lock = threading.Lock()
 _shortcuts_done: "set[tuple[str, str]]" = set()
 
 
-# Cap exponential retry sleeps so they stay within `statement_timeout`.
 _MAX_RETRY_BACKOFF = 30.0
 
 
@@ -402,7 +400,7 @@ class HighConcurrencyCursor:
         self.governor = governor_for_credentials(credential)
         self.active_statement_id: Optional[str] = None
         self._active_sql: Optional[str] = None
-        self._duration_store = duration_store(stats_path_for(credential))
+        self._duration_store = duration_store()
         self.telemetry: Optional[TelemetrySource] = None
 
     def __enter__(self) -> HighConcurrencyCursor:
@@ -508,15 +506,24 @@ class HighConcurrencyCursor:
                                 if statement_id is None:
                                     return "unknown", None
                                 return "found", statement_id
-                        # If Livy stops echoing `code`, lookup cannot safely prove
-                        # absence for side-effecting DDL/DML.
-                        if not listing or any("code" in s for s in listing):
+                        # Absence is only provable when every listed statement
+                        # carried a `code` we could have matched against. A
+                        # missing/null `code`, or a non-dict entry, could be
+                        # hiding our just-accepted statement, so the lookup
+                        # stays inconclusive rather than resubmitting
+                        # side-effecting DDL/DML. An empty listing is still
+                        # conclusive: nothing can be hiding in it.
+                        if all(isinstance(s, dict) and s.get("code") is not None for s in listing):
                             read_the_list = True
             except Exception as exc:
                 logger.debug(f"Could not reconcile ambiguous HC submit: {exc}")
             # Livy may publish the statement late, and a later lookup failure
             # must not discard earlier evidence of absence.
-            if attempt < _RECONCILE_ATTEMPTS - 1 and time.monotonic() < deadline:
+            if time.monotonic() >= deadline:
+                # Retrying now would fire the remaining attempts back to back
+                # with no pause, and a later look cannot see anything new.
+                break
+            if attempt < _RECONCILE_ATTEMPTS - 1:
                 _sleep_until(_RECONCILE_BACKOFF * (attempt + 1), deadline)
         return ("absent" if read_the_list else "unknown"), None
 
@@ -526,7 +533,7 @@ class HighConcurrencyCursor:
         max_retries = 5
         res = None
         for attempt in range(max_retries):
-            # A fresh marker keeps two landed submissions distinguishable.
+            # A fresh marker per attempt keeps two landed submissions distinguishable.
             marker = f"{_SUBMIT_MARKER_PREFIX}{uuid.uuid4().hex}"
             data = {"code": f"/* {marker} */\n{code}", "kind": "sql"}
             logger.debug(f"Submitted: {data} {url}")
@@ -554,7 +561,7 @@ class HighConcurrencyCursor:
                     )
                     return _AdoptedSubmission(adopted)  # type: ignore[arg-type]
                 if outcome == "unknown":
-                    raise DbtRuntimeError(
+                    raise AmbiguousSubmissionError(
                         f"HC statement submit failed with {type(exc).__name__} and the statement "
                         f"list could not be read, so it is unknown whether the statement is "
                         f"running. Refusing to resubmit, which could execute this statement "
@@ -572,9 +579,9 @@ class HighConcurrencyCursor:
                 time.sleep(wait)
                 continue
             if res.status_code == 429:
-                wait = max(parse_retry_after(res), 1.0)
-                logger.debug(f"HC statement submit got HTTP 429, retrying in {wait:.0f}s")
-                time.sleep(wait)
+                # `_governed` has already parked the shared gate for the
+                # Retry-After, so sleeping here again would double the wait.
+                logger.debug("HC statement submit got HTTP 429, retrying behind the throttle gate")
                 continue
             if res.status_code < 500:
                 break
@@ -588,7 +595,7 @@ class HighConcurrencyCursor:
                 )
                 return _AdoptedSubmission(adopted)  # type: ignore[arg-type]
             if outcome == "unknown":
-                raise DbtRuntimeError(
+                raise AmbiguousSubmissionError(
                     f"HC statement submit returned HTTP {res.status_code} and the statement "
                     f"list could not be read, so it is unknown whether the statement is "
                     f"running. Refusing to resubmit, which could execute this statement "
@@ -788,7 +795,6 @@ class HighConcurrencyCursor:
             min_interval=max(self.credential.poll_statement_wait / 2, MIN_INTERVAL),
             base_interval=max(self.credential.poll_statement_wait, MIN_INTERVAL),
             telemetry=telemetry,
-            statement_id=statement_id,
         )
         scheduler.samples = samples
         return scheduler
@@ -926,6 +932,7 @@ def _maybe_create_shortcuts(credentials: FabricSparkCredentials) -> None:
             credentials.workspaceid,
             credentials.lakehouseid,
             credentials.endpoint,
+            credentials=credentials,
         )
         shortcut_client.create_shortcuts(credentials.shortcuts_json_str)
     except Exception as ex:
@@ -963,15 +970,12 @@ def telemetry_for_session(
             owner = True
 
     if not owner:
-        # Wait for the thread acquiring the monitor REPL to populate the shared slot.
         pending.wait(timeout=credentials.session_start_timeout)
         with _monitors_lock:
             return _monitors.get(session_id)
 
     monitor: Optional[MonitorTelemetrySource] = None
     hc_session: Optional[HighConcurrencySession] = None
-    # Release `pending` on every exit path or other threads wait for
-    # session_start_timeout during connection setup.
     try:
         try:
             # Any conf difference makes Fabric pack the REPL onto another session.
@@ -1015,7 +1019,7 @@ def telemetry_for_session(
         pending.set()
 
 
-def _shutdown_monitors() -> None:
+def shutdown_monitors() -> None:
     with _monitors_lock:
         monitors = [m for m in _monitors.values() if m is not None]
         sessions = list(_monitor_sessions)
@@ -1038,6 +1042,13 @@ def _shutdown_monitors() -> None:
 
 
 class HighConcurrencySessionManager(LivyBackend):
+    """Per-dbt-thread backend. One instance owns one HC session = one REPL.
+
+    Acquires lazily on the first :meth:`connect` call; cleanup happens in
+    :meth:`disconnect` (called explicitly by `connections.cleanup_all` or via
+    the module-level atexit handler).
+    """
+
     def __init__(self) -> None:
         self._hc_session: Optional[HighConcurrencySession] = None
         self._connection: Optional[HighConcurrencyConnection] = None
@@ -1159,8 +1170,7 @@ def _atexit_cleanup_hc() -> None:
             s.delete()
         except Exception as ex:
             logger.debug(f"atexit HC delete failed for {s.hc_id}: {ex}")
-    _shutdown_monitors()
-    flush_duration_stores()
+    shutdown_monitors()
 
 
 atexit.register(_atexit_cleanup_hc)

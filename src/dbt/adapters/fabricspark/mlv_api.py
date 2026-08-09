@@ -21,6 +21,15 @@ from dbt.adapters.events.logging import AdapterLogger
 from dbt.adapters.fabricspark._http_utils import parse_retry_after
 from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
 from dbt.adapters.fabricspark.livysession import get_headers
+from dbt.adapters.fabricspark.throttle import (
+    PRIORITY_BACKGROUND,
+    PRIORITY_CRITICAL,
+    PRIORITY_NORMAL,
+    governor_for_credentials,
+)
+from dbt.adapters.fabricspark.throttle import (
+    governed as _governed,
+)
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
 
@@ -93,6 +102,8 @@ def resolve_lakehouse_id(
             headers,
             operation=f"resolve lakehouse '{lakehouse_name}'",
             timeout=credentials.http_timeout,
+            credentials=credentials,
+            priority=PRIORITY_NORMAL,
         )
     except MLVApiError:
         raise
@@ -156,24 +167,43 @@ def _request_with_retry(
     timeout: int,
     json_body: Optional[Dict[str, Any]] = None,
     max_retries: int = MAX_RETRIES,
+    *,
+    credentials: Optional[FabricSparkCredentials] = None,
+    priority: int = PRIORITY_NORMAL,
 ) -> requests.Response:
     """Execute an HTTP request with automatic retries and exponential back-off.
 
-    For 429 responses, honours the ``Retry-After`` header (or the Fabric
-    "until:" body hint) so the client waits exactly as long as the server
-    requests, avoiding unnecessary hammering during throttle windows.
+    When ``credentials`` is supplied the call is routed through the process-wide
+    throttle governor so it shares the per-identity Fabric budget and honours a
+    ``Retry-After`` gate raised by any other Fabric client. For 429s the governor
+    parks that shared gate, so the local back-off is skipped to avoid waiting
+    twice; non-429 retryable errors (5xx, connection, timeout) still back off
+    locally because the governor does not act on those.
 
     Raises ``MLVApiError`` when all attempts are exhausted or a non-retryable
     error is encountered.
     """
+    governor = governor_for_credentials(credentials) if credentials is not None else None
     last_exception: Optional[Exception] = None
 
     for attempt in range(1, max_retries + 1):
         try:
             logger.debug(f"MLV API {method} {url} (attempt {attempt}/{max_retries})")
-            response = requests.request(
-                method, url, headers=headers, json=json_body, timeout=timeout
-            )
+            if governor is not None:
+                response = _governed(
+                    governor,
+                    priority,
+                    requests.request,
+                    method,
+                    url,
+                    headers=headers,
+                    json=json_body,
+                    timeout=timeout,
+                )
+            else:
+                response = requests.request(
+                    method, url, headers=headers, json=json_body, timeout=timeout
+                )
 
             if response.status_code < 400:
                 return response
@@ -181,6 +211,12 @@ def _request_with_retry(
             # Retryable server / throttle errors
             if response.status_code in RETRYABLE_STATUS_CODES and attempt < max_retries:
                 detail = _extract_error_detail(response)
+                if response.status_code == 429 and governor is not None:
+                    logger.warning(
+                        f"MLV API {operation} returned 429 ({detail}); retrying behind the "
+                        f"shared throttle gate (attempt {attempt}/{max_retries})..."
+                    )
+                    continue
                 if response.status_code == 429:
                     retry_after = parse_retry_after(response)
                     wait = max(retry_after, RETRY_BACKOFF_BASE**attempt) + random.uniform(0, 2)
@@ -267,6 +303,8 @@ def get_job_instance(
         headers,
         operation=f"get MLV job instance {job_instance_id}",
         timeout=credentials.http_timeout,
+        credentials=credentials,
+        priority=PRIORITY_CRITICAL,
     )
     return response.json()
 
@@ -434,6 +472,8 @@ def run_on_demand_refresh(
             headers,
             operation="on-demand MLV refresh",
             timeout=credentials.http_timeout,
+            credentials=credentials,
+            priority=PRIORITY_BACKGROUND,
         )
         location = response.headers.get("Location", "")
         logger.info(f"On-demand MLV refresh triggered. Job instance URL: {location}")
@@ -495,7 +535,13 @@ def list_schedules(
     logger.debug(f"Listing MLV schedules: GET {url}")
 
     response = _request_with_retry(
-        "GET", url, headers, operation="list MLV schedules", timeout=credentials.http_timeout
+        "GET",
+        url,
+        headers,
+        operation="list MLV schedules",
+        timeout=credentials.http_timeout,
+        credentials=credentials,
+        priority=PRIORITY_NORMAL,
     )
 
     data = response.json()
@@ -553,6 +599,8 @@ def create_schedule(
         operation="create MLV schedule",
         timeout=credentials.http_timeout,
         json_body=schedule_config,
+        credentials=credentials,
+        priority=PRIORITY_BACKGROUND,
     )
 
     result = response.json()
@@ -583,6 +631,8 @@ def update_schedule(
         operation=f"update MLV schedule {schedule_id}",
         timeout=credentials.http_timeout,
         json_body=schedule_config,
+        credentials=credentials,
+        priority=PRIORITY_BACKGROUND,
     )
 
     result = response.json()
@@ -611,6 +661,8 @@ def delete_schedule(
         headers,
         operation=f"delete MLV schedule {schedule_id}",
         timeout=credentials.http_timeout,
+        credentials=credentials,
+        priority=PRIORITY_CRITICAL,
     )
     logger.info(f"MLV schedule {schedule_id} deleted.")
 

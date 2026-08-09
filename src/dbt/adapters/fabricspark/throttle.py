@@ -11,7 +11,6 @@ import random
 import threading
 import time
 from collections import deque
-from types import TracebackType
 from typing import Any, Callable, Optional
 
 import requests
@@ -22,16 +21,14 @@ from dbt.adapters.fabricspark._http_utils import parse_retry_after
 logger = AdapterLogger("Microsoft Fabric-Spark")
 
 
-# Fabric's published unified quota. The adapter aims below it because other
-# processes using the same principal share the bucket.
-FABRIC_QUOTA_PER_MINUTE = 200
+# Fabric's unified quota is 200 calls/min per identity. The adapter aims below
+# it because other processes using the same principal share the bucket.
 DEFAULT_BUDGET_PER_MINUTE = 150
 
 PRIORITY_CRITICAL = 0  # cancel, authoritative statement GET
 PRIORITY_NORMAL = 1  # session lifecycle, metadata
 PRIORITY_BACKGROUND = 2  # statement submit, monitor telemetry
 
-# Reserve headroom for critical polls and cancels.
 _PRIORITY_SHARE = {
     PRIORITY_CRITICAL: 1.0,
     PRIORITY_NORMAL: 0.85,
@@ -41,6 +38,9 @@ _PRIORITY_SHARE = {
 _WINDOW_SECONDS = 60.0
 # Re-evaluate promptly if the governor is re-penalised while waiters sleep.
 _MAX_SLEEP_SLICE = 5.0
+
+# A pause longer than this stalls the run visibly, so say so above debug level.
+_LOUD_PAUSE_SECONDS = 30.0
 
 
 class ThrottleGovernor:
@@ -146,7 +146,8 @@ class ThrottleGovernor:
             )
             return True
         wait = self.penalize(parse_retry_after(response) or 10.0)
-        logger.debug(f"HTTP 429 from Fabric; pausing all Fabric calls for {wait:.0f}s")
+        log = logger.warning if wait > _LOUD_PAUSE_SECONDS else logger.debug
+        log(f"HTTP 429 from Fabric; pausing all Fabric calls for {wait:.0f}s")
         return True
 
     @property
@@ -165,9 +166,6 @@ class ThrottleGovernor:
                 "throttle_events": self._throttle_events,
             }
 
-    def now(self) -> float:
-        return self._clock()
-
 
 def _is_capacity_error(response: requests.Response) -> bool:
     try:
@@ -177,24 +175,6 @@ def _is_capacity_error(response: requests.Response) -> bool:
     if not isinstance(body, dict):
         return False
     return "capacitylimitexceeded" in str(body.get("errorCode", "")).lower()
-
-
-class _Slot:
-    def __init__(self, governor: ThrottleGovernor, priority: int) -> None:
-        self._governor = governor
-        self._priority = priority
-
-    def __enter__(self) -> ThrottleGovernor:
-        self._governor.acquire(self._priority)
-        return self._governor
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> bool:
-        return False
 
 
 _registry_lock = threading.Lock()
@@ -253,7 +233,3 @@ def governed(
 
 
 _UNLIMITED = ThrottleGovernor(0)
-
-
-def slot(governor: ThrottleGovernor, priority: int = PRIORITY_NORMAL) -> _Slot:
-    return _Slot(governor, priority)

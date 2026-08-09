@@ -14,6 +14,10 @@
 - Implemented best-effort `cancel()` for both Livy backends. Adapter cancellation was a no-op, so an interrupted dbt run left statements running on the cluster; it now asks Fabric to cancel the active statement. ([#261](https://github.com/microsoft/dbt-fabricspark/issues/261))
 - Bounded the retry backoff in the singleton statement poll loop. An unbroken run of 5xx responses grew the sleep exponentially without a ceiling, so a sustained Fabric outage could park a run for far longer than `statement_timeout` with no output and no error. All poll-loop waits are now capped and respect the statement deadline. ([#261](https://github.com/microsoft/dbt-fabricspark/issues/261))
 
+- Fixed a throttled submit sleeping uninterruptibly for the full `Retry-After`. A 429 on the submit path slept the server's hint in one unbroken `time.sleep`, which cannot be interrupted and, on the final attempt, was slept in full immediately before giving up anyway. The shared throttle governor already parks every thread behind the same gate, so the duplicate sleep has been removed; waits are now taken in short slices and long pauses log at `warning` instead of `debug`, so a stalled run says why. ([#261](https://github.com/microsoft/dbt-fabricspark/issues/261))
+
+- Hardened `Retry-After` parsing against non-finite and absurd values. A `NaN` hint produced no gate at all, so the adapter span the throttled endpoint; an `Infinity` hint produced a gate that never expired, hanging the run permanently. Hints are now rejected unless finite and positive, and clamped to 120 seconds — Fabric can advise multi-hour waits, which is longer than any dbt run should sit idle, so the adapter deliberately re-probes instead of obeying. ([#261](https://github.com/microsoft/dbt-fabricspark/issues/261))
+
 ---
 
 ## v1.13.0

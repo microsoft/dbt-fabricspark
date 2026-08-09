@@ -1,7 +1,6 @@
 """Unit tests for telemetry-backed adaptive statement polling."""
 
-import json
-import os
+import builtins
 import threading
 
 import pytest
@@ -9,16 +8,22 @@ import pytest
 from dbt.adapters.fabricspark.adaptive_polling import (
     MAX_INTERVAL,
     MIN_INTERVAL,
+    MIN_SAMPLES_TO_EXTEND,
     DurationStore,
     PollScheduler,
     TelemetrySnapshot,
     duration_store,
-    reset_duration_stores,
     sql_shape,
-    stats_path_for,
 )
 
 NO_JITTER = lambda a, b: 0.0  # noqa: E731
+
+
+@pytest.fixture(autouse=True)
+def _clean_duration_store():
+    duration_store().clear()
+    yield
+    duration_store().clear()
 
 
 def simulate(runtime, predicted=None, telemetry_at=None, jitter=NO_JITTER):
@@ -143,11 +148,11 @@ class TestPredictionSafety:
                 <= blind.next_interval(elapsed).interval + 1e-9
             )
 
-    def test_a_single_sample_may_not_lengthen_the_wait(self):
-        """One observation is not evidence; a table can grow 100x overnight."""
+    def test_an_uncorroborated_estimate_may_not_lengthen_the_wait(self):
+        """Below the threshold an estimate may only shorten the wait."""
         blind = PollScheduler(jitter=NO_JITTER)
         informed = PollScheduler(predicted_duration=5000.0, jitter=NO_JITTER)
-        informed.samples = 1
+        informed.samples = MIN_SAMPLES_TO_EXTEND - 1
         blind.next_interval(0.0)
         informed.next_interval(0.0)
         assert informed.next_interval(5.0).interval <= blind.next_interval(5.0).interval + 1e-9
@@ -159,6 +164,20 @@ class TestPredictionSafety:
         blind.next_interval(0.0)
         informed.next_interval(0.0)
         assert informed.next_interval(5.0).interval > blind.next_interval(5.0).interval
+
+    def test_the_threshold_sample_itself_may_lengthen_the_wait(self):
+        """The gate is ``samples >= MIN_SAMPLES_TO_EXTEND``. Off-by-one here wastes
+        a fully corroborated estimate for one whole extra run every time."""
+        blind = PollScheduler(jitter=NO_JITTER)
+        at_threshold = PollScheduler(predicted_duration=5000.0, jitter=NO_JITTER)
+        at_threshold.samples = MIN_SAMPLES_TO_EXTEND
+        below = PollScheduler(predicted_duration=5000.0, jitter=NO_JITTER)
+        below.samples = MIN_SAMPLES_TO_EXTEND - 1
+        for scheduler in (blind, at_threshold, below):
+            scheduler.next_interval(0.0)
+        blind_interval = blind.next_interval(5.0).interval
+        assert at_threshold.next_interval(5.0).interval > blind_interval
+        assert below.next_interval(5.0).interval <= blind_interval + 1e-9
 
     def test_a_corroborated_prediction_is_still_capped(self):
         informed = PollScheduler(predicted_duration=100_000.0, jitter=NO_JITTER)
@@ -295,6 +314,39 @@ class TestTelemetry:
         scheduler.observe(_snapshot(104, 60, 6.0), 6.0)
         assert scheduler._rate_ewma is not None
 
+    def test_aqe_denominator_shrink_resets_the_rate_estimate(self):
+        """``total_tasks`` is not a fixed denominator; AQE coalescing shrinks it
+        mid-flight, and a rate measured against the old, larger total no longer
+        describes the remaining work."""
+        scheduler = PollScheduler(jitter=NO_JITTER)
+        scheduler.observe(_snapshot(5000, 0, 0.0), 0.0)
+        scheduler.observe(_snapshot(5000, 100, 1.0), 1.0)
+        assert scheduler._rate_ewma is not None
+        scheduler.observe(_snapshot(100, 100, 2.0), 2.0)
+        assert scheduler._rate_ewma is None
+
+    def test_growth_from_a_zero_task_baseline_is_not_a_topology_change(self):
+        """A job registers before its stages report task counts, so the first
+        snapshot may carry zero tasks. Growing off that sentinel must establish a
+        rate, not be mistaken for an AQE re-plan that discards it."""
+        scheduler = PollScheduler(jitter=NO_JITTER)
+        scheduler.observe(_snapshot(0, 0, 0.0), 0.0)
+        scheduler.observe(_snapshot(200, 50, 5.0), 5.0)
+        assert scheduler._rate_ewma is not None
+        assert scheduler._effective_eta(5.0) is not None
+
+    def test_a_single_fast_interval_moves_the_rate_less_than_halfway(self):
+        """The completion-rate EWMA weights history over any one interval, so a
+        burst of finished tasks cannot swing the ETA wildly between polls."""
+        scheduler = PollScheduler(jitter=NO_JITTER)
+        scheduler.observe(_snapshot(10_000, 0, 0.0), 0.0)
+        scheduler.observe(_snapshot(10_000, 100, 10.0), 10.0)
+        established = scheduler._rate_ewma
+        scheduler.observe(_snapshot(10_000, 900, 20.0), 20.0)
+        blended = scheduler._rate_ewma
+        instantaneous = 80.0
+        assert established < blended < (established + instantaneous) / 2
+
     def test_regressing_completed_count_is_ignored(self):
         scheduler = PollScheduler(jitter=NO_JITTER)
         scheduler.observe(_snapshot(100, 50, 5.0), 5.0)
@@ -346,92 +398,47 @@ class TestDurationStore:
     def test_records_and_predicts(self):
         store = DurationStore()
         store.record("node:a", 12.0)
-        assert store.predict("node:a") == 12.0
+        assert store.estimate("node:a")[0] == 12.0
 
     def test_unknown_key_predicts_nothing(self):
-        assert DurationStore().predict("node:missing") is None
+        assert DurationStore().estimate("node:missing")[0] is None
 
     def test_none_and_invalid_durations_are_ignored(self):
         store = DurationStore()
         store.record(None, 5.0)
         store.record("node:a", 0.0)
         store.record("node:a", float("inf"))
-        assert store.predict("node:a") is None
+        assert store.estimate("node:a")[0] is None
 
     def test_ewma_moves_toward_recent_observations(self):
         store = DurationStore()
         store.record("node:a", 10.0)
         store.record("node:a", 20.0)
-        prediction = store.predict("node:a")
+        prediction = store.estimate("node:a")[0]
         assert 10.0 < prediction < 20.0
+
+    def test_a_single_new_sample_moves_the_estimate_less_than_halfway(self):
+        """EWMA_ALPHA < 0.5 anchors the estimate to history, so one anomalous run
+        cannot yank the prediction most of the way to itself and self-sustain."""
+        store = DurationStore()
+        store.record("node:a", 10.0)
+        store.record("node:a", 20.0)
+        prediction = store.estimate("node:a")[0]
+        assert abs(prediction - 10.0) < abs(prediction - 20.0)
 
     def test_prefers_the_most_specific_key(self):
         store = DurationStore()
         store.record("node:a", 5.0)
         store.record("shape:x", 500.0)
-        assert store.predict("node:a", "shape:x") == 5.0
-        assert store.predict("node:missing", "shape:x") == 500.0
-
-    def test_round_trips_through_disk(self, tmp_path):
-        path = str(tmp_path / "stats.json")
-        store = DurationStore(path)
-        store.record("node:a", 42.0)
-        store.flush()
-        assert DurationStore(path).predict("node:a") == 42.0
-
-    def test_expired_samples_are_dropped_on_load(self, tmp_path):
-        path = str(tmp_path / "stats.json")
-        with open(path, "w", encoding="utf-8") as handle:
-            json.dump(
-                {"version": 1, "stats": {"node:a": {"ewma": 9, "samples": 3, "updated_at": 0}}},
-                handle,
-            )
-        assert DurationStore(path).predict("node:a") is None
-
-    def test_corrupt_file_is_survivable(self, tmp_path):
-        path = str(tmp_path / "stats.json")
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write("{not json")
-        store = DurationStore(path)
-        assert store.predict("node:a") is None
-        store.record("node:a", 3.0)
-        store.flush()
-        assert DurationStore(path).predict("node:a") == 3.0
-
-    def test_malformed_entries_are_skipped_individually(self, tmp_path):
-        path = str(tmp_path / "stats.json")
-        with open(path, "w", encoding="utf-8") as handle:
-            json.dump(
-                {
-                    "stats": {
-                        "bad": {"ewma": "nope"},
-                        "good": {"ewma": 7.0, "samples": 1, "updated_at": 10**10},
-                    }
-                },
-                handle,
-            )
-        store = DurationStore(path)
-        assert store.predict("bad") is None
-        assert store.predict("good") == 7.0
-
-    def test_flush_is_atomic_and_leaves_no_temp_files(self, tmp_path):
-        path = str(tmp_path / "stats.json")
-        store = DurationStore(path)
-        store.record("node:a", 1.0)
-        store.flush()
-        leftovers = [n for n in os.listdir(tmp_path) if n.startswith(".fabricspark-stats-")]
-        assert leftovers == []
-
-    def test_flush_without_a_path_is_a_no_op(self):
-        store = DurationStore()
-        store.record("node:a", 1.0)
-        store.flush()
+        assert store.estimate("node:a", "shape:x")[0] == 5.0
+        assert store.estimate("node:missing", "shape:x")[0] == 500.0
 
     def test_concurrent_records_do_not_corrupt_state(self):
         store = DurationStore()
 
         def worker(n):
             for _ in range(50):
+                store.record("node:shared", 2.0)
                 store.record(f"node:{n}", 1.0 + n)
 
         threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
@@ -440,57 +447,40 @@ class TestDurationStore:
         for t in threads:
             t.join(timeout=30)
             assert not t.is_alive()
+        assert store.estimate("node:shared") == (2.0, 400)
         for i in range(8):
-            assert store.predict(f"node:{i}") == pytest.approx(1.0 + i)
+            prediction, samples = store.estimate(f"node:{i}")
+            assert prediction == pytest.approx(1.0 + i)
+            assert samples == 50
 
 
 class TestStoreRegistry:
-    def setup_method(self):
-        reset_duration_stores()
+    def test_duration_store_returns_the_process_singleton(self):
+        assert duration_store() is duration_store()
 
-    def teardown_method(self):
-        reset_duration_stores()
+    def test_reset_clears_stats_in_place(self):
+        store = duration_store()
+        store.record("node:a", 12.0)
 
-    def test_same_path_shares_one_store(self):
-        assert duration_store("/tmp/x.json") is duration_store("/tmp/x.json")
+        assert store.estimate("node:a") == (12.0, 1)
 
-    def test_different_paths_are_isolated(self):
-        assert duration_store("/tmp/a.json") is not duration_store("/tmp/b.json")
+        duration_store().clear()
 
+        assert duration_store() is store
+        assert store.estimate("node:a") == (None, 0)
 
-class TestStatsPath:
-    def test_lives_outside_the_project_so_runs_leave_no_untracked_files(self):
-        class Creds:
-            workspaceid = "ws-1"
-            lakehouseid = "lh-1"
+        store.record("node:a", 4.0)
+        assert store.estimate("node:a") == (4.0, 1)
 
-        path = stats_path_for(Creds())
-        assert os.path.basename(os.path.dirname(path)) == "dbt-fabricspark"
-        assert os.path.isabs(path)
-        assert os.path.basename(path).startswith(".fabricspark_poll_stats_")
+    def test_record_estimate_and_reset_do_not_open_files(self, monkeypatch):
+        def blocked_open(*args, **kwargs):
+            raise AssertionError("adaptive polling stats must stay in memory")
 
-    def test_honours_xdg_cache_home(self, tmp_path, monkeypatch):
-        class Creds:
-            workspaceid = "ws-1"
+        monkeypatch.setattr(builtins, "open", blocked_open)
 
-        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-        assert stats_path_for(Creds()).startswith(str(tmp_path))
+        store = duration_store()
+        store.record("node:a", 8.0)
+        assert store.estimate("node:a") == (8.0, 1)
 
-    def test_targets_sharing_a_directory_do_not_share_timings(self):
-        class Creds:
-            workspaceid = "ws-1"
-            lakehouseid = "lh-1"
-
-        class OtherCreds(Creds):
-            lakehouseid = "lh-2"
-
-        assert stats_path_for(Creds()) != stats_path_for(OtherCreds())
-
-    def test_same_profile_resolves_to_a_stable_path(self):
-        class Creds:
-            workspaceid = "ws-1"
-
-        assert stats_path_for(Creds()) == stats_path_for(Creds())
-
-    def test_missing_attribute_is_survivable(self):
-        assert stats_path_for(object()) is None
+        duration_store().clear()
+        assert store.estimate("node:a") == (None, 0)

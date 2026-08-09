@@ -16,8 +16,14 @@ from azure.identity import AzureCliCredential, ClientSecretCredential
 from dbt_common.exceptions import DbtRuntimeError
 
 from dbt.adapters.events.logging import AdapterLogger
-from dbt.adapters.fabricspark._http_utils import parse_retry_after
 from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
+from dbt.adapters.fabricspark.throttle import (
+    PRIORITY_NORMAL,
+    governor_for_credentials,
+)
+from dbt.adapters.fabricspark.throttle import (
+    governed as _governed,
+)
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
 
@@ -425,19 +431,21 @@ def get_lakehouse_properties(credentials: FabricSparkCredentials) -> dict:
 
     headers = get_headers(credentials)
     url = f"{credentials.endpoint}/workspaces/{credentials.workspaceid}/lakehouses/{credentials.lakehouseid}"
+    governor = governor_for_credentials(credentials)
 
     max_retries = 5
     for attempt in range(max_retries):
         try:
-            response = requests.get(url, headers=headers, timeout=30)
+            response = _governed(
+                governor, PRIORITY_NORMAL, requests.get, url, headers=headers, timeout=30
+            )
             if response.status_code == 429:
-                retry_after = parse_retry_after(response)
-                wait = max(retry_after, 2**attempt * 2)  # at least 2, 4, 8, 16, 32s
+                # governed() already parked the shared Retry-After gate; the next
+                # acquire serves the wait, so retry without sleeping again here.
                 logger.debug(
-                    f"Lakehouse properties API returned 429, "
-                    f"retrying in {wait:.0f}s (attempt {attempt + 1}/{max_retries})"
+                    f"Lakehouse properties API returned 429, retrying behind the throttle gate "
+                    f"(attempt {attempt + 1}/{max_retries})"
                 )
-                time.sleep(wait)
                 continue
             response.raise_for_status()
             properties = response.json().get("properties", {})

@@ -25,9 +25,9 @@ from dbt.adapters.fabricspark.adaptive_polling import (
     TelemetrySnapshot,
     duration_store,
     sql_shape,
-    stats_path_for,
 )
 from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
+from dbt.adapters.fabricspark.errors import AmbiguousSubmissionError
 from dbt.adapters.fabricspark.livy_backend import LivyBackend, coerce_time_columns
 from dbt.adapters.fabricspark.shortcuts import ShortcutClient
 from dbt.adapters.fabricspark.throttle import (
@@ -48,12 +48,12 @@ logger = AdapterLogger("Microsoft Fabric-Spark")
 _TEARDOWN_TIMEOUT = 15
 _TEARDOWN_GOVERNOR_WAIT = 5.0
 
-# Lets ambiguous POSTs be reconciled against Livy's statement list.
+# Injected into the submitted SQL as a comment so an ambiguous POST can be
+# reconciled against Livy's statement list instead of blindly resubmitted.
 _SUBMIT_MARKER_PREFIX = "dbt-fabricspark-submit:"
 _RECONCILE_ATTEMPTS = 4
 _RECONCILE_BACKOFF = 1.5
 
-# Cap exponential retry sleeps so they stay within `statement_timeout`.
 _MAX_RETRY_BACKOFF = 30.0
 
 NUMBERS = DECIMALS + (int, float)
@@ -376,11 +376,12 @@ class LivySession:
         try:
             res = _governed(
                 self.governor,
-                PRIORITY_NORMAL,
+                PRIORITY_CRITICAL,
                 requests.delete,
                 self.connect_url + "/sessions/" + self.session_id,
                 headers=_get_headers(self.credential, False),
-                timeout=self.credential.http_timeout,
+                timeout=min(self.credential.http_timeout, _TEARDOWN_TIMEOUT),
+                governor_deadline=time.monotonic() + _TEARDOWN_GOVERNOR_WAIT,
             )
             if res.status_code == 200:
                 logger.debug(f"Closed the livy session: {self.session_id}")
@@ -440,7 +441,7 @@ class LivyCursor:
         self.governor = governor_for_credentials(credential)
         self.active_statement_id: Optional[str] = None
         self._active_sql: Optional[str] = None
-        self._duration_store = duration_store(stats_path_for(credential))
+        self._duration_store = duration_store()
 
     def __enter__(self) -> LivyCursor:
         return self
@@ -544,15 +545,24 @@ class LivyCursor:
                                 if statement_id is None:
                                     return "unknown", None
                                 return "found", statement_id
-                        # If Livy stops echoing `code`, lookup cannot safely prove
-                        # absence for side-effecting DDL/DML.
-                        if not listing or any("code" in s for s in listing):
+                        # Absence is only provable when every listed statement
+                        # carried a `code` we could have matched against. A
+                        # missing/null `code`, or a non-dict entry, could be
+                        # hiding our just-accepted statement, so the lookup
+                        # stays inconclusive rather than resubmitting
+                        # side-effecting DDL/DML. An empty listing is still
+                        # conclusive: nothing can be hiding in it.
+                        if all(isinstance(s, dict) and s.get("code") is not None for s in listing):
                             read_the_list = True
             except Exception as exc:
                 logger.debug(f"Could not reconcile ambiguous Livy submit: {exc}")
             # Livy may publish the statement late, and a later lookup failure
             # must not discard earlier evidence of absence.
-            if attempt < _RECONCILE_ATTEMPTS - 1 and time.monotonic() < deadline:
+            if time.monotonic() >= deadline:
+                # Retrying now would fire the remaining attempts back to back
+                # with no pause, and a later look cannot see anything new.
+                break
+            if attempt < _RECONCILE_ATTEMPTS - 1:
                 _sleep_until(_RECONCILE_BACKOFF * (attempt + 1), deadline)
         return ("absent" if read_the_list else "unknown"), None
 
@@ -568,7 +578,7 @@ class LivyCursor:
         max_retries = 5
         res = None
         for attempt in range(max_retries):
-            # A fresh marker keeps two landed submissions distinguishable.
+            # A fresh marker per attempt keeps two landed submissions distinguishable.
             marker = f"{_SUBMIT_MARKER_PREFIX}{uuid.uuid4().hex}"
             data = {"code": f"/* {marker} */\n{code}", "kind": "sql"}
             logger.debug(f"Submitted: {data} {url}")
@@ -596,7 +606,7 @@ class LivyCursor:
                     )
                     return _AdoptedSubmission(adopted)  # type: ignore[arg-type,return-value]
                 if outcome == "unknown":
-                    raise DbtRuntimeError(
+                    raise AmbiguousSubmissionError(
                         f"Livy statement submit failed with {type(exc).__name__} and the "
                         f"statement list could not be read, so it is unknown whether the "
                         f"statement is running. Refusing to resubmit, which could execute this "
@@ -615,9 +625,11 @@ class LivyCursor:
                 time.sleep(wait_time)
                 continue
             if res.status_code == 429:
-                wait_time = max(parse_retry_after(res), 1.0)
-                logger.debug(f"Livy statement submit got HTTP 429, retrying in {wait_time:.0f}s")
-                time.sleep(wait_time)
+                # `_governed` has already parked the shared gate for the
+                # Retry-After, so sleeping here again would double the wait.
+                logger.debug(
+                    "Livy statement submit got HTTP 429, retrying behind the throttle gate"
+                )
                 continue
             if res.status_code < 500:
                 break
@@ -631,7 +643,7 @@ class LivyCursor:
                 )
                 return _AdoptedSubmission(adopted)  # type: ignore[arg-type,return-value]
             if outcome == "unknown":
-                raise DbtRuntimeError(
+                raise AmbiguousSubmissionError(
                     f"Livy statement submit returned HTTP {res.status_code} and the statement "
                     f"list could not be read, so it is unknown whether the statement is "
                     f"running. Refusing to resubmit, which could execute this statement "
@@ -687,13 +699,16 @@ class LivyCursor:
         shape_key = f"shape:{shape}" if shape else None
         return node_key, shape_key
 
-    def _new_scheduler(self, statement_id: str) -> PollScheduler:
+    def _new_scheduler(self) -> PollScheduler:
         node_key, shape_key = self._statement_keys()
-        return PollScheduler(
-            predicted_duration=self._duration_store.predict(node_key, shape_key),
+        predicted, samples = self._duration_store.estimate(node_key, shape_key)
+        scheduler = PollScheduler(
+            predicted_duration=predicted,
             min_interval=max(self.credential.poll_statement_wait / 2, MIN_INTERVAL),
-            statement_id=statement_id,
+            base_interval=max(self.credential.poll_statement_wait, MIN_INTERVAL),
         )
+        scheduler.samples = samples
+        return scheduler
 
     def _record_duration(self, duration: float) -> None:
         node_key, shape_key = self._statement_keys()
@@ -732,7 +747,7 @@ class LivyCursor:
         consecutive_failures = 0
         last_running_elapsed = 0.0
         max_poll_retries = 30
-        scheduler = self._new_scheduler(statement_id)
+        scheduler = self._new_scheduler()
         # 404 can appear transiently right after submit before the statement id
         # is registered, or when the Fabric Livy service briefly loses track of
         # the session/statement. Retry with exponential backoff before giving up.
@@ -1128,6 +1143,7 @@ class LivySessionManager(LivyBackend):
                     credentials.workspaceid,
                     credentials.lakehouseid,
                     credentials.endpoint,
+                    credentials=credentials,
                 )
                 shortcut_client.create_shortcuts(credentials.shortcuts_json_str)
             except Exception as ex:

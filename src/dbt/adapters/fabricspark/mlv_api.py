@@ -26,6 +26,7 @@ from dbt.adapters.fabricspark.throttle import (
     PRIORITY_CRITICAL,
     PRIORITY_NORMAL,
     governor_for_credentials,
+    is_capacity_error,
 )
 from dbt.adapters.fabricspark.throttle import (
     governed as _governed,
@@ -212,6 +213,17 @@ def _request_with_retry(
             if response.status_code in RETRYABLE_STATUS_CODES and attempt < max_retries:
                 detail = _extract_error_detail(response)
                 if response.status_code == 429 and governor is not None:
+                    # Capacity 429s only park the submit gate, which critical
+                    # priority deliberately bypasses, so those callers would
+                    # otherwise re-fire with no pause at all.
+                    if priority <= PRIORITY_CRITICAL and is_capacity_error(response):
+                        wait = max(parse_retry_after(response), RETRY_BACKOFF_BASE**attempt)
+                        logger.warning(
+                            f"MLV API {operation} hit the Fabric capacity limit ({detail}); "
+                            f"retrying in {wait:.0f}s (attempt {attempt}/{max_retries})..."
+                        )
+                        time.sleep(wait)
+                        continue
                     logger.warning(
                         f"MLV API {operation} returned 429 ({detail}); retrying behind the "
                         f"shared throttle gate (attempt {attempt}/{max_retries})..."

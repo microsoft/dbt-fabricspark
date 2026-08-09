@@ -139,7 +139,7 @@ class ThrottleGovernor:
         """
         if response.status_code != 429:
             return False
-        if _is_capacity_error(response):
+        if is_capacity_error(response):
             wait = self.penalize(max(parse_retry_after(response), 30.0), submissions_only=True)
             logger.warning(
                 f"Fabric capacity limit exceeded; deferring new Fabric work for {wait:.0f}s"
@@ -167,7 +167,7 @@ class ThrottleGovernor:
             }
 
 
-def _is_capacity_error(response: requests.Response) -> bool:
+def is_capacity_error(response: requests.Response) -> bool:
     try:
         body = response.json()
     except Exception:

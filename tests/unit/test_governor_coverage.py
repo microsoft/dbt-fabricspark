@@ -365,3 +365,47 @@ class TestSleepSemantics:
                 result = _request_with_retry("GET", "https://x", {}, "op", 30)
         assert result.status_code == 200
         local_sleep.assert_called_once()
+
+
+class TestCapacity429AtCriticalPriority:
+    """A capacity 429 only parks the *submit* gate, which critical priority
+    deliberately bypasses so in-flight work can still drain. Critical MLV
+    callers therefore have to serve that wait themselves, or they re-fire
+    immediately against the API that just reported capacity exhaustion.
+    """
+
+    def test_capacity_429_at_critical_priority_still_waits(self):
+        clock = FakeClock()
+        gov = _fake_governor(clock)
+        creds = _fabric_creds()
+        _inject_governor(creds, gov)
+
+        capacity = _response(429, body={"errorCode": "CapacityLimitExceeded"})
+        ok = _response(200)
+        with patch.object(mlv_mod.requests, "request", side_effect=[capacity, ok]):
+            with patch.object(mlv_mod.time, "sleep") as local_sleep:
+                result = _request_with_retry(
+                    "GET", "https://x", {}, "op", 30, credentials=creds, priority=PRIORITY_CRITICAL
+                )
+
+        assert result.status_code == 200
+        local_sleep.assert_called_once()
+        assert local_sleep.call_args.args[0] > 0
+
+    def test_plain_429_at_critical_priority_leaves_the_wait_to_the_gate(self):
+        clock = FakeClock()
+        gov = _fake_governor(clock)
+        creds = _fabric_creds()
+        _inject_governor(creds, gov)
+
+        throttled = _response(429, headers={"Retry-After": "30"})
+        ok = _response(200)
+        with patch.object(mlv_mod.requests, "request", side_effect=[throttled, ok]):
+            with patch.object(mlv_mod.time, "sleep") as local_sleep:
+                result = _request_with_retry(
+                    "GET", "https://x", {}, "op", 30, credentials=creds, priority=PRIORITY_CRITICAL
+                )
+
+        assert result.status_code == 200
+        local_sleep.assert_not_called()
+        assert clock.slept

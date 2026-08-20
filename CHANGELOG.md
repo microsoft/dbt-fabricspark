@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- Fixed `dbt init` failing to parse the adapter's `profile_template.yml`. The `workspace_name` hint's unquoted `Precedence:` text was interpreted as a YAML mapping delimiter; the hint is now quoted so project scaffolding can load the profile template. ([#266](https://github.com/microsoft/dbt-fabricspark/issues/266))
+
 ## v1.13.0
 
 ### Features

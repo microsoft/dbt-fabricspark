@@ -38,7 +38,7 @@ prompts:
         type: 'bool'
         default: true
       workspace_name:
-        hint: Optional. Default workspace name for cross-workspace 4-part naming. When set and the target lakehouse has schemas enabled, all relations without an explicit model-level workspace_name will be prefixed with this workspace. Ignored for non-schema lakehouses. Precedence: model config(workspace_name=...) > this value.
+        hint: 'Optional. Default workspace name for cross-workspace 4-part naming. When set and the target lakehouse has schemas enabled, all relations without an explicit model-level workspace_name will be prefixed with this workspace. Ignored for non-schema lakehouses. Precedence: model config(workspace_name=...) > this value.'
       quote_identifiers:
         hint: When true, backtick-quotes table identifiers so Fabric Spark preserves their casing instead of folding to lowercase. Requires spark.sql.caseSensitive=true under spark_config.conf to take effect. Session-wide (also affects column resolution). Defaults to false.
         type: 'bool'

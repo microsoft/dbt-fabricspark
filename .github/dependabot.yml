@@ -1,9 +1,17 @@
 version: 2
 updates:
-  # python dependencies
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "daily"
     rebase-strategy: "disabled"
     open-pull-requests-limit: 0
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    groups:
+      github-actions:
+        patterns: ["*"]
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7

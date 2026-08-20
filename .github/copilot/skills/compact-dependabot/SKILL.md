@@ -19,7 +19,7 @@ Merge all open Dependabot dependency bumps into one PR that passes CI.
 
 2. **Study the patch file** — read `dependabot-diffs.patch` to understand what dependencies are being bumped and across which ecosystems (npm, uv/pip, etc.).
 
-3. **Create a branch** from the latest `origin/main`:
+3. **Reuse the existing branch** the user is already on, UNLESS it's on main, in that case, create a new branch from main:
 
    ```bash
    git fetch origin main

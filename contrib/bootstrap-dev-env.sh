@@ -17,6 +17,7 @@ DOCKER_VERSION="5:27.5.1-1~ubuntu.24.04~noble"
 
 command -v jq &>/dev/null || PACKAGES="jq"
 command -v gh &>/dev/null || PACKAGES="$PACKAGES gh"
+command -v wslu &>/dev/null || PACKAGES="$PACKAGES wslu"
 [ -n "$PACKAGES" ] && sudo apt-get update -qq && sudo apt-get install -yqq $PACKAGES
 
 if ! [ -x "$(command -v docker)" ]; then
@@ -26,9 +27,26 @@ if ! [ -x "$(command -v docker)" ]; then
   sudo apt-get update -q
   sudo apt-get install -y apt-transport-https ca-certificates curl
   sudo apt-get install -y --allow-downgrades docker-ce="$DOCKER_VERSION" docker-ce-cli="$DOCKER_VERSION" containerd.io
-else
-  echo "docker is already installed."
 fi
+
+sudo mkdir -p /etc/docker
+sudo tee /etc/docker/daemon.json > /dev/null <<'EOF'
+{
+  "max-concurrent-downloads": 32,
+  "max-concurrent-uploads": 32,
+  "default-ulimits": {
+    "nofile": { "Name": "nofile", "Hard": 1048576, "Soft": 1048576 },
+    "nproc":  { "Name": "nproc",  "Hard": 1048576, "Soft": 1048576 },
+    "memlock": { "Name": "memlock", "Hard": -1, "Soft": -1 }
+  },
+  "features": { "buildkit": true },
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "50m", "max-file": "3" }
+}
+EOF
+
+echo "docker is installed, restarting..."
+sudo systemctl restart docker
 
 sudo chmod 666 /var/run/docker.sock
 docker container ls
@@ -49,6 +67,7 @@ if grep -q "$ACR_URL" ~/.docker/config.json 2>/dev/null; then
         echo "$docker_password" | docker login "$ACR_URL" --username "$ACR_NAME" --password-stdin
     fi
 fi
+docker pull "$(jq -r .image "$REPO_ROOT/.devcontainer/devcontainer.json")"
 
 export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "/mnt/c" | tr '\n' ':' | sed 's/:$//')
 if ! [ -x "$(command -v npm)" ]; then

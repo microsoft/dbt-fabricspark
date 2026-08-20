@@ -20,6 +20,22 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
     exit 1
 }
 
+# See: https://github.com/microsoft/vscode-remote-release/issues/11480
+$sshDir = Join-Path $env:USERPROFILE ".ssh"
+$knownHosts = Join-Path $sshDir "known_hosts"
+if (-not (Test-Path $sshDir)) {
+    New-Item -ItemType Directory -Path $sshDir -Force | Out-Null
+}
+if (-not (Test-Path $knownHosts)) {
+    Write-Host "Creating missing $knownHosts to avoid VS Code Remote-Containers known_hosts bug"
+    New-Item -ItemType File -Path $knownHosts -Force | Out-Null
+}
+if ((Get-Item $knownHosts).Length -eq 0) {
+    Write-Host "$knownHosts is empty; writing placeholder line to avoid VS Code Remote-Containers known_hosts bug"
+    Set-Content -Path $knownHosts -Value "# placeholder entry to avoid https://github.com/microsoft/vscode-remote-release/issues/11480" -NoNewline:$false
+}
+icacls $knownHosts /inheritance:r /grant:r "$($env:USERNAME):F" | Out-Null
+
 $dockerProcesses = @("Docker Desktop")
 foreach ($process in $dockerProcesses) {
     try {
@@ -98,6 +114,42 @@ if ($wslLocation.FreeGB -lt $RECOMMENDED_FREE_GB) {
 }
 
 New-Item -ItemType Directory -Path $wslLocation.Path -Force | Out-Null
+
+Write-Host "Configuring Windows Defender exclusions for WSL/Docker..." -ForegroundColor Cyan
+
+$existingPaths = @((Get-MpPreference).ExclusionPath)
+if ($wslLocation.Path -notin $existingPaths) {
+    Add-MpPreference -ExclusionPath $wslLocation.Path
+    Write-Host "  Path exclusion added: $($wslLocation.Path)" -ForegroundColor Green
+} else {
+    Write-Host "  Path exclusion already exists: $($wslLocation.Path)" -ForegroundColor DarkGray
+}
+
+$defenderProcessExclusions = @(
+    "wsl.exe",
+    "wslhost.exe",
+    "wslservice.exe",
+    "vmmem",
+    "vmmemWSL",
+    "dockerd",
+    "containerd",
+    "containerd-shim-runc-v2",
+    "com.docker.backend.exe"
+)
+$existingProcesses = @((Get-MpPreference).ExclusionProcess)
+$added = @()
+$skipped = @()
+foreach ($proc in $defenderProcessExclusions) {
+    if ($proc -notin $existingProcesses) {
+        Add-MpPreference -ExclusionProcess $proc
+        $added += $proc
+    } else {
+        $skipped += $proc
+    }
+}
+if ($added)   { Write-Host "  Process exclusions added: $($added -join ', ')" -ForegroundColor Green }
+if ($skipped) { Write-Host "  Process exclusions already exist: $($skipped -join ', ')" -ForegroundColor DarkGray }
+
 @"
 [wsl2]
 memory=${memGB}GB

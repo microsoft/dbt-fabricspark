@@ -61,9 +61,10 @@
          "dependsOn": ["build", "init"],
          "options": {
             "commands": [
-               { "command": "bash tools/scripts/run.sh test:local-e2e", "forwardAllArgs": false }
+               { "command": "bash tools/scripts/run.sh test:local-e2e:livy", "forwardAllArgs": false },
+               { "command": "bash tools/scripts/run.sh test:local-e2e:session", "forwardAllArgs": false }
             ],
-            "parallel": false
+            "parallel": true
          }
       },
       "init": {

@@ -43,6 +43,7 @@ dependencies = [
 
 [project.optional-dependencies]
 cli = ["azure-cli>=2.84.0"]
+spark = ["pyspark>=3.5,<5"]
 
 [dependency-groups]
 dev = [
@@ -62,6 +63,7 @@ dev = [
     "twine~=4.0",
     # Adapter specific dependencies
     "mock~=5.1",
+    "pyspark>=4,<5",
 ]
 
 [tool.uv]
@@ -117,4 +119,3 @@ ignore = ["E203", "E501", "E741"]
 quote-style = "double"
 indent-style = "space"
 line-ending = "auto"
-

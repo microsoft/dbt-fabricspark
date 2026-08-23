@@ -108,6 +108,7 @@ def render_spark_type(type_code: Any) -> str:
 
 class FabricSparkConnectionMethod(StrEnum):
     LIVY = "livy"
+    SESSION = "session"
 
 
 class FabricSparkConnectionWrapper(ABC):
@@ -258,6 +259,17 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                     )
                     connection.state = ConnectionState.OPEN
 
+                elif creds.method == FabricSparkConnectionMethod.SESSION:
+                    from dbt.adapters.fabricspark.session import (
+                        SessionConnection,
+                        SessionConnectionWrapper,
+                    )
+
+                    handle = SessionConnectionWrapper(
+                        SessionConnection(spark_config=creds.spark_config)
+                    )
+                    connection.state = ConnectionState.OPEN
+
                 else:
                     raise DbtConfigError(f"invalid credential method: {creds.method}")
                 break
@@ -290,6 +302,10 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                     logger.warning(msg)
                     time.sleep(creds.connect_timeout)
                 else:
+                    if creds.method == FabricSparkConnectionMethod.SESSION:
+                        raise FailedToConnectError(
+                            f"failed to create local Spark session: {e}"
+                        ) from e
                     raise FailedToConnectError(
                         f"failed to connect: {str(e)}. If the error did not help, common reasons for errors: \n1. Invalid/expired credentials (if using CLI authentication, re-run `az login` in your terminal) \n2. Invalid endpoint \n3. Invalid workspaceid or lakehouseid (do you have the correct permissions?) \n4. Invalid or non-existent shortcuts json path, or improperly formatted shortcuts"
                     ) from e

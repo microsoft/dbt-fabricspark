@@ -65,7 +65,17 @@ For local development using **Azure CLI** authentication (`authentication: CLI`)
 pip install dbt-fabricspark[cli]
 ```
 
-> **Note:** The `azure-cli` is an optional dependency is only required for the `CLI` authentication mode. Service Principal (`SPN`) and Fabric Notebook (`fabric_notebook`) authentication modes do not need it.
+For an in-process Spark Session, install PySpark with the `spark` extra:
+
+```bash
+pip install "dbt-fabricspark[spark]"
+```
+
+PySpark remains optional: omit this extra when using Livy, or when the runtime
+already provides PySpark, such as a Fabric Spark notebook. The session method
+supports PySpark 3.5 and 4.x.
+
+> **Note:** The `azure-cli` optional dependency is only required for the `CLI` authentication mode. Service Principal (`SPN`) and Fabric Notebook (`fabric_notebook`) authentication modes do not need it.
 
 ## Issues, bug-bashing, help us help you
 
@@ -87,15 +97,49 @@ pip install git+https://github.com/microsoft/dbt-fabricspark.git@dev/somebranch/
 
 ## Configuration
 
-Use a Livy endpoint to connect to Apache Spark in Microsoft Fabric. Configure your `profiles.yml` to connect via Livy endpoints.
+Configure `profiles.yml` to connect through Livy or an in-process Spark Session.
 
 ### Connection Modes
 
-The adapter supports two connection modes via the `livy_mode` setting:
+The adapter supports two connection methods:
 
-- **Local mode** (`livy_mode: local`) — Connects to a self-hosted Spark instance running in a Docker container (contributed by @mdrakiburrahman). This mode supports the `reuse_session` flag and does not require Fabric compute, making it ideal for offline development and testing.
+- **Livy** (`method: livy`) — Connects through the Livy API. `livy_mode: fabric`
+  targets Microsoft Fabric, while `livy_mode: local` targets a self-hosted Livy
+  server. Local Livy supports `reuse_session` and does not require Fabric compute.
 
-- **Fabric mode** (`livy_mode: fabric`, default) — Connects to Apache Spark in Microsoft Fabric via the Fabric Livy API. For development workflows, enable `reuse_session: true` to persist the Livy session ID to a local file (configured via `session_id_file`, defaults to `./livy-session-id.txt`). On subsequent `dbt` runs, the adapter reuses the existing session from the persisted file instead of creating a new one. If the file does not exist or the session has expired, a new session is created automatically.
+- **Spark Session** (`method: session`) — Uses `SparkSession.builder` in the dbt
+  process. This works with a customer-installed PySpark 3.5 or 4.x package and
+  reuses an existing runtime-provided session when one is available.
+
+For Fabric Livy development workflows, enable `reuse_session: true` to persist
+the Livy session ID to a local file (`session_id_file`, default
+`./livy-session-id.txt`). Later dbt runs reuse that session when it is still valid.
+
+### In-process Spark Session
+
+The session method needs no Fabric endpoint or credentials. `spark_config.name`
+sets the Spark application name, and entries under `spark_config.conf` are
+applied through `SparkSession.builder.config`. Hive support is enabled so the
+session can use a configured persistent metastore.
+
+```yaml
+local-spark:
+  target: dev
+  outputs:
+    dev:
+      type: fabricspark
+      method: session
+      schema: dbt_local
+      threads: 4
+      spark_config:
+        name: dbt-local-session
+        conf:
+          spark.master: local[4]
+```
+
+Spark 4 enables ANSI SQL mode by default while Spark 3.5 does not. To keep dbt
+behavior consistent across both versions, session connections set
+`spark.sql.ansi.enabled` to `false`.
 
 ### Lakehouse without Schema
 
@@ -541,7 +585,7 @@ models:
 | Option                  | Type   | Default                               | Description                                                                                                                                                                                                                                                                                                                                                                                               |
 | ----------------------- | ------ | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `type`                  | string | —                                     | Must be `fabricspark`                                                                                                                                                                                                                                                                                                                                                                                     |
-| `method`                | string | `livy`                                | Connection method                                                                                                                                                                                                                                                                                                                                                                                         |
+| `method`                | string | `livy`                                | Connection method: `livy` or `session`                                                                                                                                                                                                                                                                                                                                                                    |
 | `endpoint`              | string | `https://api.fabric.microsoft.com/v1` | Fabric API endpoint URL                                                                                                                                                                                                                                                                                                                                                                                   |
 | `workspaceid`           | string | —                                     | Fabric workspace UUID                                                                                                                                                                                                                                                                                                                                                                                     |
 | `lakehouseid`           | string | —                                     | Lakehouse UUID                                                                                                                                                                                                                                                                                                                                                                                            |
@@ -559,7 +603,7 @@ models:
 | `accessToken`           | string | —                                     | Direct access token (optional)                                                                                                                                                                                                                                                                                                                                                                            |
 | **Environment**         |        |                                       |                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `environmentId`         | string | —                                     | Fabric Environment ID for Spark configuration                                                                                                                                                                                                                                                                                                                                                             |
-| `spark_config`          | dict   | `{}`                                  | Spark session configuration (must include `name` key). Forwarded verbatim to the Livy session-create call in every mode; echoed by `dbt debug` and logged at `--debug`. See [Inspecting `spark_config`](#inspecting-spark_config).                                                                                                                                                                          |
+| `spark_config`          | dict   | `{}`                                  | Spark session configuration (must include `name`). Livy receives the mapping as its session-create payload; `session` uses `name` as the application name and applies `conf` through `SparkSession.builder.config`. Echoed by `dbt debug`. See [Inspecting `spark_config`](#inspecting-spark_config).                                                                                                     |
 | **Session Management**  |        |                                       |                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `reuse_session`         | bool   | `false`                               | Keep Livy sessions alive for reuse across runs                                                                                                                                                                                                                                                                                                                                                            |
 | `session_id_file`       | string | `./livy-session-id.txt`               | Path to file storing session ID for reuse                                                                                                                                                                                                                                                                                                                                                                 |
@@ -583,11 +627,15 @@ models:
 
 ### Inspecting `spark_config`
 
-`spark_config` is forwarded **verbatim** to the Livy session-create call in every mode —
-high-concurrency, singleton Fabric, and local. Only `sessionTag` is adapter-owned (it drives
-high-concurrency session packing), and `spark.fabric.environment.id` /
+For `method: livy`, `spark_config` is forwarded **verbatim** to the session-create
+call in high-concurrency, singleton Fabric, and local modes. Only `sessionTag` is
+adapter-owned, and `spark.fabric.environment.id` /
 `spark.livy.session.idle.timeout` are merged into `conf` when `environmentId` /
 `session_idle_timeout` are set.
+
+For `method: session`, `spark_config.name` becomes the application name and each
+`spark_config.conf` entry is applied to the Spark builder. The adapter pins
+`spark.sql.ansi.enabled` to `false` for consistent Spark 3.5/4.x behavior.
 
 To see exactly what was sent:
 

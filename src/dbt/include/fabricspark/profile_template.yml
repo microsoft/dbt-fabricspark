@@ -2,6 +2,10 @@ fixed:
   type: fabricspark
 prompts:
   _choose_authentication_method:
+    session:
+      _fixed_method: session
+      _fixed_spark_config:
+        name: dbt-fabricspark-session
     livy:
       _fixed_method: livy
       workspaceid:

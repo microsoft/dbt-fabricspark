@@ -4,7 +4,7 @@
 
 ### Features
 
-- Added the optional `session` connection method for running dbt through an in-process PySpark `SparkSession`, including support for runtime-provided PySpark installations and the `dbt-fabricspark[spark]` extra (`pyspark>=3.5,<5`). Session configuration is read from `spark_config.conf`, Hive support is enabled for persistent metastore reuse, and ANSI mode is pinned off for consistent behavior across Spark 3.5 and 4.x. The local E2E target now exercises Livy and Spark Session concurrently against separate databases in the same SQL Server Hive metastore.
+- Added the optional `session` connection method for running dbt through an in-process PySpark `SparkSession`, including support for runtime-provided PySpark installations and the `dbt-fabricspark[spark]` extra (`pyspark>=3.5,<5`). Session configuration is read from `spark_config.conf`, Hive support is enabled for persistent metastore reuse, and ANSI mode is pinned off for consistent behavior across Spark 3.5 and 4.x. Session queries use dbt's `node_id` metadata for Spark job groups, making the active model visible in the Spark UI and status APIs while preserving any job group set by the hosting application. The local E2E target now exercises Livy and Spark Session concurrently against separate databases in the same SQL Server Hive metastore.
 
 ## v1.13.1
 

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
+import re
+import uuid
+from contextlib import contextmanager
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Iterator, Optional, Sequence, Tuple, Union
 
 from dbt_common.exceptions import DbtRuntimeError
 from dbt_common.utils.encoding import DECIMALS
@@ -15,6 +19,27 @@ if TYPE_CHECKING:
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
 NUMBERS = DECIMALS + (int, float)
+DBT_QUERY_COMMENT_PATTERN = re.compile(r"/\*\s*(\{.*?\})\s*\*/", re.DOTALL)
+SPARK_JOB_GROUP_PROPERTIES = (
+    "spark.jobGroup.id",
+    "spark.job.description",
+    "spark.job.interruptOnCancel",
+)
+
+
+def _dbt_job_description(sql: str) -> str:
+    for match in DBT_QUERY_COMMENT_PATTERN.finditer(sql):
+        try:
+            metadata = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(metadata, dict) or metadata.get("app") != "dbt":
+            continue
+        for key in ("node_id", "connection_name"):
+            context = metadata.get(key)
+            if isinstance(context, str) and context:
+                return context
+    return "dbt query"
 
 
 def _load_pyspark() -> tuple[Any, type[Exception]]:
@@ -37,6 +62,8 @@ class SessionCursor:
         self._df: Optional[DataFrame] = None
         self._rows: Optional[list[Row]] = None
         self._fetch_index = 0
+        self._job_group_id: Optional[str] = None
+        self._job_description: Optional[str] = None
 
     def __enter__(self) -> SessionCursor:
         return self
@@ -75,6 +102,29 @@ class SessionCursor:
         self._df = None
         self._rows = None
         self._fetch_index = 0
+        self._job_group_id = None
+        self._job_description = None
+
+    @contextmanager
+    def _job_group(self) -> Iterator[None]:
+        if self._job_group_id is None or self._job_description is None:
+            yield
+            return
+
+        spark_context = self._spark_session.sparkContext
+        previous_properties = {
+            name: spark_context.getLocalProperty(name) for name in SPARK_JOB_GROUP_PROPERTIES
+        }
+        try:
+            spark_context.setJobGroup(
+                self._job_group_id,
+                self._job_description,
+                interruptOnCancel=True,
+            )
+            yield
+        finally:
+            for name, value in previous_properties.items():
+                spark_context.setLocalProperty(name, value)
 
     def execute(self, sql: str, *parameters: Any) -> None:
         if parameters:
@@ -83,14 +133,18 @@ class SessionCursor:
         self._df = None
         self._rows = None
         self._fetch_index = 0
+        self._job_description = _dbt_job_description(sql)
+        self._job_group_id = f"dbt:{self._job_description}:{uuid.uuid4().hex}"
         try:
-            self._df = self._spark_session.sql(sql)
+            with self._job_group():
+                self._df = self._spark_session.sql(sql)
         except self._analysis_error as exc:
             raise DbtRuntimeError(str(exc)) from exc
 
     def fetchall(self) -> Optional[list[Row]]:
         if self._rows is None and self._df is not None:
-            self._rows = self._df.collect()
+            with self._job_group():
+                self._rows = self._df.collect()
         return self._rows
 
     def fetchmany(self, size: Optional[int] = None) -> Optional[list[Row]]:

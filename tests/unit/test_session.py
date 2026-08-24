@@ -13,12 +13,33 @@ from dbt.adapters.fabricspark.session import (
     SessionConnection,
     SessionConnectionWrapper,
     SessionCursor,
+    _dbt_job_description,
     _load_pyspark,
 )
 
 
 class FakeAnalysisException(Exception):
     pass
+
+
+@pytest.mark.parametrize(
+    ("sql", "expected"),
+    [
+        (
+            '/* {\n  "app": "dbt",\n  "node_id": "model.example.orders"\n} */\nselect 1',
+            "model.example.orders",
+        ),
+        (
+            '/* {"app": "dbt", "node_id": 42, "connection_name": "master"} */ select 1',
+            "master",
+        ),
+        ('/* {"app": "dbt", "node_id": invalid} */ select 1', "dbt query"),
+        ('/* {"app": "other", "node_id": "model.example.orders"} */ select 1', "dbt query"),
+        ("select 1", "dbt query"),
+    ],
+)
+def test_dbt_job_description(sql: str, expected: str) -> None:
+    assert _dbt_job_description(sql) == expected
 
 
 def test_credentials_session_mode() -> None:
@@ -142,6 +163,68 @@ def test_session_cursor_executes_and_fetches_rows() -> None:
     cursor.close()
     assert cursor.description == []
     assert cursor.fetchall() is None
+
+
+def test_session_cursor_labels_eager_and_lazy_spark_work() -> None:
+    spark_context = MagicMock()
+    spark_context.getLocalProperty.return_value = None
+    dataframe = MagicMock()
+    dataframe.collect.return_value = [(1,)]
+    spark_session = MagicMock()
+    spark_session.sparkContext = spark_context
+    spark_session.sql.return_value = dataframe
+    cursor = SessionCursor(spark_session, FakeAnalysisException)
+
+    cursor.execute('/* {"app": "dbt", "node_id": "model.example.orders"} */ select 1')
+    assert cursor.fetchall() == [(1,)]
+
+    group_id = spark_context.setJobGroup.call_args_list[0].args[0]
+    assert group_id.startswith("dbt:model.example.orders:")
+    assert spark_context.setJobGroup.call_args_list == [
+        call(group_id, "model.example.orders", interruptOnCancel=True),
+        call(group_id, "model.example.orders", interruptOnCancel=True),
+    ]
+    cleanup = [
+        call("spark.jobGroup.id", None),
+        call("spark.job.description", None),
+        call("spark.job.interruptOnCancel", None),
+    ]
+    assert spark_context.setLocalProperty.call_args_list == cleanup * 2
+
+
+def test_session_cursor_restores_job_group_after_collect_failure() -> None:
+    spark_context = MagicMock()
+    spark_context.getLocalProperty.return_value = None
+    dataframe = MagicMock()
+    dataframe.collect.side_effect = RuntimeError("collect failed")
+    spark_session = MagicMock()
+    spark_session.sparkContext = spark_context
+    spark_session.sql.return_value = dataframe
+    cursor = SessionCursor(spark_session, FakeAnalysisException)
+    cursor.execute('/* {"app": "dbt", "connection_name": "model.example.orders"} */ select 1')
+
+    spark_context.reset_mock()
+    spark_context.getLocalProperty.side_effect = [
+        "outer-group",
+        "outer description",
+        "false",
+    ]
+
+    with pytest.raises(RuntimeError, match="collect failed"):
+        cursor.fetchall()
+
+    group_id = spark_context.setJobGroup.call_args.args[0]
+    assert group_id.startswith("dbt:model.example.orders:")
+    spark_context.setJobGroup.assert_called_once_with(
+        group_id,
+        "model.example.orders",
+        interruptOnCancel=True,
+    )
+    assert spark_context.setLocalProperty.call_args_list == [
+        call("spark.jobGroup.id", "outer-group"),
+        call("spark.job.description", "outer description"),
+        call("spark.job.interruptOnCancel", "false"),
+    ]
 
 
 def test_session_cursor_translates_analysis_errors_and_clears_previous_result() -> None:

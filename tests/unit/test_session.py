@@ -192,43 +192,6 @@ def test_session_cursor_labels_eager_and_lazy_spark_work() -> None:
     assert spark_context.setLocalProperty.call_args_list == cleanup * 2
 
 
-@patch("dbt.adapters.fabricspark.session.logger")
-def test_session_cursor_logs_new_spark_ui_jobs_once(logger: MagicMock) -> None:
-    status_tracker = MagicMock()
-    status_tracker.getJobIdsForGroup.side_effect = [[7], [7, 9]]
-    spark_context = MagicMock()
-    spark_context.getLocalProperty.return_value = None
-    spark_context.uiWebUrl = "http://127.0.0.1:4042"
-    spark_context.statusTracker.return_value = status_tracker
-    dataframe = MagicMock()
-    dataframe.collect.return_value = [(1,)]
-    spark_session = MagicMock()
-    spark_session.sparkContext = spark_context
-    spark_session.sql.return_value = dataframe
-    cursor = SessionCursor(spark_session, FakeAnalysisException)
-
-    cursor.execute('/* {"app": "dbt", "node_id": "model.example.orders"} */ select 1')
-    cursor.fetchall()
-
-    group_id = spark_context.setJobGroup.call_args_list[0].args[0]
-    assert status_tracker.getJobIdsForGroup.call_args_list == [
-        call(group_id),
-        call(group_id),
-    ]
-    assert logger.info.call_args_list == [
-        call(
-            "Spark UI job for {}: {}",
-            "model.example.orders",
-            "http://127.0.0.1:4042/jobs/job/?id=7",
-        ),
-        call(
-            "Spark UI job for {}: {}",
-            "model.example.orders",
-            "http://127.0.0.1:4042/jobs/job/?id=9",
-        ),
-    ]
-
-
 def test_session_cursor_restores_job_group_after_collect_failure() -> None:
     spark_context = MagicMock()
     spark_context.getLocalProperty.return_value = None

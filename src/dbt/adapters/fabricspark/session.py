@@ -64,7 +64,6 @@ class SessionCursor:
         self._fetch_index = 0
         self._job_group_id: Optional[str] = None
         self._job_description: Optional[str] = None
-        self._logged_job_ids: set[int] = set()
 
     def __enter__(self) -> SessionCursor:
         return self
@@ -105,25 +104,6 @@ class SessionCursor:
         self._fetch_index = 0
         self._job_group_id = None
         self._job_description = None
-        self._logged_job_ids.clear()
-
-    def _log_new_spark_job_links(self, spark_context: Any) -> None:
-        if self._job_group_id is None or self._job_description is None:
-            return
-
-        ui_web_url = spark_context.uiWebUrl
-        if not isinstance(ui_web_url, str) or not ui_web_url:
-            return
-
-        job_ids = set(spark_context.statusTracker().getJobIdsForGroup(self._job_group_id))
-        new_job_ids = sorted(job_ids - self._logged_job_ids)
-        self._logged_job_ids.update(new_job_ids)
-        for job_id in new_job_ids:
-            logger.info(
-                "Spark UI job for {}: {}",
-                self._job_description,
-                f"{ui_web_url.rstrip('/')}/jobs/job/?id={job_id}",
-            )
 
     @contextmanager
     def _job_group(self) -> Iterator[None]:
@@ -145,7 +125,6 @@ class SessionCursor:
         finally:
             for name, value in previous_properties.items():
                 spark_context.setLocalProperty(name, value)
-            self._log_new_spark_job_links(spark_context)
 
     def execute(self, sql: str, *parameters: Any) -> None:
         if parameters:
@@ -156,7 +135,6 @@ class SessionCursor:
         self._fetch_index = 0
         self._job_description = _dbt_job_description(sql)
         self._job_group_id = f"dbt:{self._job_description}:{uuid.uuid4().hex}"
-        self._logged_job_ids.clear()
         try:
             with self._job_group():
                 self._df = self._spark_session.sql(sql)

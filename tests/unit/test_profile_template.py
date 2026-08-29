@@ -15,3 +15,9 @@ def test_profile_template_is_valid_yaml() -> None:
     assert workspace_prompt["hint"].endswith(
         "Precedence: model config(workspace_name=...) > this value."
     )
+
+    session = template["prompts"]["_choose_authentication_method"]["session"]
+    assert session == {
+        "_fixed_method": "session",
+        "_fixed_spark_config": {"name": "dbt-fabricspark-session"},
+    }

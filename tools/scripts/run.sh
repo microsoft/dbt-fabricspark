@@ -25,11 +25,13 @@ declare -A TARGETS=(
     ["test"]="pytest unit + functional tests"
     ["test:unit"]="pytest unit tests"
     ["test:functional"]="pytest functional tests (requires Fabric credentials)"
-    ["test:local-e2e"]="dbt CLI end-to-end against local Livy (devcontainer)"
+    ["test:local-e2e"]="parallel dbt CLI end-to-end against local Livy and Spark Session"
+    ["test:local-e2e:livy"]="dbt CLI end-to-end against local Livy (devcontainer)"
+    ["test:local-e2e:session"]="dbt CLI end-to-end against a local Spark Session"
     ["publish"]="twine check + uv publish (no-op if UV_PUBLISH_TOKEN unset)"
     ["all"]="Run clean, lint, build, test, publish in sequence"
 )
-TARGET_ORDER=("venv" "clean" "lint" "fix" "build" "test" "test:unit" "test:functional" "test:local-e2e" "publish")
+TARGET_ORDER=("venv" "clean" "lint" "fix" "build" "test" "test:unit" "test:functional" "test:local-e2e" "test:local-e2e:livy" "test:local-e2e:session" "publish")
 ALL_ORDER=("clean" "lint" "build" "test" "publish")
 
 print_usage() {
@@ -117,7 +119,30 @@ run_test_unit() {
 
 run_test_local_e2e() {
     cd "${PROJECT_DIR}"
-    bash "${SCRIPT_DIR}/run-local-e2e.sh"
+    bash "${SCRIPT_DIR}/run-local-e2e.sh" livy &
+    local livy_pid=$!
+    bash "${SCRIPT_DIR}/run-local-e2e.sh" session &
+    local session_pid=$!
+
+    local livy_status=0
+    local session_status=0
+    wait "${livy_pid}" || livy_status=$?
+    wait "${session_pid}" || session_status=$?
+
+    if [[ "${livy_status}" -ne 0 || "${session_status}" -ne 0 ]]; then
+        echo "ERROR: Local E2E failed (livy=${livy_status}, session=${session_status})"
+        return 1
+    fi
+}
+
+run_test_local_e2e_livy() {
+    cd "${PROJECT_DIR}"
+    bash "${SCRIPT_DIR}/run-local-e2e.sh" livy
+}
+
+run_test_local_e2e_session() {
+    cd "${PROJECT_DIR}"
+    bash "${SCRIPT_DIR}/run-local-e2e.sh" session
 }
 
 run_test_functional() {

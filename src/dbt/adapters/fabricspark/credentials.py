@@ -1,6 +1,7 @@
 import os
 import re
 from dataclasses import dataclass, field
+from importlib import import_module
 from typing import Any, Dict, Literal, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -155,7 +156,11 @@ class FabricSparkCredentials(Credentials):
 
     @property
     def is_local_mode(self) -> bool:
-        return self.livy_mode == "local"
+        return self.method == "session" or self.livy_mode == "local"
+
+    @property
+    def is_session_method(self) -> bool:
+        return self.method == "session"
 
     @property
     def resolved_session_id_file(self) -> str:
@@ -208,11 +213,31 @@ class FabricSparkCredentials(Credentials):
             self._validate_uuid(self.lakehouseid, "lakehouseid")
             self._validate_endpoint()
 
-        # Validate spark_config
+        if not isinstance(self.spark_config, dict):
+            raise ValueError("spark_config must be a mapping")
+
         required_keys = ["name"]
         for key in required_keys:
             if key not in self.spark_config:
                 raise ValueError(f"Missing required key: {key}")
+
+        if self.is_session_method:
+            conf = self.spark_config.get("conf", {})
+            if not isinstance(conf, dict):
+                raise ValueError("spark_config.conf must be a mapping for method 'session'")
+            self.spark_config = {
+                **self.spark_config,
+                "conf": {str(key): str(value) for key, value in conf.items()},
+            }
+            self.spark_config["conf"]["spark.sql.ansi.enabled"] = "false"
+            try:
+                import_module("pyspark")
+            except ImportError as exc:
+                raise DbtRuntimeError(
+                    "The session connection method requires PySpark. "
+                    "Install it with `pip install dbt-fabricspark[spark]` "
+                    "or use a runtime that already provides PySpark."
+                ) from exc
 
         # token_credential auth requires a dotted-path credential_class.
         # Conversely, credential_class/credential_kwargs are only valid with
@@ -283,6 +308,8 @@ class FabricSparkCredentials(Credentials):
 
     @property
     def unique_field(self) -> str:
+        if self.is_session_method:
+            return f"session:{self.spark_config['name']}"
         if self.is_local_mode:
             return self.livy_url
         return self.lakehouseid

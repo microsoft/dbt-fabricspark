@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.13.3
+
+### Fixes
+
+- Fixed high-concurrency Livy REPLs accumulating as dbt moved between metadata discovery, model workers, and main-thread hooks. Connection managers were permanently keyed to Python thread IDs and `release()` was a no-op, so short-lived threads stranded their HC IDs and later phases acquired more; a `threads: 3` run could create nine REPLs, while `threads: 4` could acquire a sixth REPL after all models finished and force Fabric to start another physical Livy session. HC connections now lease exclusive REPLs from a process-local pool capped at dbt's resolved `threads` value, return healthy leases when dbt releases a connection, replace stale leases without exceeding the cap, and serialize new acquisitions so Fabric can honor `sessionTag` packing. Singleton Livy and local Spark Session lifecycle behavior is unchanged. ([#274](https://github.com/microsoft/dbt-fabricspark/issues/274), [#275](https://github.com/microsoft/dbt-fabricspark/issues/275))
+
 ## v1.13.2
 
 ### Features

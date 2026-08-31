@@ -661,9 +661,13 @@ Keys the profile does not define are unaffected.
 ### High-concurrency Livy
 
 By default the adapter uses Fabric's [high-concurrency Livy API](https://learn.microsoft.com/en-us/fabric/data-engineering/high-concurrency-livy)
-(`high_concurrency: true`). Each dbt thread acquires its own HC session — and therefore its own REPL — inside a single underlying Livy session
-shared via a deterministic `sessionTag` derived from `(workspaceid, lakehouseid)`. Statements from different REPLs execute in
-parallel inside the same Spark application, so increasing `threads` buys us throughput.
+(`high_concurrency: true`). Each active dbt connection borrows an exclusive HC
+session — and therefore its own REPL — from a process-local pool capped at
+`threads`. Statements from different REPLs execute in parallel inside the same
+Spark application, so increasing `threads` buys us throughput. When dbt moves
+from metadata discovery to model workers or hooks, released connections return
+their REPLs to the pool for the next phase instead of acquiring additional HC
+IDs.
 
 When `reuse_session: true`, the underlying Livy session also stays warm between dbt invocations (until Fabric's
 `spark.livy.session.idle.timeout` elapses), so the next run skips Spark cold-start entirely.
@@ -675,17 +679,16 @@ when debugging any problems with the high-concurrency API.
 Fabric packs REPLs onto one underlying Livy session up to
 **`spark.highConcurrency.max`** (the "dynamic session sharing" limit; see the
 ["Limits"](https://learn.microsoft.com/en-us/fabric/data-engineering/high-concurrency-livy#key-concepts)
-note in the Microsoft Learn HC Livy docs), whose **default is 5**. Two things
-count against that limit:
+note in the Microsoft Learn HC Livy docs), whose **default is 5**. A single dbt
+process holds at most **`threads`** REPLs: main-thread, metadata, model, and hook
+connections all lease from the same bounded pool. The adapter serializes new
+acquisitions so Fabric can pack them under the shared `sessionTag`; that tag is
+still a service-side packing hint rather than a strict lock.
 
-- **one REPL per dbt worker thread** (`threads`), **plus**
-- **dbt's persistent main-thread ("master") connection**, which is also a REPL —
-  it is held for relation-cache listing at startup and again at `on-run-end`.
-
-So a single build holds up to **`threads + 1`** REPLs concurrently. When that
-exceeds the cap, dbt still works correctly — Fabric simply spins up a second
-underlying Livy session to host the overflow REPL(s), and the same `sessionTag`
-makes future acquires snap-attach to whichever underlying session has room.
+When `threads` exceeds the Fabric cap, dbt still works correctly — Fabric spins
+up another underlying Livy session to host overflow REPLs, and the same
+`sessionTag` makes future acquisitions attach to whichever underlying session
+has room.
 
 What that means in practice:
 
@@ -705,24 +708,23 @@ that could surprise — none ship with this adapter today.
 
 Cost tradeoff: each additional underlying Livy session is a separate
 Spark cluster billed for the duration of the run plus the
-`spark.livy.session.idle.timeout` afterwards. Because the master connection
-consumes one REPL slot on top of the workers, the single-session ceiling is
-**`threads ≤ spark.highConcurrency.max − 1`** — i.e. **`threads ≤ 4`** at the
-default cap of 5. (`threads: 5` needs 6 REPLs, so it spills to a second session.)
+`spark.livy.session.idle.timeout` afterwards. The single-session ceiling is
+**`threads ≤ spark.highConcurrency.max`** — i.e. **`threads ≤ 5`** at the
+default cap.
 
-To run `threads ≥ 5` inside one billed session, raise the cap in your profile —
+To run `threads > 5` inside one billed session, raise the cap in your profile —
 Fabric honors it at session-create time, no Environment required:
 
 ```yaml
 spark_config:
   name: <your-app-name>
   conf:
-    spark.highConcurrency.max: "50"   # keep ≥ threads + 1
+    spark.highConcurrency.max: "50"   # keep ≥ threads
 ```
 
 Alternatively, attach a Fabric
 [Environment](https://learn.microsoft.com/en-us/fabric/data-engineering/create-and-use-environment)
-whose Spark properties set `spark.highConcurrency.max`. Keep the cap ≥ `threads + 1`
+whose Spark properties set `spark.highConcurrency.max`. Keep the cap ≥ `threads`
 so a single build stays on one billed session; raise `threads` only when the extra
 parallelism beats the extra compute spend.
 

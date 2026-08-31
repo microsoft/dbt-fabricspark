@@ -17,19 +17,26 @@ Mocked-HTTP coverage of the HC lifecycle:
 
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from multiprocessing import get_context
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from dbt.adapters.contracts.connection import Connection, ConnectionState
 from dbt.adapters.fabricspark import concurrent_livy
 from dbt.adapters.fabricspark.concurrent_livy import (
     HighConcurrencyConnection,
     HighConcurrencyConnectionWrapper,
     HighConcurrencyCursor,
+    HighConcurrencyReplPool,
     HighConcurrencySession,
     HighConcurrencySessionManager,
     derive_session_tag,
 )
+from dbt.adapters.fabricspark.connections import FabricSparkConnectionManager
 from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
 from dbt.adapters.fabricspark.livy_backend import LivyBackend
 
@@ -69,10 +76,14 @@ def _reset_module_state():
     concurrent_livy._session_tags.clear()
     concurrent_livy._active_sessions.clear()
     concurrent_livy._shortcuts_done.clear()
+    FabricSparkConnectionManager.connection_managers.clear()
+    FabricSparkConnectionManager._hc_pools.clear()
     yield
     concurrent_livy._session_tags.clear()
     concurrent_livy._active_sessions.clear()
     concurrent_livy._shortcuts_done.clear()
+    FabricSparkConnectionManager.connection_managers.clear()
+    FabricSparkConnectionManager._hc_pools.clear()
 
 
 # --------------------------------------------------------------------------- #
@@ -420,29 +431,398 @@ class TestHighConcurrencySessionManager:
 
     @patch("dbt.adapters.fabricspark.concurrent_livy._maybe_create_shortcuts")
     @patch.object(HighConcurrencySession, "delete")
-    @patch.object(HighConcurrencySession, "acquire")
-    def test_disconnect_releases_hc(self, _acquire, mock_delete, _shortcuts):
+    def test_disconnect_releases_hc(self, mock_delete, _shortcuts):
+        def fake_acquire(session):
+            session.hc_id = "hc"
+            session.session_id = "session"
+            session.repl_id = "repl"
+            session.is_new_session_required = False
+
         creds = _make_creds()
         mgr = HighConcurrencySessionManager()
-        mgr.connect(creds)
-        mgr.disconnect()
+        with patch.object(HighConcurrencySession, "acquire", fake_acquire):
+            mgr.connect(creds)
+            mgr.disconnect()
         mock_delete.assert_called_once()
         assert mgr._hc_session is None
 
     @patch("dbt.adapters.fabricspark.concurrent_livy._maybe_create_shortcuts")
     @patch.object(HighConcurrencySession, "delete")
-    @patch.object(HighConcurrencySession, "acquire")
-    def test_disconnect_keeps_session_alive_when_reuse_session(
-        self, _acquire, mock_delete, _shortcuts
-    ):
+    def test_disconnect_keeps_session_alive_when_reuse_session(self, mock_delete, _shortcuts):
         # reuse_session=True must keep the underlying Livy session warm for the
         # next invocation instead of deleting the HC id (issue #232).
+        def fake_acquire(session):
+            session.hc_id = "hc"
+            session.session_id = "session"
+            session.repl_id = "repl"
+            session.is_new_session_required = False
+
         creds = _make_creds(reuse_session=True)
         mgr = HighConcurrencySessionManager()
-        mgr.connect(creds)
-        mgr.disconnect()
+        with patch.object(HighConcurrencySession, "acquire", fake_acquire):
+            mgr.connect(creds)
+            mgr.disconnect()
         mock_delete.assert_not_called()
         assert mgr._hc_session is None
+
+
+# --------------------------------------------------------------------------- #
+# Process-local REPL pool                                                     #
+# --------------------------------------------------------------------------- #
+
+
+class TestHighConcurrencyReplPool:
+    def test_caps_metadata_model_and_teardown_phases_at_dbt_threads(self):
+        creds = _make_creds(statement_timeout=5)
+        pool = HighConcurrencyReplPool(max_size=3)
+        acquire_lock = threading.Lock()
+        acquire_count = 0
+        capacity_reached = threading.Event()
+        release_metadata = threading.Event()
+
+        def fake_acquire(session):
+            nonlocal acquire_count
+            with acquire_lock:
+                acquire_count += 1
+                index = acquire_count
+                if acquire_count == 3:
+                    capacity_reached.set()
+            session.hc_id = f"hc-{index}"
+            session.session_id = "physical-1"
+            session.repl_id = f"repl-{index}"
+            session.is_new_session_required = False
+
+        def metadata_task():
+            manager = HighConcurrencySessionManager(pool)
+            connection = manager.connect(creds)
+            assert release_metadata.wait(timeout=5)
+            connection.close()
+
+        def model_task(barrier):
+            manager = HighConcurrencySessionManager(pool)
+            connection = manager.connect(creds)
+            barrier.wait(timeout=5)
+            connection.close()
+
+        with patch.object(HighConcurrencySession, "acquire", fake_acquire):
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = [executor.submit(metadata_task) for _ in range(5)]
+                assert capacity_reached.wait(timeout=5)
+                assert acquire_count == 3
+                release_metadata.set()
+                for future in futures:
+                    future.result(timeout=5)
+
+            model_barrier = threading.Barrier(4)
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                futures = [executor.submit(model_task, model_barrier) for _ in range(3)]
+                model_barrier.wait(timeout=5)
+                for future in futures:
+                    future.result(timeout=5)
+
+            manager = HighConcurrencySessionManager(pool)
+            manager.connect(creds).close()
+
+        assert acquire_count == 3
+
+    def test_reuses_worker_repl_for_after_run(self):
+        creds = _make_creds(reuse_session=True, statement_timeout=5)
+        pool = HighConcurrencyReplPool(max_size=4)
+        acquire_lock = threading.Lock()
+        acquired = []
+        worker_sessions = []
+
+        def fake_acquire(session):
+            with acquire_lock:
+                index = len(acquired) + 1
+                session.hc_id = f"hc-{index}"
+                session.session_id = "physical-1"
+                session.repl_id = f"repl-{index}"
+                session.is_new_session_required = False
+                acquired.append(session)
+
+        def worker(barrier):
+            manager = HighConcurrencySessionManager(pool)
+            connection = manager.connect(creds)
+            with acquire_lock:
+                worker_sessions.append(connection.hc_session)
+            barrier.wait(timeout=5)
+            connection.close()
+
+        with patch.object(HighConcurrencySession, "acquire", fake_acquire):
+            before_run = HighConcurrencySessionManager(pool)
+            before_run.connect(creds).close()
+
+            worker_barrier = threading.Barrier(5)
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                futures = [executor.submit(worker, worker_barrier) for _ in range(4)]
+                worker_barrier.wait(timeout=5)
+                for future in futures:
+                    future.result(timeout=5)
+
+            after_run = HighConcurrencySessionManager(pool)
+            after_connection = after_run.connect(creds)
+            assert after_connection.hc_session in acquired
+            after_connection.close()
+
+        assert len(acquired) == 4
+        assert len(set(worker_sessions)) == 4
+
+    def test_failed_acquire_restores_capacity(self):
+        creds = _make_creds(statement_timeout=5)
+        pool = HighConcurrencyReplPool(max_size=1)
+        attempts = 0
+
+        def flaky_acquire(session):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("acquire failed")
+            session.hc_id = "hc-ok"
+            session.session_id = "physical-1"
+            session.repl_id = "repl-ok"
+            session.is_new_session_required = False
+
+        with patch.object(HighConcurrencySession, "acquire", flaky_acquire):
+            with pytest.raises(RuntimeError, match="acquire failed"):
+                pool.borrow(creds)
+            session = pool.borrow(creds)
+
+        assert session.hc_id == "hc-ok"
+        assert pool.leased_count == 1
+        pool.release(session)
+
+    def test_stale_idle_repl_is_deleted_and_replaced(self):
+        creds = _make_creds(statement_timeout=5)
+        pool = HighConcurrencyReplPool(max_size=1)
+        acquired = []
+        deleted = []
+
+        def fake_acquire(session):
+            index = len(acquired) + 1
+            session.hc_id = f"hc-{index}"
+            session.session_id = "physical-1"
+            session.repl_id = f"repl-{index}"
+            session.is_new_session_required = False
+            acquired.append(session)
+
+        def fake_delete(session):
+            deleted.append(session)
+            session.hc_id = None
+            session.session_id = None
+            session.repl_id = None
+            session.is_new_session_required = True
+
+        with (
+            patch.object(HighConcurrencySession, "acquire", fake_acquire),
+            patch.object(HighConcurrencySession, "delete", fake_delete),
+        ):
+            stale = pool.borrow(creds)
+            pool.release(stale)
+            stale.is_dead = True
+            replacement = pool.borrow(creds)
+
+        assert replacement is not stale
+        assert deleted == [stale]
+        assert len(acquired) == 2
+        pool.release(replacement)
+
+    def test_replaces_a_stale_leased_repl_through_the_pool(self):
+        creds = _make_creds(statement_timeout=5)
+        pool = HighConcurrencyReplPool(max_size=1)
+        acquired = []
+        deleted = []
+
+        def fake_acquire(session):
+            index = len(acquired) + 1
+            session.hc_id = f"hc-{index}"
+            session.session_id = "physical-1"
+            session.repl_id = f"repl-{index}"
+            session.is_new_session_required = False
+            session.is_dead = False
+            acquired.append(session)
+
+        def fake_delete(session):
+            deleted.append(session)
+            session.hc_id = None
+            session.session_id = None
+            session.repl_id = None
+            session.is_new_session_required = True
+
+        with (
+            patch.object(HighConcurrencySession, "acquire", fake_acquire),
+            patch.object(HighConcurrencySession, "delete", fake_delete),
+        ):
+            manager = HighConcurrencySessionManager(pool)
+            connection = manager.connect(creds)
+            stale = connection.hc_session
+            stale.is_dead = True
+
+            connection.cursor()._ensure_repl()
+
+            assert connection.hc_session is acquired[1]
+            assert manager._hc_session is acquired[1]
+            assert pool.leased_count == 1
+            connection.close()
+
+        assert deleted == [stale]
+
+    def test_retries_after_stale_replacement_acquire_fails(self):
+        creds = _make_creds(statement_timeout=5)
+        pool = HighConcurrencyReplPool(max_size=1)
+        successful = []
+        attempts = 0
+
+        def flaky_acquire(session):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 2:
+                raise RuntimeError("replacement unavailable")
+            session.hc_id = f"hc-{attempts}"
+            session.session_id = "physical-1"
+            session.repl_id = f"repl-{attempts}"
+            session.is_new_session_required = False
+            session.is_dead = False
+            successful.append(session)
+
+        def fake_delete(session):
+            session.hc_id = None
+            session.session_id = None
+            session.repl_id = None
+            session.is_new_session_required = True
+
+        with (
+            patch.object(HighConcurrencySession, "acquire", flaky_acquire),
+            patch.object(HighConcurrencySession, "delete", fake_delete),
+        ):
+            manager = HighConcurrencySessionManager(pool)
+            connection = manager.connect(creds)
+            connection.hc_session.is_dead = True
+
+            with pytest.raises(RuntimeError, match="replacement unavailable"):
+                connection.cursor()._ensure_repl()
+
+            connection.cursor()._ensure_repl()
+
+        assert attempts == 3
+        assert connection.hc_session is successful[1]
+        assert pool.leased_count == 1
+        connection.close()
+
+    def test_cleanup_deletes_or_preserves_idle_sessions(self):
+        for reuse_session, expected_deletes in ((False, 1), (True, 0)):
+            creds = _make_creds(reuse_session=reuse_session)
+            pool = HighConcurrencyReplPool(max_size=1)
+            session = HighConcurrencySession(creds, creds.spark_config)
+            session.hc_id = "hc"
+            session.session_id = "physical"
+            session.repl_id = "repl"
+            session.is_new_session_required = False
+            pool._leased.add(session)
+            pool.release(session)
+
+            with patch.object(HighConcurrencySession, "delete") as mock_delete:
+                pool.cleanup(delete_sessions=not reuse_session)
+
+            assert mock_delete.call_count == expected_deletes
+            assert pool.idle_count == int(reuse_session)
+
+
+# --------------------------------------------------------------------------- #
+# dbt connection-manager integration                                         #
+# --------------------------------------------------------------------------- #
+
+
+class TestHighConcurrencyConnectionManager:
+    @staticmethod
+    def make_manager(creds, threads=4):
+        profile = SimpleNamespace(credentials=creds, threads=threads)
+        return FabricSparkConnectionManager(profile, get_context("spawn"))
+
+    def test_profile_threads_set_pool_capacity_without_credential_field(self):
+        creds = _make_creds()
+        manager = self.make_manager(creds, threads=3)
+
+        assert manager._hc_pool is not None
+        assert manager._hc_pool.max_size == 3
+        assert not hasattr(creds, "threads")
+
+    def test_release_closes_hc_connection(self):
+        creds = _make_creds()
+        manager = self.make_manager(creds)
+        handle = MagicMock()
+        connection = Connection(
+            type="fabricspark",
+            name="model",
+            credentials=creds,
+            state=ConnectionState.OPEN,
+            handle=handle,
+        )
+        manager.thread_connections[manager.get_thread_identifier()] = connection
+
+        manager.release()
+
+        handle.close.assert_called_once_with()
+        assert connection.state == ConnectionState.CLOSED
+
+    def test_release_remains_noop_for_non_hc_livy(self):
+        creds = _make_creds(high_concurrency=False)
+        manager = self.make_manager(creds)
+        handle = MagicMock()
+        connection = Connection(
+            type="fabricspark",
+            name="model",
+            credentials=creds,
+            state=ConnectionState.OPEN,
+            handle=handle,
+        )
+        manager.thread_connections[manager.get_thread_identifier()] = connection
+
+        manager.release()
+
+        handle.close.assert_not_called()
+        assert connection.state == ConnectionState.OPEN
+
+    @pytest.mark.parametrize(
+        ("reuse_session", "expected_deletes", "expected_idle"),
+        [(False, 1, 0), (True, 0, 1)],
+    )
+    def test_cleanup_all_returns_shared_leases_before_pool_cleanup(
+        self, reuse_session, expected_deletes, expected_idle
+    ):
+        creds = _make_creds(reuse_session=reuse_session)
+        manager = self.make_manager(creds, threads=1)
+        pool = manager._hc_pool
+
+        def fake_acquire(session):
+            session.hc_id = "hc"
+            session.session_id = "physical"
+            session.repl_id = "repl"
+            session.is_new_session_required = False
+
+        with (
+            patch.object(HighConcurrencySession, "acquire", fake_acquire),
+            patch.object(HighConcurrencySession, "delete") as mock_delete,
+        ):
+            backend = HighConcurrencySessionManager(pool)
+            raw_handle = backend.connect(creds)
+            connection = Connection(
+                type="fabricspark",
+                name="model",
+                credentials=creds,
+                state=ConnectionState.OPEN,
+                handle=HighConcurrencyConnectionWrapper(raw_handle),
+            )
+            thread_id = manager.get_thread_identifier()
+            manager.thread_connections[thread_id] = connection
+            manager.connection_managers[(id(creds), thread_id)] = backend
+
+            manager.cleanup_all()
+
+        assert connection.state == ConnectionState.CLOSED
+        assert mock_delete.call_count == expected_deletes
+        assert pool.idle_count == expected_idle
+        assert not manager.connection_managers
 
 
 # --------------------------------------------------------------------------- #

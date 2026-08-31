@@ -30,6 +30,7 @@ from dbt.adapters.events.types import AdapterEventDebug, ConnectionUsed, SQLQuer
 from dbt.adapters.exceptions import FailedToConnectError
 from dbt.adapters.fabricspark.concurrent_livy import (
     HighConcurrencyConnectionWrapper,
+    HighConcurrencyReplPool,
     HighConcurrencySessionManager,
 )
 from dbt.adapters.fabricspark.livysession import (
@@ -150,6 +151,8 @@ class FabricSparkConnectionManager(SQLConnectionManager):
     TYPE = "fabricspark"
 
     connection_managers = {}
+    _hc_pools = {}
+    _manager_lock = threading.RLock()
     spark_version = None
     mlv_prereq_error: Optional[str] = None
 
@@ -157,6 +160,32 @@ class FabricSparkConnectionManager(SQLConnectionManager):
     # ``retry_all`` a single failure would otherwise stall the run for
     # ``connect_retries`` × 60 s before the caller can decide to ignore it.
     _no_retry_state = threading.local()
+
+    def __init__(self, profile, mp_context) -> None:
+        super().__init__(profile, mp_context)
+        self._credentials_key = id(profile.credentials)
+        self._hc_pool: Optional[HighConcurrencyReplPool] = None
+
+        creds = profile.credentials
+        if (
+            creds.method == FabricSparkConnectionMethod.LIVY
+            and creds.high_concurrency
+            and not creds.is_local_mode
+        ):
+            with self._manager_lock:
+                entry = self._hc_pools.get(self._credentials_key)
+                if entry is None:
+                    pool = HighConcurrencyReplPool(max_size=profile.threads)
+                    self._hc_pools[self._credentials_key] = (creds, pool)
+                else:
+                    registered_credentials, pool = entry
+                    if registered_credentials is not creds:
+                        raise DbtRuntimeError("HC REPL pool credentials identity collision")
+                    if pool.max_size != profile.threads:
+                        raise DbtRuntimeError(
+                            "Cannot change the HC REPL pool size for an active adapter profile"
+                        )
+                self._hc_pool = pool
 
     @classmethod
     @contextmanager
@@ -247,11 +276,22 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                 if creds.method == FabricSparkConnectionMethod.LIVY:
                     thread_id = cls.get_thread_identifier()
                     use_hc = creds.high_concurrency and not creds.is_local_mode
-                    if thread_id not in cls.connection_managers:
-                        cls.connection_managers[thread_id] = (
-                            HighConcurrencySessionManager() if use_hc else LivySessionManager()
-                        )
-                    raw_handle = cls.connection_managers[thread_id].connect(creds)
+                    manager_key = (id(creds), thread_id)
+                    with cls._manager_lock:
+                        if manager_key not in cls.connection_managers:
+                            if use_hc:
+                                pool_entry = cls._hc_pools.get(id(creds))
+                                if pool_entry is None or pool_entry[0] is not creds:
+                                    raise DbtRuntimeError(
+                                        "HC REPL pool was not configured by the connection manager"
+                                    )
+                                manager = HighConcurrencySessionManager(pool_entry[1])
+                            else:
+                                manager = LivySessionManager()
+                            cls.connection_managers[manager_key] = manager
+                        manager = cls.connection_managers[manager_key]
+
+                    raw_handle = manager.connect(creds)
                     handle = (
                         HighConcurrencyConnectionWrapper(raw_handle)
                         if use_hc
@@ -324,9 +364,17 @@ class FabricSparkConnectionManager(SQLConnectionManager):
 
         return connection
 
-    @classmethod
     def release(self) -> None:
-        pass
+        connection = self.get_if_exists()
+        if connection is None:
+            return
+        creds = connection.credentials
+        if (
+            creds.method == FabricSparkConnectionMethod.LIVY
+            and creds.high_concurrency
+            and not creds.is_local_mode
+        ):
+            super().release()
 
     def cleanup_all(self) -> None:
         """Clean up connection manager references only.
@@ -338,20 +386,42 @@ class FabricSparkConnectionManager(SQLConnectionManager):
         Sessions are deleted on process exit via an atexit handler
         registered in LivySessionManager.
 
-        For HC backends, each per-thread manager owns its own HC session id.
-        When ``reuse_session`` is false these are released promptly here so
-        REPL slots free up and the underlying Livy session can host new
-        acquirers without bumping into the 5-REPL packing cap. When
-        ``reuse_session`` is true the HC sessions are kept alive instead, so the
-        underlying Livy session stays warm for the next invocation (mirroring
-        the singleton backend); the manager itself handles that distinction.
+        HC connections return their REPL leases when dbt releases each
+        connection. Cleanup closes any outstanding HC handles, disconnects
+        their managers, and then either deletes or retains the pool's idle
+        sessions according to ``reuse_session``.
         """
-        for manager in self.connection_managers.values():
+        creds = self.profile.credentials
+        use_hc = (
+            creds.method == FabricSparkConnectionMethod.LIVY
+            and creds.high_concurrency
+            and not creds.is_local_mode
+        )
+
+        if use_hc:
+            for connection in self.thread_connections.values():
+                if connection.credentials is creds and connection.state == ConnectionState.OPEN:
+                    self.close(connection)
+
+        with self._manager_lock:
+            managers = [
+                manager
+                for key, manager in list(self.connection_managers.items())
+                if key[0] == self._credentials_key
+            ]
+            for key in [
+                key for key in self.connection_managers if key[0] == self._credentials_key
+            ]:
+                del self.connection_managers[key]
+
+        for manager in managers:
             try:
                 manager.disconnect()
             except Exception as ex:
                 logger.debug(f"connection manager disconnect raised: {ex}")
-        self.connection_managers.clear()
+
+        if self._hc_pool is not None:
+            self._hc_pool.cleanup(delete_sessions=not creds.reuse_session)
 
     @classmethod
     def close(cls, connection) -> None:

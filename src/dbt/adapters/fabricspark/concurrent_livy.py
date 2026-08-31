@@ -9,7 +9,7 @@ import threading
 import time
 import uuid
 from types import TracebackType
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import requests
 from dbt_common.exceptions import DbtDatabaseError, DbtRuntimeError
@@ -306,6 +306,155 @@ class HighConcurrencySession:
             self.is_new_session_required = True
 
 
+class HighConcurrencyReplPool:
+    def __init__(self, max_size: int):
+        if max_size < 1:
+            raise ValueError("High-concurrency REPL pool size must be at least 1")
+        self.max_size = max_size
+        self._condition = threading.Condition()
+        self._idle: list[HighConcurrencySession] = []
+        self._leased: set[HighConcurrencySession] = set()
+        self._creating = 0
+
+    @property
+    def idle_count(self) -> int:
+        with self._condition:
+            return len(self._idle)
+
+    @property
+    def leased_count(self) -> int:
+        with self._condition:
+            return len(self._leased)
+
+    @staticmethod
+    def _is_healthy(session: HighConcurrencySession) -> bool:
+        return bool(
+            not session.is_dead
+            and not session.is_new_session_required
+            and session.hc_id
+            and session.session_id
+            and session.repl_id
+        )
+
+    @staticmethod
+    def _wait_deadline(credentials: FabricSparkCredentials) -> Optional[float]:
+        if credentials.statement_timeout <= 0:
+            return None
+        return time.monotonic() + credentials.statement_timeout
+
+    def borrow(self, credentials: FabricSparkCredentials) -> HighConcurrencySession:
+        deadline = self._wait_deadline(credentials)
+
+        while True:
+            stale = None
+            create_new = False
+
+            with self._condition:
+                while self._idle:
+                    candidate = self._idle.pop()
+                    if not self._is_healthy(candidate):
+                        stale = candidate
+                        break
+                    self._leased.add(candidate)
+                    logger.debug(
+                        f"Borrowed idle HC REPL {candidate.repl_id} "
+                        f"(idle={len(self._idle)}, leased={len(self._leased)})"
+                    )
+                    return candidate
+
+                total = len(self._idle) + len(self._leased) + self._creating
+                # Rapid same-tag acquires can make Fabric start separate Livy sessions.
+                if stale is None and total < self.max_size and self._creating == 0:
+                    self._creating += 1
+                    create_new = True
+                elif stale is None:
+                    if deadline is None:
+                        self._condition.wait()
+                    else:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise FailedToConnectError(
+                                f"Timed out after {credentials.statement_timeout}s waiting for "
+                                f"an idle HC REPL from the {self.max_size}-slot pool"
+                            )
+                        self._condition.wait(timeout=remaining)
+
+            if stale is not None:
+                stale.delete()
+                continue
+
+            if create_new:
+                session = HighConcurrencySession(credentials, credentials.spark_config)
+                try:
+                    session.acquire()
+                except Exception:
+                    session.delete()
+                    with self._condition:
+                        self._creating -= 1
+                        self._condition.notify_all()
+                    raise
+
+                with self._condition:
+                    self._creating -= 1
+                    self._leased.add(session)
+                    self._condition.notify_all()
+                    logger.debug(
+                        f"Created HC REPL {session.repl_id} "
+                        f"(idle={len(self._idle)}, leased={len(self._leased)})"
+                    )
+                return session
+
+    def release(self, session: HighConcurrencySession) -> None:
+        delete_session = False
+        with self._condition:
+            if session not in self._leased:
+                return
+            self._leased.remove(session)
+            if self._is_healthy(session):
+                self._idle.append(session)
+                logger.debug(
+                    f"Returned HC REPL {session.repl_id} "
+                    f"(idle={len(self._idle)}, leased={len(self._leased)})"
+                )
+            else:
+                delete_session = True
+                logger.debug(f"Discarding stale HC REPL {session.repl_id}")
+            self._condition.notify_all()
+
+        if delete_session:
+            session.delete()
+
+    def replace(
+        self,
+        session: HighConcurrencySession,
+        credentials: FabricSparkCredentials,
+    ) -> HighConcurrencySession:
+        with self._condition:
+            was_leased = session in self._leased
+            if not was_leased and self._is_healthy(session):
+                raise DbtRuntimeError("Cannot replace an HC REPL that is not leased")
+            self._leased.discard(session)
+            self._condition.notify_all()
+
+        if was_leased:
+            session.delete()
+        return self.borrow(credentials)
+
+    def cleanup(self, *, delete_sessions: bool) -> None:
+        if not delete_sessions:
+            return
+
+        with self._condition:
+            sessions = list(self._idle)
+            sessions.extend(self._leased)
+            self._idle.clear()
+            self._leased.clear()
+            self._condition.notify_all()
+
+        for session in sessions:
+            session.delete()
+
+
 class HighConcurrencyCursor:
     """Cursor backed by one HC REPL. Mirrors :class:`LivyCursor`'s surface.
 
@@ -314,10 +463,18 @@ class HighConcurrencyCursor:
     fetch* helpers are intentionally aligned.
     """
 
-    def __init__(self, credential: FabricSparkCredentials, hc_session: HighConcurrencySession):
+    def __init__(
+        self,
+        credential: FabricSparkCredentials,
+        hc_session: HighConcurrencySession,
+        replace_callback: Optional[
+            Callable[[HighConcurrencySession], HighConcurrencySession]
+        ] = None,
+    ):
         self.credential = credential
         self.connect_url = credential.lakehouse_endpoint
         self.hc_session = hc_session
+        self._replace_callback = replace_callback
         self._rows: Optional[list] = None
         self._schema: Optional[list] = None
         self._fetch_index = 0
@@ -367,7 +524,11 @@ class HighConcurrencyCursor:
         """
         if self.hc_session.is_dead or self.hc_session.is_new_session_required:
             logger.debug("HC REPL marked stale — re-acquiring")
-            self.hc_session.acquire()
+            if self._replace_callback is not None:
+                self.hc_session = self._replace_callback(self.hc_session)
+            else:
+                self.hc_session.delete()
+                self.hc_session.acquire()
 
     def _submit(self, code: str) -> requests.Response:
         self._ensure_repl()
@@ -591,11 +752,36 @@ class HighConcurrencyCursor:
 class HighConcurrencyConnection:
     """DB-API-shaped connection backed by a single HC REPL."""
 
-    def __init__(self, credentials: FabricSparkCredentials, hc_session: HighConcurrencySession):
+    def __init__(
+        self,
+        credentials: FabricSparkCredentials,
+        hc_session: HighConcurrencySession,
+        release_callback: Optional[Callable[[HighConcurrencySession], None]] = None,
+        replace_callback: Optional[
+            Callable[[HighConcurrencySession], HighConcurrencySession]
+        ] = None,
+    ):
         self.credential = credentials
         self.connect_url = credentials.lakehouse_endpoint
         self.hc_session = hc_session
-        self._cursor = HighConcurrencyCursor(credentials, hc_session)
+        self._release_callback = release_callback
+        self._replace_callback = replace_callback
+        self._closed = False
+        self._cursor = HighConcurrencyCursor(credentials, hc_session, self._replace_session)
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def _replace_session(self, session: HighConcurrencySession) -> HighConcurrencySession:
+        if self._replace_callback is None:
+            session.delete()
+            session.acquire()
+            replacement = session
+        else:
+            replacement = self._replace_callback(session)
+        self.hc_session = replacement
+        return replacement
 
     def get_session_id(self) -> Optional[str]:
         return self.hc_session.session_id
@@ -610,8 +796,13 @@ class HighConcurrencyConnection:
         return self._cursor
 
     def close(self) -> None:
+        if self._closed:
+            return
         logger.debug("HC Connection.close()")
         self._cursor.close()
+        self._closed = True
+        if self._release_callback is not None:
+            self._release_callback(self.hc_session)
 
     def __exit__(
         self,
@@ -650,46 +841,51 @@ def _maybe_create_shortcuts(credentials: FabricSparkCredentials) -> None:
 
 
 class HighConcurrencySessionManager(LivyBackend):
-    """Per-dbt-thread backend. One instance owns one HC session = one REPL.
-
-    Acquires lazily on the first :meth:`connect` call; cleanup happens in
-    :meth:`disconnect` (called explicitly by `connections.cleanup_all` or via
-    the module-level atexit handler).
-    """
-
-    def __init__(self) -> None:
+    def __init__(self, pool: Optional[HighConcurrencyReplPool] = None) -> None:
         self._hc_session: Optional[HighConcurrencySession] = None
         self._connection: Optional[HighConcurrencyConnection] = None
+        self._pool = pool
+        self._owns_pool = pool is None
+        self._credentials: Optional[FabricSparkCredentials] = None
 
     def connect(self, credentials: FabricSparkCredentials) -> HighConcurrencyConnection:  # type: ignore[override]
-        if self._hc_session is None or self._hc_session.is_new_session_required:
-            self._hc_session = HighConcurrencySession(credentials, credentials.spark_config)
-            self._hc_session.acquire()
+        if self._connection is None or self._connection.closed:
+            if self._pool is None:
+                self._pool = HighConcurrencyReplPool(max_size=1)
+            self._credentials = credentials
+            self._hc_session = self._pool.borrow(credentials)
             _maybe_create_shortcuts(credentials)
-            self._connection = HighConcurrencyConnection(credentials, self._hc_session)
+            self._connection = HighConcurrencyConnection(
+                credentials,
+                self._hc_session,
+                release_callback=self._return_to_pool,
+                replace_callback=self._replace_from_pool,
+            )
         return self._connection  # type: ignore[return-value]
 
-    def disconnect(self) -> None:  # type: ignore[override]
-        """Release this thread's HC id, unless ``reuse_session`` is set.
-
-        With ``reuse_session=False`` (default) the HC session is deleted so the
-        REPL slot frees up immediately. With ``reuse_session=True`` the HC
-        session is left alive so the underlying Livy session stays warm for the
-        next dbt invocation (Fabric reaps it on ``session_idle_timeout``) —
-        deleting the last REPL would otherwise make Fabric tear the session
-        down straight away, defeating reuse. Mirrors the singleton backend's
-        ``_disconnect_impl``.
-        """
-        if self._hc_session is not None:
-            if not self._hc_session.credential.reuse_session:
-                self._hc_session.delete()
-            else:
-                logger.debug(
-                    f"Keeping HC session {self._hc_session.hc_id} alive for reuse "
-                    f"(sessionId={self._hc_session.session_id})"
-                )
+    def _return_to_pool(self, session: HighConcurrencySession) -> None:
+        if self._pool is not None:
+            self._pool.release(session)
+        if self._hc_session is session:
             self._hc_session = None
             self._connection = None
+
+    def _replace_from_pool(self, session: HighConcurrencySession) -> HighConcurrencySession:
+        if self._pool is None or self._credentials is None:
+            raise DbtRuntimeError("HC REPL pool is not configured")
+        replacement = self._pool.replace(session, self._credentials)
+        self._hc_session = replacement
+        return replacement
+
+    def disconnect(self) -> None:  # type: ignore[override]
+        credentials = self._credentials
+        if self._connection is not None:
+            self._connection.close()
+        elif self._hc_session is not None:
+            self._return_to_pool(self._hc_session)
+
+        if self._owns_pool and self._pool is not None and credentials is not None:
+            self._pool.cleanup(delete_sessions=not credentials.reuse_session)
 
 
 class HighConcurrencyConnectionWrapper(object):

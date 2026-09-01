@@ -107,9 +107,8 @@ class FabricSparkConfig(AdapterConfig):
     # SELECT``) against schema-enabled lakehouses in another Fabric workspace.
     # Allowed only when the target *write* lakehouse is schema-enabled; the
     # macro layer raises a parse-time error otherwise. The target schema is
-    # auto-created via the standard ``fabricspark__create_schema`` flow, which
-    # Fabric Livy supports cross-workspace via 3-part
-    # ``CREATE DATABASE IF NOT EXISTS \`WS2\`.\`lh\`.\`schema\``` DDL.
+    # auto-created via the standard ``fabricspark__create_schema`` flow for
+    # Fabric Livy. Runtime Spark sessions require that schema to exist already.
     workspace_name: Optional[str] = None
     # Opt out of the automatic post-build ``OPTIMIZE`` for a single model.
     # Precedence: DBT_FABRICSPARK_SKIP_OPTIMIZE env var > this key > the
@@ -236,6 +235,12 @@ class FabricSparkAdapter(SQLAdapter):
             "into the current workspace.\n"
             "See README → 'Cross-Workspace 4-Part Naming' for details."
         )
+
+    @available
+    def is_session_method(self) -> bool:
+        """Expose the connection method independently from local-mode behavior."""
+        credentials = getattr(self.config, "credentials", None)
+        return bool(credentials and getattr(credentials, "is_session_method", False))
 
     @available
     def is_local_mode(self) -> bool:

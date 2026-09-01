@@ -207,6 +207,10 @@ class FabricSparkCredentials(Credentials):
         elif self.is_local_mode:
             self.database = "default"
 
+        # Runtime Spark sessions cannot use the Fabric API for schema discovery.
+        if self.is_session_method and self.lakehouse:
+            self.lakehouse_schemas_enabled = bool(self.schema and self.schema != self.lakehouse)
+
         # Security validations (Fabric mode only)
         if not self.is_local_mode:
             self._validate_uuid(self.workspaceid, "workspaceid")

@@ -72,6 +72,29 @@ class TestSparkAdapter(unittest.TestCase):
             },
         )
 
+    def _get_target_session(self, project):
+        with mock.patch(
+            "dbt.adapters.fabricspark.credentials.import_module",
+            return_value=object(),
+        ):
+            return config_from_parts_or_dicts(
+                project,
+                {
+                    "outputs": {
+                        "test": {
+                            "type": "fabricspark",
+                            "method": "session",
+                            "lakehouse": "SilverLakehouse",
+                            "schema": "silver",
+                            "workspace_name": "AnalyticsWorkspace",
+                            "threads": 1,
+                            "spark_config": {"name": "test-session"},
+                        }
+                    },
+                    "target": "test",
+                },
+            )
+
     @unittest.skip("Requires Azure CLI authentication - integration test")
     def test_livy_connection(self):
         config = self._get_target_livy(self.project_cfg)
@@ -117,6 +140,19 @@ class TestSparkAdapter(unittest.TestCase):
         self.assertIn("workspaces", creds.lakehouse_endpoint)
         self.assertIsNotNone(creds.workspaceid)
         self.assertIsNotNone(creds.lakehouseid)
+
+    def test_adapter_distinguishes_session_from_local_livy(self):
+        session_adapter = FabricSparkAdapter(
+            self._get_target_session(self.project_cfg),
+            self.mp_context,
+        )
+        local_livy_adapter = FabricSparkAdapter(
+            self._get_target_livy_local(self.project_cfg),
+            self.mp_context,
+        )
+
+        self.assertTrue(session_adapter.is_session_method())
+        self.assertFalse(local_livy_adapter.is_session_method())
 
     def test_parse_relation(self):
         self.maxDiff = None

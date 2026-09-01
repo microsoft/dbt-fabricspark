@@ -21,11 +21,7 @@
                                                 is_delta=is_delta,
                                                 workspace=workspace_name) -%}
 
-  {#-- Ensure the database/schema exists before creating the table. For
-       cross-workspace writes the ``workspace_name`` is forwarded so the
-       rendered DDL is workspace-qualified
-       (``CREATE DATABASE IF NOT EXISTS \`WS2\`.\`lh\`.\`schema\```), which
-       Fabric Livy supports cross-workspace. --#}
+  {#-- Ensure the database/schema exists when the connection method supports it. --#}
   {% do ensure_database_exists(schema, database=database, workspace=workspace_name) %}
 
   {{ run_hooks(pre_hooks) }}

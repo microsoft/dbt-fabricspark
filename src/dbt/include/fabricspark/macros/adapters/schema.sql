@@ -1,9 +1,6 @@
 {% macro fabricspark__create_schema(relation) -%}
-  {#-- Cross-workspace 4-part naming: when the relation carries a `workspace`,
-       `relation.without_identifier()` renders as
-       `\`workspace\`.\`lakehouse\`.\`schema\``, which Fabric Livy executes as
-       a cross-workspace CREATE DATABASE. No special gating needed. --#}
-  {% if adapter.is_lakehouse_schemas_enabled() or adapter.is_local_mode() %}
+  {%- set skip_schema_ddl = adapter.is_session_method() and relation.workspace -%}
+  {% if not skip_schema_ddl and (adapter.is_lakehouse_schemas_enabled() or adapter.is_local_mode()) %}
     {%- call statement('create_schema') -%}
       create database if not exists {{ relation.without_identifier() }}
     {% endcall %}
@@ -15,7 +12,8 @@
 {% endmacro %}
 
 {% macro fabricspark__drop_schema(relation) -%}
-  {% if adapter.is_lakehouse_schemas_enabled() or adapter.is_local_mode() %}
+  {%- set skip_schema_ddl = adapter.is_session_method() and relation.workspace -%}
+  {% if not skip_schema_ddl and (adapter.is_lakehouse_schemas_enabled() or adapter.is_local_mode()) %}
     {%- call statement('drop_schema') -%}
       drop database if exists {{ relation.without_identifier() }} cascade
     {%- endcall -%}
@@ -35,9 +33,11 @@
      For cross-workspace writes, the optional ``workspace`` parameter is
      prepended as a backtick-quoted segment so the rendered DDL becomes
      ``CREATE DATABASE IF NOT EXISTS \`workspace\`.\`lakehouse\`.\`schema\```,
-     which Fabric Livy resolves through the remote workspace's catalog. --#}
+     which Fabric Livy resolves through the remote workspace's catalog.
+     Runtime Spark sessions skip this DDL and require the schema to exist. --#}
 {% macro fabricspark__ensure_database_exists(schema_name, database=none, workspace=none) -%}
-  {% if adapter.is_lakehouse_schemas_enabled() or adapter.is_local_mode() %}
+  {%- set skip_schema_ddl = adapter.is_session_method() and workspace -%}
+  {% if not skip_schema_ddl and (adapter.is_lakehouse_schemas_enabled() or adapter.is_local_mode()) %}
     {%- if database is not none and '.' not in schema_name and adapter.is_lakehouse_schemas_enabled() %}
       {%- set schema_name = database ~ '.' ~ schema_name -%}
     {%- endif -%}

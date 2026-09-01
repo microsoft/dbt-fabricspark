@@ -227,16 +227,18 @@ In this mode:
 - Tables are referenced using three-part naming: `lakehouse.schema.table_name`
 - The `schema` field specifies the target schema within the lakehouse
 - dbt's `generate_schema_name` and `generate_database_name` macros are lakehouse-aware
-- Schemas are created automatically via `CREATE DATABASE IF NOT EXISTS lakehouse.schema`
+- Schemas are created automatically via `CREATE DATABASE IF NOT EXISTS lakehouse.schema` when the connection method supports schema DDL
 - Incremental models use persisted staging tables (instead of temp views) to work around Spark's `REQUIRES_SINGLE_PART_NAMESPACE` limitation
 
 ### Schema Detection
 
-The adapter detects whether a lakehouse has schemas enabled using two complementary mechanisms:
+The adapter detects whether a lakehouse has schemas enabled using three complementary mechanisms:
 
-1. **Runtime detection (Fabric REST API):** During `connection.open()`, the adapter calls the Fabric REST API to fetch lakehouse properties. If the response contains `defaultSchema`, the lakehouse is treated as schema-enabled and three-part naming is used.
+1. **Runtime detection (Fabric Livy):** During `connection.open()`, the adapter calls the Fabric REST API to fetch lakehouse properties. If the response contains `defaultSchema`, the lakehouse is treated as schema-enabled and three-part naming is used.
 
-2. **Parse-time detection (profile heuristic):** During manifest parsing (before any connection is opened), the adapter checks whether `schema` differs from `lakehouse` in your profile. When they differ (e.g., `lakehouse: bronze`, `schema: dbo`), the adapter infers schema-enabled mode. This ensures correct schema resolution at compile time.
+2. **Session detection (profile heuristic):** A runtime-provided Spark session cannot call the Fabric lakehouse-properties API, so `method: session` treats `schema != lakehouse` as the schema-enabled signal for the connection.
+
+3. **Parse-time detection (profile heuristic):** During manifest parsing (before any connection is opened), the adapter checks whether `schema` differs from `lakehouse` in your profile. When they differ (e.g., `lakehouse: bronze`, `schema: dbo`), the adapter infers schema-enabled mode. This ensures correct schema resolution at compile time.
 
 > **Important:** For schema-enabled lakehouses, always set `schema` to a value **different** from `lakehouse` in your profile (e.g., `schema: dbo`). If `schema` equals `lakehouse`, the adapter cannot distinguish schema-enabled from non-schema mode at parse time, and the lakehouse name will be used as the schema name instead.
 
@@ -326,7 +328,7 @@ dbt renders the cross-workspace reference as:
 
 #### Writes — cross-workspace CTAS
 
-A model can also be **materialized into another workspace** by setting `workspace_name` directly on the target model. The Livy session stays bound to your profile's workspace; Fabric routes the `CREATE TABLE` against the remote workspace's catalog:
+A model can also be **materialized into another workspace** by setting `workspace_name` directly on the target model. The Spark session stays bound to your profile's workspace; Fabric routes the `CREATE TABLE` against the remote workspace's catalog:
 
 ```sql
 -- models/marts/shared_orders.sql
@@ -348,13 +350,15 @@ create or replace table `SharedWorkspace`.`shared_lh`.`marts`.shared_orders as
 select * from …
 ```
 
-The target schema (`marts` in `shared_lh` of `SharedWorkspace`) is created automatically by the adapter's standard schema pre-create flow — Fabric Livy supports cross-workspace `CREATE DATABASE IF NOT EXISTS \`SharedWorkspace\`.\`shared_lh\`.\`marts\``, so no manual setup is required.
+With `method: livy`, the target schema (`marts` in `shared_lh` of `SharedWorkspace`) is created automatically by the adapter's standard schema pre-create flow. Fabric Livy supports cross-workspace `CREATE DATABASE IF NOT EXISTS \`SharedWorkspace\`.\`shared_lh\`.\`marts\``, so no manual setup is required.
+
+> **Spark Session requires a pre-existing remote schema.** A runtime-provided Fabric Spark session can execute four-part table and metadata operations, but it cannot resolve the three-part workspace namespace used by cross-workspace `CREATE DATABASE` or `DROP DATABASE`. With `method: session` and `workspace_name` set, the adapter skips those schema operations; create the remote schema before running dbt.
 
 > **Use `file_format='delta'` for idempotent re-runs.** The adapter emits `CREATE OR REPLACE TABLE` for delta tables, which re-materializes cleanly. Non-delta cross-workspace writes will fail on the second run with `TABLE_ALREADY_EXISTS` because `adapter.get_relation` is workspace-unaware and cannot detect the existing remote relation to drop it first.
 
 > **Materializations validated end-to-end:** `table` (full CTAS) and `incremental` (initial CTAS + `MERGE INTO` + `--full-refresh`). Other materializations (`view`, `seed`, `snapshot`, `materialized_lake_view`) share the same render and `ensure_database_exists` plumbing and should work cross-workspace, but are not exercised by functional tests in this repo.
 
-> **Schema-enabled lakehouses only.** Fabric Livy supports 4-part naming only against schema-enabled lakehouses. Setting `workspace_name` against a non-schema-enabled target raises a parse-time error.
+> **Schema-enabled lakehouses only.** Cross-workspace 4-part naming requires a schema-enabled lakehouse. Setting `workspace_name` against a non-schema-enabled target raises a parse-time error.
 
 #### Profile-level default workspace
 

@@ -2,7 +2,9 @@ import re
 import unittest
 from unittest import mock
 
-from jinja2 import BaseLoader, Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader
+
+from dbt.adapters.fabricspark.relation import FabricSparkRelation
 
 
 @unittest.skip("Skipping temporarily - macros require full dbt context")
@@ -172,86 +174,221 @@ class TestSparkMacros(unittest.TestCase):
         )
 
 
-class TestEnsureDatabaseExists(unittest.TestCase):
-    """Test the database-qualification logic inside ensure_database_exists.
-
-    The macro lives in schema.sql and has two responsibilities:
-    1. Qualify a bare schema_name with a database prefix ONLY when schemas
-       are enabled (not in local mode where schema_name IS the database).
-    2. Emit ``create database if not exists <name>`` in local / schema-enabled
-       modes, or ``select 1`` otherwise.
-
-    These tests render a minimal Jinja2 template that mirrors the
-    qualification logic so we can validate the SQL output without needing
-    a full dbt context.
-    """
-
-    # Simplified Jinja template that mirrors the qualification logic
-    # from fabricspark__ensure_database_exists.
-    # The database prefix is only applied when schemas_enabled is true,
-    # NOT in local mode (where schema_name IS the database).
-    TEMPLATE_SRC = """\
-{%- if schemas_enabled or local_mode -%}
-  {%- if database is not none and '.' not in schema_name and schemas_enabled -%}
-    {%- set schema_name = database ~ '.' ~ schema_name -%}
-  {%- endif -%}
-  create database if not exists {{ schema_name }}
-{%- else -%}
-  select 1
-{%- endif -%}"""
-
+class TestSchemaDDL(unittest.TestCase):
     def setUp(self):
-        env = Environment(loader=BaseLoader())
-        self.template = env.from_string(self.TEMPLATE_SRC)
+        self.adapter = mock.Mock()
 
-    def _render(self, schema_name, database=None, schemas_enabled=False, local_mode=False):
-        return self.template.render(
-            schema_name=schema_name,
-            database=database,
+        def statement(name, caller=None, **kwargs):
+            return caller() if caller else ""
+
+        env = Environment(
+            loader=FileSystemLoader("src/dbt/include/fabricspark/macros/adapters"),
+            extensions=["jinja2.ext.do"],
+        )
+        self.template = env.get_template(
+            "schema.sql",
+            globals={
+                "adapter": self.adapter,
+                "statement": statement,
+                "return": lambda value: value,
+            },
+        )
+
+    def _set_modes(
+        self,
+        *,
+        schemas_enabled=False,
+        local_mode=False,
+        session_method=False,
+    ):
+        self.adapter.is_lakehouse_schemas_enabled.return_value = schemas_enabled
+        self.adapter.is_local_mode.return_value = local_mode
+        self.adapter.is_session_method.return_value = session_method
+
+    @staticmethod
+    def _normalize(sql):
+        return " ".join(sql.split())
+
+    def _render_ensure(
+        self,
+        schema_name,
+        *,
+        database=None,
+        workspace=None,
+        schemas_enabled=False,
+        local_mode=False,
+        session_method=False,
+    ):
+        self._set_modes(
             schemas_enabled=schemas_enabled,
             local_mode=local_mode,
-        ).strip()
+            session_method=session_method,
+        )
+        return self._normalize(
+            self.template.module.fabricspark__ensure_database_exists(
+                schema_name,
+                database=database,
+                workspace=workspace,
+            )
+        )
 
-    # --- Local mode (no schema, database == schema) ---
+    def _render_relation_macro(
+        self,
+        name,
+        relation,
+        *,
+        schemas_enabled=False,
+        local_mode=False,
+        session_method=False,
+    ):
+        self._set_modes(
+            schemas_enabled=schemas_enabled,
+            local_mode=local_mode,
+            session_method=session_method,
+        )
+        return self._normalize(getattr(self.template.module, name)(relation))
 
     def test_local_mode_same_db_and_schema(self):
-        """Local mode with database == schema_name should NOT concatenate."""
-        result = self._render("insights", database="insights", local_mode=True)
+        result = self._render_ensure("insights", database="insights", local_mode=True)
         self.assertEqual(result, "create database if not exists insights")
 
     def test_local_mode_no_database(self):
-        """Local mode with no database arg should use schema_name as-is."""
-        result = self._render("insights", database=None, local_mode=True)
+        result = self._render_ensure("insights", local_mode=True)
         self.assertEqual(result, "create database if not exists insights")
 
-    # --- Fabric no-schema mode ---
-
     def test_fabric_no_schema(self):
-        """Non-schema Fabric mode emits select 1 (no-op)."""
-        result = self._render("bronze", database="bronze", schemas_enabled=False, local_mode=False)
+        result = self._render_ensure("bronze", database="bronze")
         self.assertEqual(result, "select 1")
 
-    # --- Fabric schema-enabled mode ---
-
     def test_schema_enabled_different_db(self):
-        """Schema-enabled mode should qualify bare schema with database."""
-        result = self._render("dbo", database="bronze", schemas_enabled=True)
+        result = self._render_ensure("dbo", database="bronze", schemas_enabled=True)
         self.assertEqual(result, "create database if not exists bronze.dbo")
 
     def test_schema_enabled_same_db_and_schema(self):
-        """Schema-enabled with db==schema is valid (schema named same as db)."""
-        result = self._render("bronze", database="bronze", schemas_enabled=True)
+        result = self._render_ensure("bronze", database="bronze", schemas_enabled=True)
         self.assertEqual(result, "create database if not exists bronze.bronze")
 
     def test_schema_enabled_already_qualified(self):
-        """Already-qualified schema_name (contains dot) should not be re-prefixed."""
-        result = self._render("bronze.dbo", database="bronze", schemas_enabled=True)
+        result = self._render_ensure("bronze.dbo", database="bronze", schemas_enabled=True)
         self.assertEqual(result, "create database if not exists bronze.dbo")
 
     def test_schema_enabled_no_database(self):
-        """Schema-enabled with no database arg should use schema_name as-is."""
-        result = self._render("myschema", database=None, schemas_enabled=True)
+        result = self._render_ensure("myschema", schemas_enabled=True)
         self.assertEqual(result, "create database if not exists myschema")
+
+    def test_cross_workspace_session_schema_ddl_is_noop(self):
+        relation = FabricSparkRelation.create(
+            database="SilverLakehouse",
+            schema="silver",
+            identifier="model",
+            workspace="AnalyticsWorkspace",
+        ).include(database=True)
+
+        self.assertEqual(
+            self._render_relation_macro(
+                "fabricspark__create_schema",
+                relation,
+                schemas_enabled=True,
+                local_mode=True,
+                session_method=True,
+            ),
+            "select 1",
+        )
+        self.assertEqual(
+            self._render_relation_macro(
+                "fabricspark__drop_schema",
+                relation,
+                schemas_enabled=True,
+                local_mode=True,
+                session_method=True,
+            ),
+            "select 1",
+        )
+        self.assertEqual(
+            self._render_ensure(
+                "silver",
+                database="SilverLakehouse",
+                workspace="AnalyticsWorkspace",
+                schemas_enabled=True,
+                local_mode=True,
+                session_method=True,
+            ),
+            "select 1",
+        )
+
+    def test_cross_workspace_livy_schema_ddl_is_preserved(self):
+        relation = FabricSparkRelation.create(
+            database="SilverLakehouse",
+            schema="silver",
+            identifier="model",
+            workspace="AnalyticsWorkspace",
+        ).include(database=True)
+        namespace = "`AnalyticsWorkspace`.`SilverLakehouse`.`silver`"
+
+        self.assertEqual(
+            self._render_relation_macro(
+                "fabricspark__create_schema",
+                relation,
+                schemas_enabled=True,
+            ),
+            f"create database if not exists {namespace}",
+        )
+        self.assertEqual(
+            self._render_relation_macro(
+                "fabricspark__drop_schema",
+                relation,
+                schemas_enabled=True,
+            ),
+            f"drop database if exists {namespace} cascade",
+        )
+        self.assertEqual(
+            self._render_ensure(
+                "silver",
+                database="SilverLakehouse",
+                workspace="AnalyticsWorkspace",
+                schemas_enabled=True,
+            ),
+            "create database if not exists `AnalyticsWorkspace`.SilverLakehouse.silver",
+        )
+
+    def test_same_workspace_session_schema_ddl_is_preserved(self):
+        relation = FabricSparkRelation.create(
+            database="SilverLakehouse",
+            schema="silver",
+            identifier="model",
+        ).include(database=True)
+        namespace = "`SilverLakehouse`.`silver`"
+
+        self.assertEqual(
+            self._render_relation_macro(
+                "fabricspark__create_schema",
+                relation,
+                schemas_enabled=True,
+                local_mode=True,
+                session_method=True,
+            ),
+            f"create database if not exists {namespace}",
+        )
+        self.assertEqual(
+            self._render_relation_macro(
+                "fabricspark__drop_schema",
+                relation,
+                schemas_enabled=True,
+                local_mode=True,
+                session_method=True,
+            ),
+            f"drop database if exists {namespace} cascade",
+        )
+        self.assertEqual(
+            self._render_ensure(
+                "silver",
+                database="SilverLakehouse",
+                schemas_enabled=True,
+                local_mode=True,
+                session_method=True,
+            ),
+            "create database if not exists SilverLakehouse.silver",
+        )
 
 
 class TestWorkspaceNameMacro(unittest.TestCase):

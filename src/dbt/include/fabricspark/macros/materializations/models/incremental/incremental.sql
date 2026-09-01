@@ -27,10 +27,7 @@
     {%- set tmp_relation = tmp_relation.include(database=false, schema=false) -%}
   {%- endif -%}
 
-  {#-- Ensure the database/schema exists before creating the table.
-       For cross-workspace writes the workspace is forwarded so the
-       rendered DDL is workspace-qualified
-       (``CREATE DATABASE IF NOT EXISTS \`WS2\`.\`lh\`.\`schema\```). --#}
+  {#-- Ensure the database/schema exists when the connection method supports it. --#}
   {% do ensure_database_exists(target_relation.schema, database=target_relation.database, workspace=get_workspace_name(config=config, node=model)) %}
 
   {#-- Set Overwrite Mode --#}

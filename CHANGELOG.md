@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.13.4
+
+### Fixes
+
+- Fixed cross-workspace model builds failing during schema setup with `method: session`. Runtime-provided Fabric Spark sessions support four-part table operations but cannot resolve the three-part workspace namespace used by `CREATE DATABASE` and `DROP DATABASE`, so dbt failed before model execution even when the remote schema already existed. Session profiles now infer schema-enabled mode when `schema != lakehouse`, preserving four-part relation metadata and the persisted staging path required by incremental models. When `workspace_name` is set, session-mode schema creation and deletion are no-ops and the remote schema must already exist; same-workspace session DDL and all Fabric Livy behavior, including automatic cross-workspace schema creation, remain unchanged. ([#278](https://github.com/microsoft/dbt-fabricspark/issues/278))
+
 ## v1.13.3
 
 ### Fixes

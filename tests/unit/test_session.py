@@ -9,6 +9,7 @@ from dbt_common.exceptions import DbtRuntimeError
 from dbt.adapters.contracts.connection import Connection, ConnectionState
 from dbt.adapters.fabricspark.connections import FabricSparkConnectionManager
 from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
+from dbt.adapters.fabricspark.relation import FabricSparkRelation
 from dbt.adapters.fabricspark.session import (
     SessionConnection,
     SessionConnectionWrapper,
@@ -63,6 +64,26 @@ def test_credentials_session_mode() -> None:
         "spark.master": "local[2]",
         "spark.sql.ansi.enabled": "false",
     }
+
+
+@pytest.mark.parametrize(
+    ("schema", "schemas_enabled"),
+    [
+        ("silver", True),
+        ("SilverLakehouse", False),
+    ],
+)
+def test_session_credentials_infer_schema_mode(schema: str, schemas_enabled: bool) -> None:
+    with patch("dbt.adapters.fabricspark.credentials.import_module", return_value=object()):
+        credentials = FabricSparkCredentials(
+            method="session",
+            workspace_name="AnalyticsWorkspace",
+            lakehouse="SilverLakehouse",
+            schema=schema,
+            spark_config={"name": "dbt-session"},
+        )
+
+    assert credentials.lakehouse_schemas_enabled is schemas_enabled
 
 
 def test_session_pyspark_imports_supported_api() -> None:
@@ -301,3 +322,49 @@ def test_connection_manager_routes_session_without_fabric_or_livy() -> None:
     assert isinstance(opened.handle, SessionConnectionWrapper)
     session_connection.assert_called_once_with(spark_config=credentials.spark_config)
     get_properties.assert_not_called()
+
+
+def test_connection_manager_propagates_inferred_session_schema_mode() -> None:
+    with patch("dbt.adapters.fabricspark.credentials.import_module", return_value=object()):
+        credentials = FabricSparkCredentials(
+            method="session",
+            workspace_name="AnalyticsWorkspace",
+            lakehouse="SilverLakehouse",
+            schema="silver",
+            spark_config={"name": "dbt-session"},
+        )
+    connection = Connection(
+        type="fabricspark",
+        name="session-test",
+        credentials=credentials,
+    )
+
+    try:
+        with (
+            patch(
+                "dbt.adapters.fabricspark.connections.get_lakehouse_properties"
+            ) as get_properties,
+            patch(
+                "dbt.adapters.fabricspark.session.SessionConnection",
+                return_value=MagicMock(),
+            ),
+            patch.object(FabricSparkConnectionManager, "fetch_spark_version"),
+            patch.object(FabricSparkConnectionManager, "check_mlv_prerequisites"),
+        ):
+            FabricSparkConnectionManager.open(connection)
+
+        assert FabricSparkRelation._schemas_enabled is True
+        assert (
+            str(
+                FabricSparkRelation.create(
+                    database="SilverLakehouse",
+                    schema="silver",
+                    identifier="model",
+                    workspace="AnalyticsWorkspace",
+                )
+            )
+            == "`AnalyticsWorkspace`.`SilverLakehouse`.`silver`.model"
+        )
+        get_properties.assert_not_called()
+    finally:
+        FabricSparkRelation._schemas_enabled = False

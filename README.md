@@ -607,7 +607,7 @@ models:
 | `accessToken`           | string | —                                     | Direct access token (optional)                                                                                                                                                                                                                                                                                                                                                                            |
 | **Environment**         |        |                                       |                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `environmentId`         | string | —                                     | Fabric Environment ID for Spark configuration                                                                                                                                                                                                                                                                                                                                                             |
-| `spark_config`          | dict   | `{}`                                  | Spark session configuration (must include `name`). Livy receives the mapping as its session-create payload; `session` uses `name` as the application name and applies `conf` through `SparkSession.builder.config`. Echoed by `dbt debug`. See [Inspecting `spark_config`](#inspecting-spark_config).                                                                                                     |
+| `spark_config`          | dict   | `{}`                                  | Spark session configuration (must include `name`). Livy receives the mapping as its session-create payload, except HC requests omit `name` when `artifactName` is non-empty so Fabric uses its HC Monitoring Hub name. `session` uses `name` as the application name and applies `conf` through `SparkSession.builder.config`. Echoed by `dbt debug`. See [Inspecting `spark_config`](#inspecting-spark_config). |
 | **Session Management**  |        |                                       |                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `reuse_session`         | bool   | `false`                               | Keep Livy sessions alive for reuse across runs                                                                                                                                                                                                                                                                                                                                                            |
 | `session_id_file`       | string | `./livy-session-id.txt`               | Path to file storing session ID for reuse                                                                                                                                                                                                                                                                                                                                                                 |
@@ -631,9 +631,15 @@ models:
 
 ### Inspecting `spark_config`
 
-For `method: livy`, `spark_config` is forwarded **verbatim** to the session-create
-call in high-concurrency, singleton Fabric, and local modes. Only `sessionTag` is
-adapter-owned, and `spark.fabric.environment.id` /
+For `method: livy`, `spark_config` is forwarded to the session-create call in
+high-concurrency, singleton Fabric, and local modes. In high-concurrency mode,
+a non-empty `artifactName` causes the adapter to omit `name` from the acquire
+request so Fabric can surface the job in Monitoring Hub as
+`HC_<LakehouseName>_<LIVY_SESSION_ID>`. The profile still requires `name`;
+singleton Fabric, local Livy, and HC requests without a non-empty
+`artifactName` continue to receive it unchanged.
+
+Only `sessionTag` is adapter-owned, and `spark.fabric.environment.id` /
 `spark.livy.session.idle.timeout` are merged into `conf` when `environmentId` /
 `session_idle_timeout` are set.
 

@@ -196,9 +196,13 @@ class HighConcurrencySession:
 
     def _build_acquire_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = dict(self.spark_config)
-        # The HC payload accepts the same conf/numExecutors/etc. as the
-        # singleton /sessions POST — we just add the sessionTag, which drives
-        # server-side session packing and therefore always wins.
+        if payload.get("artifactName"):
+            # Fabric lets name override artifactName's HC Monitoring Hub activity name.
+            payload.pop("name", None)
+
+        # The HC payload otherwise accepts the same conf/numExecutors/etc. as
+        # the singleton /sessions POST. sessionTag drives server-side session
+        # packing and therefore always wins.
         if "sessionTag" in payload and payload["sessionTag"] != self.session_tag:
             logger.warning(
                 f"spark_config.sessionTag={payload['sessionTag']!r} is overridden by the "

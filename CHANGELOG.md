@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.13.5
+
+### Fixes
+
+- Fixed high-concurrency jobs using `spark_config.name` instead of Fabric's documented `HC_<LakehouseName>_<LIVY_SESSION_ID>` activity name in Monitoring Hub when both `name` and `artifactName` were configured. A non-empty `artifactName` now suppresses `name` only in the HC acquire payload, allowing Fabric to apply artifact-based naming while preserving the required profile value, singleton and local Livy behavior, and the existing `name` fallback when `artifactName` is absent or empty. ([#283](https://github.com/microsoft/dbt-fabricspark/issues/283))
+
 ## v1.13.4
 
 ### Fixes

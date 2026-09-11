@@ -1295,7 +1295,12 @@ class TestCreateSessionPayload:
             spark_config={"name": "test-session"},
         )
         session = LivySession(credentials)
-        spark_config = {"name": "app", "conf": {"a": "b"}, "someFutureKey": 1}
+        spark_config = {
+            "name": "app",
+            "artifactName": "test-lakehouse",
+            "conf": {"a": "b"},
+            "someFutureKey": 1,
+        }
 
         session.create_session(spark_config)
 

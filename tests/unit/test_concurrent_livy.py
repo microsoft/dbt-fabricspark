@@ -941,12 +941,12 @@ class TestBuildAcquirePayloadIdleTimeout:
 
 
 # --------------------------------------------------------------------------- #
-# _build_acquire_payload — verbatim spark_config forwarding                    #
+# _build_acquire_payload — spark_config forwarding                             #
 # --------------------------------------------------------------------------- #
 
 
 class TestBuildAcquirePayloadForwarding:
-    """The HC payload forwards spark_config verbatim.
+    """The HC payload forwards spark_config with adapter-owned overrides.
 
     It previously copied a fixed 16-key allowlist and dropped everything else
     without a log line, while the singleton path POSTed the whole dict. The
@@ -960,6 +960,32 @@ class TestBuildAcquirePayloadForwarding:
         payload = hc._build_acquire_payload()
         assert payload["name"] == "test-session"
         assert payload["numExecutors"] == 4
+
+    def test_artifact_name_omits_name_without_mutating_spark_config(self):
+        spark_config = {
+            "name": "test-session",
+            "artifactName": "test-lakehouse",
+            "numExecutors": 4,
+        }
+        creds = _make_creds(spark_config=spark_config)
+        hc = HighConcurrencySession(creds, creds.spark_config)
+
+        payload = hc._build_acquire_payload()
+
+        assert payload["artifactName"] == "test-lakehouse"
+        assert payload["numExecutors"] == 4
+        assert "name" not in payload
+        assert creds.spark_config == spark_config
+
+    @pytest.mark.parametrize("artifact_name", ["", None], ids=["empty-string", "none"])
+    def test_empty_artifact_name_preserves_name(self, artifact_name):
+        creds = _make_creds(spark_config={"name": "test-session", "artifactName": artifact_name})
+        hc = HighConcurrencySession(creds, creds.spark_config)
+
+        payload = hc._build_acquire_payload()
+
+        assert payload["name"] == "test-session"
+        assert payload["artifactName"] == artifact_name
 
     @pytest.mark.parametrize(
         "key,value",

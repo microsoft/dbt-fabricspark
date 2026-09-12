@@ -1915,7 +1915,7 @@ requires-dist = [
     { name = "dbt-adapters", specifier = ">=1.7,<2.0" },
     { name = "dbt-common", specifier = ">=1.10,<2.0" },
     { name = "dbt-core", specifier = ">=1.8.0" },
-    { name = "privy", url = "https://rakirahman.blob.core.windows.net/public/whls/privy-0.1.0-py3-none-any.whl" },
+    { name = "privy", git = "https://github.com/mdrakiburrahman/privy.git?rev=2f39703cc4165c91958efbb0c5e1ab3ec27ac9ab" },
     { name = "requests", specifier = ">=2.32.0" },
 ]
 provides-extras = ["cli"]
@@ -2649,24 +2649,11 @@ wheels = [
 [[package]]
 name = "privy"
 version = "0.1.0"
-source = { url = "https://rakirahman.blob.core.windows.net/public/whls/privy-0.1.0-py3-none-any.whl" }
+source = { git = "https://github.com/mdrakiburrahman/privy.git?rev=2f39703cc4165c91958efbb0c5e1ab3ec27ac9ab#2f39703cc4165c91958efbb0c5e1ab3ec27ac9ab" }
 dependencies = [
     { name = "requests" },
     { name = "websocket-client" },
 ]
-wheels = [
-    { url = "https://rakirahman.blob.core.windows.net/public/whls/privy-0.1.0-py3-none-any.whl", hash = "sha256:777cfa492e6cc008cf5138364a44e9113cde6fecbe095cb4325263b38f8cbb70" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "build", marker = "extra == 'dev'", specifier = ">=1.2" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
-    { name = "requests", specifier = ">=2.31" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
-    { name = "websocket-client", specifier = ">=1.7" },
-]
-provides-extras = ["dev"]
 
 [[package]]
 name = "protobuf"

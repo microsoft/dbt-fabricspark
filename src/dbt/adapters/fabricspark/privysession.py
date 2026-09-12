@@ -418,6 +418,9 @@ def _build_exec_snippet(sql: str, marker: str) -> str:
     API returns, and prints it between two copies of a unique marker so the
     client can find it even if the query itself prints other output.
 
+    Each request gets its own globals dictionary containing only ``spark``
+    from the notebook, so concurrent requests cannot overwrite result variables.
+
     ``inprocess`` mode shares the notebook kernel's thread-local Spark
     properties, so without an explicit ``setJobGroup`` every job inherits the
     description Fabric set on its own start-up cell and is unattributable in
@@ -433,7 +436,7 @@ def _build_exec_snippet(sql: str, marker: str) -> str:
     marker_literal = json.dumps(marker)
     group_literal = json.dumps(_job_group_for(sql))
     description_literal = json.dumps(" ".join(sql.split())[:400])
-    return (
+    body = (
         "import json as __privy_json\n"
         f"spark.sparkContext.setJobGroup({group_literal}, {description_literal}, True)\n"
         "try:\n"
@@ -457,6 +460,7 @@ def _build_exec_snippet(sql: str, marker: str) -> str:
         "{'data': __privy_rows, 'schema': {'fields': __privy_fields}}, default=str))\n"
         f"print({marker_literal})\n"
     )
+    return f"exec({body!r}, {{'spark': spark}})\n"
 
 
 def _extract_marked_json(stdout: str, marker: str) -> Dict[str, Any]:

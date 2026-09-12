@@ -39,7 +39,7 @@ dependencies = [
     "azure-identity>=1.21.0",
     "azure-core>=1.33.0",
     "requests>=2.32.0",
-    "privy @ https://rakirahman.blob.core.windows.net/public/whls/privy-0.1.0-py3-none-any.whl",
+    "privy @ git+https://github.com/mdrakiburrahman/privy.git@2f39703cc4165c91958efbb0c5e1ab3ec27ac9ab",
 ]
 
 [project.optional-dependencies]

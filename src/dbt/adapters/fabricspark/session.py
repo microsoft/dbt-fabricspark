@@ -141,6 +141,37 @@ class SessionCursor:
         except self._analysis_error as exc:
             raise DbtRuntimeError(str(exc)) from exc
 
+    def execute_seed_insert(
+        self,
+        rows: list[tuple],
+        string_schema: str,
+        cast_exprs: list[str],
+        table_name: str,
+        num_partitions: int,
+    ) -> None:
+        """Bulk-load seed rows in a single, explicitly-partitioned write.
+
+        Values arrive as strings (or ``None``) so the actual per-column
+        casting still happens in Spark SQL, matching the ``cast(? as type)``
+        semantics of the batched INSERT path. ``num_partitions`` is passed
+        explicitly to ``parallelize`` so this local-data DataFrame does not
+        silently inherit ``sc.defaultParallelism`` (see issue #290).
+        """
+        self._df = None
+        self._rows = None
+        self._fetch_index = 0
+        self._job_description = f"dbt seed load: {table_name}"
+        self._job_group_id = f"dbt:{self._job_description}:{uuid.uuid4().hex}"
+        try:
+            with self._job_group():
+                spark_context = self._spark_session.sparkContext
+                rdd = spark_context.parallelize(rows, numSlices=num_partitions)
+                raw_df = self._spark_session.createDataFrame(rdd, schema=string_schema)
+                typed_df = raw_df.selectExpr(cast_exprs)
+                typed_df.write.insertInto(table_name, overwrite=False)
+        except self._analysis_error as exc:
+            raise DbtRuntimeError(str(exc)) from exc
+
     def fetchall(self) -> Optional[list[Row]]:
         if self._rows is None and self._df is not None:
             with self._job_group():
@@ -204,6 +235,20 @@ class SessionConnectionWrapper(FabricSparkConnectionWrapper):
 
     def rollback(self, *args: Any, **kwargs: Any) -> None:
         logger.debug("NotImplemented: rollback")
+
+    def load_seed(
+        self,
+        rows: list[tuple],
+        string_schema: str,
+        cast_exprs: list[str],
+        table_name: str,
+        num_partitions: int,
+    ) -> None:
+        if self._cursor is None:
+            raise DbtRuntimeError("Cursor not available")
+        self._cursor.execute_seed_insert(
+            rows, string_schema, cast_exprs, table_name, num_partitions
+        )
 
     def fetchall(self) -> Optional[list[Row]]:
         if self._cursor is None:

@@ -243,6 +243,58 @@ class FabricSparkAdapter(SQLAdapter):
         return bool(credentials and getattr(credentials, "is_session_method", False))
 
     @available
+    def load_seed_rows_session(
+        self,
+        table_name: str,
+        agate_table: "agate.Table",
+        column_types: List[str],
+        max_partitions: int,
+    ) -> None:
+        """Bulk-load a seed's rows for ``method: session`` in one bounded write.
+
+        The batched ``INSERT ... VALUES`` path (used for ``livy``/``odbc``)
+        issues one Spark job per row-chunk; on a large, fixed-executor Fabric
+        cluster each chunk's local-data DataFrame silently inherits
+        ``sc.defaultParallelism`` in its ``ParallelCollectionRDD``, turning a
+        tiny seed's Delta ``AddFile`` stats aggregation into millions of
+        tasks (see issue #290). Loading the whole seed as one
+        explicitly-partitioned write bounds the partition count regardless of
+        cluster size, without mutating any shared SparkContext settings.
+
+        Values are shipped as strings so the actual per-column cast still
+        happens in Spark SQL, preserving the same ``cast(? as type)``
+        semantics (nulls, decimals, timestamps, escaping) as the batched path.
+        """
+        from dbt.adapters.fabricspark.session import SessionConnectionWrapper
+
+        conn = self.connections.get_thread_connection()
+        wrapper = conn.handle
+        if not isinstance(wrapper, SessionConnectionWrapper):
+            raise DbtRuntimeError("load_seed_rows_session requires method: session")
+
+        num_rows = len(agate_table.rows)
+        num_partitions = max(1, min(num_rows, max_partitions)) if num_rows else 1
+
+        quoted_columns = [f"`{col}`" for col in agate_table.column_names]
+        string_schema = ", ".join(f"{col} STRING" for col in quoted_columns)
+        cast_exprs = [
+            f"CAST({col} AS {col_type}) AS {col}"
+            for col, col_type in zip(quoted_columns, column_types)
+        ]
+        rows = [
+            tuple(None if value is None else str(value) for value in row)
+            for row in agate_table.rows
+        ]
+
+        wrapper.load_seed(
+            rows=rows,
+            string_schema=string_schema,
+            cast_exprs=cast_exprs,
+            table_name=table_name,
+            num_partitions=num_partitions,
+        )
+
+    @available
     def is_local_mode(self) -> bool:
         """Expose local mode flag to macros via adapter.
 

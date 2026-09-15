@@ -464,7 +464,7 @@ class TestClusteredColsLiquidClustering(unittest.TestCase):
 
     MACRO_SRC = r"""
 {%- macro create(relation, sql) -%}
-create or replace table {{ relation }} {{ file_format_clause() }} {{ partition_cols(label="partitioned by") }} {{ clustered_cols(label="clustered by") }} as {{ sql }}
+create or replace table {{ relation }} {{ file_format_clause() }} {{ tblproperties_clause() }} {{ partition_cols(label="partitioned by") }} {{ clustered_cols(label="clustered by") }} as {{ sql }}
 {%- endmacro -%}
 
 {% macro file_format_clause() %}
@@ -474,9 +474,20 @@ create or replace table {{ relation }} {{ file_format_clause() }} {{ partition_c
   {%- set liquid = clustered_by is not none and buckets is none -%}
   {%- if file_format is not none and file_format != 'delta' %}
     using {{ file_format }}
-  {%- elif liquid and (file_format is none or file_format == 'delta') %}
+  {%- elif (file_format == 'delta' and buckets is none) or liquid %}
     using delta
   {%- endif %}
+{%- endmacro %}
+
+{% macro tblproperties_clause() -%}
+  {%- set tblproperties = config.get('tblproperties') -%}
+  {%- if tblproperties is not none %}
+    tblproperties (
+      {%- for prop in tblproperties -%}
+      '{{ prop }}' = '{{ tblproperties[prop] }}' {% if not loop.last %}, {% endif %}
+      {%- endfor -%}
+    )
+  {%- endif -%}
 {%- endmacro %}
 
 {% macro partition_cols(label, required=false) %}
@@ -550,6 +561,17 @@ create or replace table {{ relation }} {{ file_format_clause() }} {{ partition_c
         self.assertEqual(
             result,
             "create or replace table my_table using delta cluster by (col_a) as select 1",
+        )
+
+    def test_delta_file_format_precedes_tblproperties(self):
+        """Delta CTAS keeps USING DELTA before TBLPROPERTIES."""
+        result = self._render(
+            file_format="delta",
+            tblproperties={"delta.columnMapping.mode": "name"},
+        )
+        self.assertEqual(
+            result,
+            "create or replace table my_table using delta tblproperties ('delta.columnMapping.mode' = 'name' ) as select 1",
         )
 
     def test_delta_clustered_by_string_form(self):

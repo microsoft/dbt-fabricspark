@@ -292,6 +292,32 @@ def test_session_wrapper_strips_semicolon_and_passes_bindings() -> None:
     cursor.execute.assert_called_once_with("select %s, %s", 1.5, "'value'")
 
 
+def test_session_wrapper_cancels_active_job_group() -> None:
+    cursor = MagicMock()
+    cursor._job_group_id = "dbt:model.example.orders:job"
+    spark_context = MagicMock()
+    handle = MagicMock()
+    handle.cursor.return_value = cursor
+    handle._spark_session.sparkContext = spark_context
+    wrapper = SessionConnectionWrapper(handle).cursor()
+
+    wrapper.cancel()
+
+    spark_context.cancelJobGroup.assert_called_once_with("dbt:model.example.orders:job")
+
+
+def test_session_wrapper_cancel_without_active_job_group_is_noop() -> None:
+    cursor = MagicMock()
+    cursor._job_group_id = None
+    handle = MagicMock()
+    handle.cursor.return_value = cursor
+    wrapper = SessionConnectionWrapper(handle).cursor()
+
+    wrapper.cancel()
+
+    handle._spark_session.sparkContext.cancelJobGroup.assert_not_called()
+
+
 def test_connection_manager_routes_session_without_fabric_or_livy() -> None:
     with patch("dbt.adapters.fabricspark.credentials.import_module", return_value=object()):
         credentials = FabricSparkCredentials(

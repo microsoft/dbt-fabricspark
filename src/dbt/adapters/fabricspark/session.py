@@ -191,7 +191,11 @@ class SessionConnectionWrapper(FabricSparkConnectionWrapper):
         return self
 
     def cancel(self) -> None:
-        logger.debug("NotImplemented: cancel")
+        cursor = self._cursor
+        job_group_id = getattr(cursor, "_job_group_id", None) if cursor else None
+        if job_group_id is None:
+            return
+        self.handle._spark_session.sparkContext.cancelJobGroup(job_group_id)
 
     def close(self) -> None:
         if self._cursor:

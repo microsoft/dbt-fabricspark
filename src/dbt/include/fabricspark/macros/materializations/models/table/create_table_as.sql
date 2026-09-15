@@ -40,7 +40,7 @@
   {%- set liquid = clustered_by is not none and buckets is none -%}
   {%- if file_format is not none and file_format != 'delta' %}
     using {{ file_format }}
-  {%- elif liquid and (file_format is none or file_format == 'delta') %}
+  {%- elif (file_format == 'delta' and buckets is none) or liquid %}
     using delta
   {%- endif %}
 {%- endmacro -%}

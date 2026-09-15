@@ -5,6 +5,8 @@
 ### Fixes
 
 - Fixed `method: session` seeds amplifying Delta metadata work into millions of tasks on large Fabric clusters. The batched `INSERT ... VALUES` loop issued one Spark job per 500-row chunk, and each chunk's local-data DataFrame silently inherited `sc.defaultParallelism`, so on a fixed 199-executor/64-core cluster a single 86,401-row seed could generate over two million source tasks aggregating Delta `AddFile` statistics. Session seeds now load in a single, explicitly-partitioned write (bounded by `fabricspark__get_session_seed_max_partitions`, default 8) via `adapter.load_seed_rows_session`, without mutating any shared SparkContext settings; column overrides, nulls, decimals, timestamps, and escaping are preserved. `livy`/`odbc` seeds are unaffected and continue using the existing batched INSERT path. ([#290](https://github.com/microsoft/dbt-fabricspark/issues/290))
+- Fixed table CTAS generation not reliably emitting `USING DELTA` when `file_format: delta` was combined with `tblproperties`. The Delta file-format macro now emits `using delta` for explicit Delta tables regardless of `tblproperties`, without changing the existing bucketed-table behavior. ([#286](https://github.com/microsoft/dbt-fabricspark/issues/286))
+- Fixed `method: session` reporting itself as cancelable while `SessionConnectionWrapper.cancel()` was a no-op, leaving Spark job groups running after dbt fail-fast cancellation. Cancellation now retrieves the active cursor's job-group ID and calls Spark's `cancelJobGroup()`, safely returning when no active job group exists. ([#287](https://github.com/microsoft/dbt-fabricspark/issues/287))
 
 ## v1.13.5
 

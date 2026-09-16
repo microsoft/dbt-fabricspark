@@ -105,7 +105,44 @@
   {{ return(500) }}
 {% endmacro %}
 
+{% macro fabricspark__get_session_seed_max_partitions() %}
+  {#
+      Upper bound on the number of Spark partitions used to bulk-load a
+      session seed (see fabricspark__load_csv_rows_session). Overridable by
+      users, similar to fabricspark__get_batch_size().
+  #}
+  {{ return(8) }}
+{% endmacro %}
+
+{#
+  method: session loads the whole seed as a single, explicitly-partitioned
+  Spark write (adapter.load_seed_rows_session) instead of the serial batched
+  INSERT loop below. The batched loop's local-data DataFrame per batch
+  silently inherits sc.defaultParallelism, which on wide Fabric clusters
+  amplifies a tiny seed into millions of Delta metadata tasks (issue #290).
+  livy/odbc are unaffected and keep using the batched INSERT path.
+#}
+{% macro fabricspark__load_csv_rows_session(model, agate_table) %}
+  {% set column_override = model['config'].get('column_types', {}) %}
+  {% set column_types = [] %}
+  {% for col_name in agate_table.column_names %}
+      {% set inferred_type = adapter.convert_type(agate_table, loop.index0) %}
+      {% do column_types.append(column_override.get(col_name, inferred_type)) %}
+  {% endfor %}
+
+  {% set max_partitions = fabricspark__get_session_seed_max_partitions() %}
+  {% do adapter.load_seed_rows_session(this.render(), agate_table, column_types, max_partitions) %}
+
+  {% set sql %}
+    -- seed rows bulk-loaded via adapter.load_seed_rows_session (method: session)
+  {% endset %}
+  {{ return(sql) }}
+{% endmacro %}
+
 {% macro fabricspark__load_csv_rows(model, agate_table) %}
+  {% if adapter.is_session_method() %}
+    {{ return(fabricspark__load_csv_rows_session(model, agate_table)) }}
+  {% endif %}
 
   {% set batch_size = calc_batch_size(agate_table.column_names|length) %}
   {% set column_override = model['config'].get('column_types', {}) %}

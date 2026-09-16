@@ -154,6 +154,98 @@ class TestSparkAdapter(unittest.TestCase):
         self.assertTrue(session_adapter.is_session_method())
         self.assertFalse(local_livy_adapter.is_session_method())
 
+    def test_load_seed_rows_session_bulk_loads_via_wrapper(self):
+        import agate
+
+        from dbt.adapters.fabricspark.session import SessionConnectionWrapper
+
+        adapter = FabricSparkAdapter(
+            self._get_target_session(self.project_cfg),
+            self.mp_context,
+        )
+        agate_table = agate.Table(
+            [(1, "hello"), (None, "world")],
+            column_names=["id", "name"],
+            column_types=[agate.Number(), agate.Text()],
+        )
+
+        mock_wrapper = mock.create_autospec(SessionConnectionWrapper, instance=True)
+        mock_connection = mock.Mock(handle=mock_wrapper)
+        with mock.patch.object(
+            adapter.connections, "get_thread_connection", return_value=mock_connection
+        ):
+            adapter.load_seed_rows_session(
+                "silver.dbo.my_seed",
+                agate_table,
+                column_types=["int", "string"],
+                max_partitions=8,
+            )
+
+        mock_wrapper.load_seed.assert_called_once()
+        kwargs = mock_wrapper.load_seed.call_args.kwargs
+        self.assertEqual(kwargs["table_name"], "silver.dbo.my_seed")
+        self.assertEqual(kwargs["num_partitions"], 2)
+        self.assertEqual(kwargs["rows"], [("1", "hello"), (None, "world")])
+        self.assertIn("`id` STRING", kwargs["string_schema"])
+        self.assertIn("`name` STRING", kwargs["string_schema"])
+        self.assertIn("CAST(`id` AS int) AS `id`", kwargs["cast_exprs"])
+        self.assertIn("CAST(`name` AS string) AS `name`", kwargs["cast_exprs"])
+
+    def test_load_seed_rows_session_caps_partitions_at_max(self):
+        import agate
+
+        from dbt.adapters.fabricspark.session import SessionConnectionWrapper
+
+        adapter = FabricSparkAdapter(
+            self._get_target_session(self.project_cfg),
+            self.mp_context,
+        )
+        agate_table = agate.Table(
+            [(i,) for i in range(20)],
+            column_names=["id"],
+            column_types=[agate.Number()],
+        )
+
+        mock_wrapper = mock.create_autospec(SessionConnectionWrapper, instance=True)
+        mock_connection = mock.Mock(handle=mock_wrapper)
+        with mock.patch.object(
+            adapter.connections, "get_thread_connection", return_value=mock_connection
+        ):
+            adapter.load_seed_rows_session(
+                "silver.dbo.my_seed",
+                agate_table,
+                column_types=["int"],
+                max_partitions=8,
+            )
+
+        kwargs = mock_wrapper.load_seed.call_args.kwargs
+        self.assertEqual(kwargs["num_partitions"], 8)
+
+    def test_load_seed_rows_session_requires_session_connection(self):
+        import agate
+
+        adapter = FabricSparkAdapter(
+            self._get_target_livy_local(self.project_cfg),
+            self.mp_context,
+        )
+        agate_table = agate.Table(
+            [(1,)],
+            column_names=["id"],
+            column_types=[agate.Number()],
+        )
+
+        mock_connection = mock.Mock(handle=mock.Mock())
+        with mock.patch.object(
+            adapter.connections, "get_thread_connection", return_value=mock_connection
+        ):
+            with self.assertRaises(Exception):
+                adapter.load_seed_rows_session(
+                    "silver.dbo.my_seed",
+                    agate_table,
+                    column_types=["int"],
+                    max_partitions=8,
+                )
+
     def test_parse_relation(self):
         self.maxDiff = None
         rel_type = FabricSparkRelation.get_relation_type.Table

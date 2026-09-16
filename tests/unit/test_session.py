@@ -318,6 +318,72 @@ def test_session_wrapper_cancel_without_active_job_group_is_noop() -> None:
     handle._spark_session.sparkContext.cancelJobGroup.assert_not_called()
 
 
+def test_session_cursor_bulk_loads_seed_with_bounded_partitions() -> None:
+    spark_context = MagicMock()
+    spark_context.getLocalProperty.return_value = None
+    rdd = MagicMock()
+    spark_context.parallelize.return_value = rdd
+    raw_df = MagicMock()
+    typed_df = MagicMock()
+    raw_df.selectExpr.return_value = typed_df
+    spark_session = MagicMock()
+    spark_session.sparkContext = spark_context
+    spark_session.createDataFrame.return_value = raw_df
+    cursor = SessionCursor(spark_session, FakeAnalysisException)
+
+    rows = [("1", "a"), (None, "b")]
+    cursor.execute_seed_insert(
+        rows=rows,
+        string_schema="`id` STRING, `name` STRING",
+        cast_exprs=["CAST(`id` AS int) AS `id`", "CAST(`name` AS string) AS `name`"],
+        table_name="silver.dbo.my_seed",
+        num_partitions=2,
+    )
+
+    spark_context.parallelize.assert_called_once_with(rows, numSlices=2)
+    spark_session.createDataFrame.assert_called_once_with(rdd, schema="`id` STRING, `name` STRING")
+    raw_df.selectExpr.assert_called_once_with(
+        ["CAST(`id` AS int) AS `id`", "CAST(`name` AS string) AS `name`"]
+    )
+    typed_df.write.insertInto.assert_called_once_with("silver.dbo.my_seed", overwrite=False)
+    group_id = spark_context.setJobGroup.call_args_list[0].args[0]
+    assert group_id.startswith("dbt:dbt seed load: silver.dbo.my_seed:")
+
+
+def test_session_cursor_bulk_load_translates_analysis_errors() -> None:
+    spark_session = MagicMock()
+    spark_session.createDataFrame.side_effect = FakeAnalysisException("bad schema")
+    cursor = SessionCursor(spark_session, FakeAnalysisException)
+
+    with pytest.raises(DbtRuntimeError, match="bad schema"):
+        cursor.execute_seed_insert(
+            rows=[("1",)],
+            string_schema="`id` STRING",
+            cast_exprs=["CAST(`id` AS int) AS `id`"],
+            table_name="silver.dbo.my_seed",
+            num_partitions=1,
+        )
+
+
+def test_session_wrapper_delegates_load_seed_to_cursor() -> None:
+    cursor = MagicMock()
+    handle = MagicMock()
+    handle.cursor.return_value = cursor
+    wrapper = SessionConnectionWrapper(handle).cursor()
+
+    wrapper.load_seed(
+        rows=[("1",)],
+        string_schema="`id` STRING",
+        cast_exprs=["CAST(`id` AS int) AS `id`"],
+        table_name="silver.dbo.my_seed",
+        num_partitions=1,
+    )
+
+    cursor.execute_seed_insert.assert_called_once_with(
+        [("1",)], "`id` STRING", ["CAST(`id` AS int) AS `id`"], "silver.dbo.my_seed", 1
+    )
+
+
 def test_connection_manager_routes_session_without_fabric_or_livy() -> None:
     with patch("dbt.adapters.fabricspark.credentials.import_module", return_value=object()):
         credentials = FabricSparkCredentials(

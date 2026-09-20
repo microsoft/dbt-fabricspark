@@ -598,6 +598,7 @@ models:
 | `workspace_name`        | string | —                                     | Optional default workspace for cross-workspace 4-part naming. When set and the lakehouse has schemas enabled, all relations without a model-level `workspace_name` will be rendered with this workspace prefix. Ignored for non-schema lakehouses. Exposed as `target.workspace_name` in Jinja. |
 | `quote_identifiers`     | bool   | `false`                               | When `true`, backtick-quotes table identifiers so Fabric Spark preserves their casing instead of folding to lowercase. Requires `spark_config.conf` `{ "spark.sql.caseSensitive": "true" }` to take effect (the adapter warns if it's missing). Session-wide — also affects column resolution. See [Case-sensitive identifiers](#case-sensitive-identifiers). |
 | `auto_optimize`         | bool   | `true`                                | Run `OPTIMIZE` on Delta relations after every `table`, `incremental` and `snapshot` build. Override per model with `config(auto_optimize=false)`, or disable everywhere with the `DBT_FABRICSPARK_SKIP_OPTIMIZE` environment variable. See [Automatic OPTIMIZE](#automatic-optimize). |
+| `enable_experimental_unstable` | bool | `false` | Opt into experimental native streaming tables. Requires an unquoted boolean; ordinary profiles need no changes. See [Experimental native streaming](#experimental-native-streaming). |
 | `threads`               | int    | `1`                                   | Number of threads for parallel execution                                                                                                                                                                                                                                                                                                                                                                  |
 | **Authentication**      |        |                                       |                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `authentication`        | string | `CLI`                                 | Auth method: `CLI`, `SPN`, or `fabric_notebook`                                                                                                                                                                                                                                                                                                                                                           |
@@ -942,6 +943,28 @@ SELECT ...
 - **No time-travel** — `VERSION AS OF` / `TIMESTAMP AS OF` syntax is not supported.
 - **No temp views as sources** — The SELECT query can reference tables and other MLVs, but not temporary views.
 - **Schedule is per-lakehouse** — One active schedule per lakehouse lineage, not per MLV.
+
+### Experimental native streaming
+
+Requires `method: session`, Delta, and a compatible runtime implementing native
+`CREATE STREAMING TABLE` / `SHOW STREAMING TABLES` with AvailableNow execution
+and run-identity/status metadata. Stock Spark compatibility is not assumed.
+Set `enable_experimental_unstable: true` in the active `profiles.yml` output;
+the default is `false`. Unsupported profiles fail before hooks or DDL.
+
+```sql
+{{ config(materialized='streaming_table', file_format='delta') }}
+select *
+from stream {{ source('raw', 'events') }}
+with ('maxFilesPerTrigger' = '8')
+```
+
+Source options stay in `WITH (...)`. CREATE is submitted once; post-hooks and
+downstream models wait for the exact run to stop, inactive and failure-free,
+on the same Spark context. Missing/replaced identities, failures, disconnects
+and timeouts are errors. Polling uses `statement_timeout` (zero becomes one hour)
+and `poll_statement_wait`. A fresh checkpoint reads the initial snapshot;
+later runs resume it. Query changes fail by default; `--full-refresh` is rejected.
 
 ## FAQs
 

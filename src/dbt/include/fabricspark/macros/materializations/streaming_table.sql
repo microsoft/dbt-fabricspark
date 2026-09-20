@@ -19,9 +19,6 @@
 
 {% materialization streaming_table, adapter='fabricspark' %}
   {% do adapter.require_experimental_unstable('streaming_table') %}
-  {% if target.get('method') != 'session' %}
-    {{ exceptions.raise_compiler_error("streaming_table requires method: session and a compatible runtime") }}
-  {% endif %}
   {% set target_relation = this.incorporate(type='table') %}
   {% if model['language'] != 'sql' %}
     {{ exceptions.raise_compiler_error("streaming_table supports SQL models only") }}

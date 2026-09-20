@@ -106,6 +106,17 @@
             ],
             "parallel": false
          }
+      },
+      "publish-blob": {
+         "cache": false,
+         "executor": "nx:run-commands",
+         "dependsOn": ["build"],
+         "options": {
+            "commands": [
+               { "command": "tsx tools/scripts/publish-blob.ts", "forwardAllArgs": false }
+            ],
+            "parallel": false
+         }
       }
    }
 }

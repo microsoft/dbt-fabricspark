@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.13.7
+
+- Added experimental feature flags
+
 ## v1.13.6
 
 ### Fixes

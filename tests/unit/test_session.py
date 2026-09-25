@@ -292,30 +292,66 @@ def test_session_wrapper_strips_semicolon_and_passes_bindings() -> None:
     cursor.execute.assert_called_once_with("select %s, %s", 1.5, "'value'")
 
 
-def test_session_wrapper_cancels_active_job_group() -> None:
+def test_session_wrapper_cancels_all_active_spark_work() -> None:
     cursor = MagicMock()
     cursor._job_group_id = "dbt:model.example.orders:job"
     spark_context = MagicMock()
+    first_query = MagicMock()
+    second_query = MagicMock()
     handle = MagicMock()
     handle.cursor.return_value = cursor
     handle._spark_session.sparkContext = spark_context
+    handle._spark_session.streams.active = [first_query, second_query]
     wrapper = SessionConnectionWrapper(handle).cursor()
 
     wrapper.cancel()
 
     spark_context.cancelJobGroup.assert_called_once_with("dbt:model.example.orders:job")
+    spark_context.cancelAllJobs.assert_called_once_with()
+    first_query.stop.assert_called_once_with()
+    second_query.stop.assert_called_once_with()
 
 
-def test_session_wrapper_cancel_without_active_job_group_is_noop() -> None:
+def test_session_wrapper_cancel_without_active_job_group_still_cancels_all_work() -> None:
     cursor = MagicMock()
     cursor._job_group_id = None
+    active_query = MagicMock()
     handle = MagicMock()
     handle.cursor.return_value = cursor
+    handle._spark_session.streams.active = [active_query]
     wrapper = SessionConnectionWrapper(handle).cursor()
 
     wrapper.cancel()
 
     handle._spark_session.sparkContext.cancelJobGroup.assert_not_called()
+    handle._spark_session.sparkContext.cancelAllJobs.assert_called_once_with()
+    active_query.stop.assert_called_once_with()
+
+
+def test_session_wrapper_cancel_continues_after_individual_failures() -> None:
+    cursor = MagicMock()
+    cursor._job_group_id = "dbt:model.example.orders:job"
+    spark_context = MagicMock()
+    spark_context.cancelJobGroup.side_effect = RuntimeError("group cancel failed")
+    spark_context.cancelAllJobs.side_effect = RuntimeError("all jobs cancel failed")
+    failed_query = MagicMock()
+    failed_query.id = "failed-query"
+    failed_query.stop.side_effect = RuntimeError("query stop failed")
+    stopped_query = MagicMock()
+    handle = MagicMock()
+    handle.cursor.return_value = cursor
+    handle._spark_session.sparkContext = spark_context
+    handle._spark_session.streams.active = [failed_query, stopped_query]
+    wrapper = SessionConnectionWrapper(handle).cursor()
+
+    with patch("dbt.adapters.fabricspark.session.logger.warning") as warning:
+        wrapper.cancel()
+
+    spark_context.cancelJobGroup.assert_called_once_with("dbt:model.example.orders:job")
+    spark_context.cancelAllJobs.assert_called_once_with()
+    failed_query.stop.assert_called_once_with()
+    stopped_query.stop.assert_called_once_with()
+    assert warning.call_count == 3
 
 
 def test_session_cursor_bulk_loads_seed_with_bounded_partitions() -> None:

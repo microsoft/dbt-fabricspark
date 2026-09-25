@@ -224,9 +224,32 @@ class SessionConnectionWrapper(FabricSparkConnectionWrapper):
     def cancel(self) -> None:
         cursor = self._cursor
         job_group_id = getattr(cursor, "_job_group_id", None) if cursor else None
-        if job_group_id is None:
-            return
-        self.handle._spark_session.sparkContext.cancelJobGroup(job_group_id)
+        spark_session = self.handle._spark_session
+        spark_context = spark_session.sparkContext
+
+        if job_group_id is not None:
+            try:
+                spark_context.cancelJobGroup(job_group_id)
+            except Exception as exc:
+                logger.warning(f"Failed to cancel dbt Spark job group {job_group_id}: {exc}")
+
+        try:
+            spark_context.cancelAllJobs()
+        except Exception as exc:
+            logger.warning(f"Failed to cancel all Spark jobs during dbt fail-fast: {exc}")
+
+        try:
+            active_queries = tuple(spark_session.streams.active)
+        except Exception as exc:
+            logger.warning(f"Failed to enumerate active Spark streaming queries: {exc}")
+            active_queries = ()
+
+        for query in active_queries:
+            try:
+                query.stop()
+            except Exception as exc:
+                query_id = getattr(query, "id", "unknown")
+                logger.warning(f"Failed to stop Spark streaming query {query_id}: {exc}")
 
     def close(self) -> None:
         if self._cursor:

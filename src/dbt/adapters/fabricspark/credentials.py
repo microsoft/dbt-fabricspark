@@ -30,6 +30,14 @@ LivyMode = Literal["fabric", "local"]
 DEFAULT_SESSION_ID_FILENAME = "livy-session-id.txt"
 
 
+def _validate_experimental_flag(value: Any) -> None:
+    if not isinstance(value, bool):
+        raise DbtRuntimeError(
+            "enable_experimental_unstable must be a boolean in profiles.yml; "
+            "use true or false, not a quoted string or a number."
+        )
+
+
 @dataclass
 class FabricSparkCredentials(Credentials):
     # schema: user-provided from profiles.yml. Defaults to lakehouse name.
@@ -124,6 +132,7 @@ class FabricSparkCredentials(Credentials):
     # individual models can override with ``config(auto_optimize=...)`` and the
     # ``DBT_FABRICSPARK_SKIP_OPTIMIZE`` environment variable disables it outright.
     auto_optimize: bool = True
+    enable_experimental_unstable: bool = False
 
     def __repr__(self) -> str:
         """Mask sensitive fields in repr to prevent credential leakage in logs/tracebacks."""
@@ -143,6 +152,7 @@ class FabricSparkCredentials(Credentials):
 
     @classmethod
     def __pre_deserialize__(cls, data: Any) -> Any:
+        _validate_experimental_flag(data.get("enable_experimental_unstable", False))
         data = super().__pre_deserialize__(data)
         if "lakehouse" not in data:
             data["lakehouse"] = None
@@ -175,6 +185,7 @@ class FabricSparkCredentials(Credentials):
         return f"{self.endpoint}/workspaces/{self.workspaceid}/lakehouses/{self.lakehouseid}/livyapi/versions/2023-12-01"
 
     def __post_init__(self) -> None:
+        _validate_experimental_flag(self.enable_experimental_unstable)
         if self.method is None:
             raise DbtRuntimeError("Must specify `method` in profile")
 
@@ -356,6 +367,7 @@ class FabricSparkCredentials(Credentials):
             "workspace_name",
             "quote_identifiers",
             "auto_optimize",
+            "enable_experimental_unstable",
             "high_concurrency",
             "spark_config",
         )

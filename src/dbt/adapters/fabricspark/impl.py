@@ -33,7 +33,12 @@ from dbt.adapters.base.impl import ConstraintSupport, catch_as_completed
 from dbt.adapters.base.relation import InformationSchema
 from dbt.adapters.contracts.relation import RelationConfig, RelationType
 from dbt.adapters.events.logging import AdapterLogger
-from dbt.adapters.fabricspark import FabricSparkColumn, FabricSparkConnectionManager, mlv_api
+from dbt.adapters.fabricspark import (
+    FabricSparkColumn,
+    FabricSparkConnectionManager,
+    experimental,
+    mlv_api,
+)
 from dbt.adapters.fabricspark.relation import FabricSparkRelation
 from dbt.adapters.sql import SQLAdapter
 
@@ -114,6 +119,10 @@ class FabricSparkConfig(AdapterConfig):
     # Precedence: DBT_FABRICSPARK_SKIP_OPTIMIZE env var > this key > the
     # profile's ``auto_optimize`` > enabled.
     auto_optimize: Optional[bool] = None
+    tblproperties: Optional[Dict[str, Any]] = None
+    cluster_by: Optional[Union[List[str], str]] = None
+    output_mode: str = "append"
+    on_query_change: str = "fail"
 
 
 class FabricSparkAdapter(SQLAdapter):
@@ -154,6 +163,14 @@ class FabricSparkAdapter(SQLAdapter):
     Column: TypeAlias = FabricSparkColumn
     ConnectionManager: TypeAlias = FabricSparkConnectionManager
     AdapterSpecificConfigs: TypeAlias = FabricSparkConfig
+
+    @available
+    def require_experimental_unstable(self, feature: str) -> None:
+        experimental.require_experimental_unstable(self, feature)
+
+    @available
+    def execute_streaming_table(self, relation: Any, sql: str) -> Tuple[Any, "agate.Table"]:
+        return experimental.execute_streaming_table(self, relation, sql)
 
     @available
     def get_workspace_name_from_config(self, config) -> Optional[str]:

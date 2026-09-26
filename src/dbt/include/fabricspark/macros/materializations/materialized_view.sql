@@ -84,38 +84,42 @@
   {{ run_hooks(pre_hooks, inside_transaction=True) }}
 
   {% if existing_relation is none %}
+    {% call statement('ensure_materialized_view') %}
+      {{ create_sql | replace('CREATE MATERIALIZED VIEW', 'CREATE MATERIALIZED VIEW IF NOT EXISTS') }}
+    {% endcall %}
+  {% endif %}
+
+  {% call statement('materialized_view_query_hash', fetch_result=True) %}
+    SHOW TBLPROPERTIES {{ target_relation }} ('{{ query_hash_property }}')
+  {% endcall %}
+  {% set property_result = load_result('materialized_view_query_hash') %}
+  {% set property_rows = property_result['data'] if property_result is not none else [] %}
+  {% set existing_hash = property_rows[0][1] if property_rows | length == 1 else none %}
+  {% if existing_hash != query_hash %}
+    {% if on_query_change == 'fail' %}
+      {{ exceptions.raise_compiler_error(
+        "materialized_view SQL changed or the existing relation is not adapter-managed. "
+        ~ "Set on_query_change='rebuild' to replace it explicitly."
+      ) }}
+    {% endif %}
+    {% if existing_relation is none %}
+      {% call statement('drop_changed_materialized_view') %}
+        DROP MATERIALIZED VIEW {{ target_relation }}
+      {% endcall %}
+    {% elif existing_hash is none or existing_hash | length != 32 %}
+      {% do adapter.drop_relation(existing_relation) %}
+    {% else %}
+      {% call statement('drop_changed_materialized_view') %}
+        DROP MATERIALIZED VIEW {{ target_relation }}
+      {% endcall %}
+    {% endif %}
     {% call statement('main') %}
       {{ create_sql }}
     {% endcall %}
   {% else %}
-    {% call statement('materialized_view_query_hash', fetch_result=True) %}
-      SHOW TBLPROPERTIES {{ target_relation }} ('{{ query_hash_property }}')
+    {% call statement('main') %}
+      REFRESH MATERIALIZED VIEW {{ target_relation }}
     {% endcall %}
-    {% set property_result = load_result('materialized_view_query_hash') %}
-    {% set property_rows = property_result['data'] if property_result is not none else [] %}
-    {% set existing_hash = property_rows[0][1] if property_rows | length == 1 else none %}
-    {% if existing_hash != query_hash %}
-      {% if on_query_change == 'fail' %}
-        {{ exceptions.raise_compiler_error(
-          "materialized_view SQL changed or the existing relation is not adapter-managed. "
-          ~ "Set on_query_change='rebuild' to replace it explicitly."
-        ) }}
-      {% endif %}
-      {% if existing_hash is none or existing_hash | length != 32 %}
-        {% do adapter.drop_relation(existing_relation) %}
-      {% else %}
-        {% call statement('drop_changed_materialized_view') %}
-          DROP MATERIALIZED VIEW {{ target_relation }}
-        {% endcall %}
-      {% endif %}
-      {% call statement('main') %}
-        {{ create_sql }}
-      {% endcall %}
-    {% else %}
-      {% call statement('main') %}
-        REFRESH MATERIALIZED VIEW {{ target_relation }}
-      {% endcall %}
-    {% endif %}
   {% endif %}
 
   {{ run_hooks(post_hooks, inside_transaction=True) }}

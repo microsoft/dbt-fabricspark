@@ -101,9 +101,13 @@
           ~ "Set on_query_change='rebuild' to replace it explicitly."
         ) }}
       {% endif %}
-      {% call statement('drop_changed_materialized_view') %}
-        DROP MATERIALIZED VIEW {{ target_relation }}
-      {% endcall %}
+      {% if existing_hash is none or existing_hash | length != 32 %}
+        {% do adapter.drop_relation(existing_relation) %}
+      {% else %}
+        {% call statement('drop_changed_materialized_view') %}
+          DROP MATERIALIZED VIEW {{ target_relation }}
+        {% endcall %}
+      {% endif %}
       {% call statement('main') %}
         {{ create_sql }}
       {% endcall %}

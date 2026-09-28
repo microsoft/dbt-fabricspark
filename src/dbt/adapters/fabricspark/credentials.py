@@ -1,3 +1,4 @@
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -65,6 +66,11 @@ class FabricSparkCredentials(Credentials):
     connect_timeout: int = 10
     create_shortcuts: Optional[bool] = False
     retry_all: bool = False
+    enable_job_retry: bool = True
+    job_retry_on_messages: list[str] = field(default_factory=list)
+    job_retry_max_attempts: int = 3
+    job_retry_initial_wait_seconds: float = 30.0
+    job_retry_max_wait_seconds: float = 300.0
     shortcuts_json_str: Optional[str] = None
     # Auto-detected at connection time via Fabric REST API; not user-configurable.
     # init=False ensures this is never populated from profile YAML.
@@ -272,6 +278,46 @@ class FabricSparkCredentials(Credentials):
                 "authentication='token_credential'."
             )
 
+        if self.job_retry_max_attempts < 1:
+            raise DbtRuntimeError(
+                f"job_retry_max_attempts must be >= 1; got {self.job_retry_max_attempts}"
+            )
+        if (
+            not math.isfinite(self.job_retry_initial_wait_seconds)
+            or self.job_retry_initial_wait_seconds <= 0
+        ):
+            raise DbtRuntimeError(
+                "job_retry_initial_wait_seconds must be finite and > 0; "
+                f"got {self.job_retry_initial_wait_seconds}"
+            )
+        if (
+            not math.isfinite(self.job_retry_max_wait_seconds)
+            or self.job_retry_max_wait_seconds <= 0
+        ):
+            raise DbtRuntimeError(
+                "job_retry_max_wait_seconds must be finite and > 0; "
+                f"got {self.job_retry_max_wait_seconds}"
+            )
+        if self.job_retry_initial_wait_seconds > self.job_retry_max_wait_seconds:
+            raise DbtRuntimeError(
+                "job_retry_initial_wait_seconds must be <= "
+                "job_retry_max_wait_seconds; "
+                f"got {self.job_retry_initial_wait_seconds} > "
+                f"{self.job_retry_max_wait_seconds}"
+            )
+        for entry in self.job_retry_on_messages:
+            if not isinstance(entry, str) or not entry:
+                raise DbtRuntimeError(
+                    f"job_retry_on_messages entries must be non-empty strings; got {entry!r}"
+                )
+            if entry.startswith("re:"):
+                try:
+                    re.compile(entry[3:])
+                except re.error as exc:
+                    raise DbtRuntimeError(
+                        f"Invalid job_retry_on_messages regex {entry!r}: {exc}"
+                    ) from exc
+
     def apply_lakehouse_properties(self, lakehouse_properties: dict) -> None:
         """Apply lakehouse properties after fetching them from the Fabric REST API.
 
@@ -367,6 +413,11 @@ class FabricSparkCredentials(Credentials):
             "workspace_name",
             "quote_identifiers",
             "auto_optimize",
+            "enable_job_retry",
+            "job_retry_on_messages",
+            "job_retry_max_attempts",
+            "job_retry_initial_wait_seconds",
+            "job_retry_max_wait_seconds",
             "enable_experimental_unstable",
             "high_concurrency",
             "spark_config",

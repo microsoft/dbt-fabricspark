@@ -57,3 +57,19 @@ prompts:
     hint: '1 or more'
     type: 'int'
     default: 1
+  enable_job_retry:
+    hint: Retry only the failed Spark SQL statement when its error matches job_retry_on_messages.
+    type: 'bool'
+    default: true
+  job_retry_max_attempts:
+    hint: Total query attempts when a configured message matches.
+    type: 'int'
+    default: 3
+  job_retry_initial_wait_seconds:
+    hint: Initial wait before retrying a matching failed query.
+    type: 'float'
+    default: 30
+  job_retry_max_wait_seconds:
+    hint: Maximum wait between matching query retries.
+    type: 'float'
+    default: 300

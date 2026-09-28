@@ -2,7 +2,13 @@
 
 ## v1.13.7
 
-- Added experimental feature flags
+### Features
+
+- Added experimental feature flags for Spark Declarative Pipeline `STREAMING` tables and `MATERIALIZED VIEW`.
+- Added opt-in, message-pattern-based retries for an individual failed Spark SQL
+  statement. Profiles can configure plain substrings or `re:` regular
+  expressions, total attempts, and capped exponential backoff. Defaults contain
+  no patterns, so existing projects do not retry additional statements.
 
 ## v1.13.6
 

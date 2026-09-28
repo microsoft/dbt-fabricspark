@@ -38,6 +38,7 @@ from dbt.adapters.fabricspark.livysession import (
     LivySessionManager,
     get_lakehouse_properties,
 )
+from dbt.adapters.fabricspark.message_retry import MessageRetryPolicy
 from dbt.adapters.fabricspark.relation import FabricSparkRelation
 from dbt.adapters.sql import SQLConnectionManager
 
@@ -167,6 +168,7 @@ class FabricSparkConnectionManager(SQLConnectionManager):
         self._hc_pool: Optional[HighConcurrencyReplPool] = None
 
         creds = profile.credentials
+        self._job_retry_policy = MessageRetryPolicy.for_job_retry(creds)
         if (
             creds.method == FabricSparkConnectionMethod.LIVY
             and creds.high_concurrency
@@ -553,68 +555,70 @@ class FabricSparkConnectionManager(SQLConnectionManager):
             sql: str,
             bindings: Optional[Any],
             retryable_exceptions: Tuple[Type[Exception], ...],
-            retry_limit: int,
-            attempt: int,
         ):
-            """
-            A success sees the try exit cleanly and avoid any recursive
-            retries. Failure begins a sleep and retry routine.
-            """
-            retry_limit = connection.credentials.connect_retries or 3
-            try:
-                cursor.execute(sql, bindings)
-            except Exception as e:
-                if self.retries_disabled():
-                    raise e
+            attempt = 1
+            generic_attempt_limit = connection.credentials.connect_retries or 3
+            while True:
+                try:
+                    cursor.execute(sql, bindings)
+                    return
+                except Exception as e:
+                    if self.retries_disabled():
+                        raise
 
-                is_type_retryable = (
-                    isinstance(e, retryable_exceptions) if retryable_exceptions else False
-                )
-                retryable_message = _is_retryable_error(e)
-
-                # retry_all: fall back to retrying even if the error message
-                # doesn't match a known retryable pattern.  Statement-timeout
-                # errors are still excluded (they are already filtered out by
-                # _is_retryable_error returning "").  Permanent Spark structured
-                # errors (e.g. [SCHEMA_NOT_FOUND]) are also excluded — they will
-                # never succeed on retry and would cause a multi-minute stall.
-                is_retry_all_fallback = (
-                    not is_type_retryable
-                    and not retryable_message
-                    and getattr(connection.credentials, "retry_all", False)
-                    and "increase `statement_timeout` in profiles.yml" not in str(e).lower()
-                    and not _is_permanent_error(e)
-                )
-
-                if not is_type_retryable and not retryable_message and not is_retry_all_fallback:
-                    raise e
-
-                # Cease retries and fail when limit is hit.
-                if attempt >= retry_limit:
-                    raise e
-
-                retry_reason = (
-                    "retry_all"
-                    if is_retry_all_fallback
-                    else ("retryable_type" if is_type_retryable else "retryable_message")
-                )
-                fire_event(
-                    AdapterEventDebug(
-                        name="FabricSpark",
-                        base_msg=f"Got a retryable error ({retry_reason}) {type(e)}. {retry_limit - attempt} retries left. Retrying in {min(5 * (2 ** (attempt - 1)), 60)} seconds.\nError:\n{e}",
-                        args=[],
+                    message = str(e).lower()
+                    is_statement_timeout = (
+                        "increase `statement_timeout` in profiles.yml" in message
                     )
-                )
-                time.sleep(min(5 * (2 ** (attempt - 1)), 60))
+                    is_permanent = _is_permanent_error(e)
+                    job_retry_match = (
+                        None if is_statement_timeout or is_permanent else retry_policy.matches(e)
+                    )
 
-                return _execute_query_with_retry(
-                    cursor=cursor,
-                    sql=sql,
-                    bindings=bindings,
-                    retryable_exceptions=retryable_exceptions,
-                    retry_limit=retry_limit,
-                    attempt=attempt + 1,
-                )
+                    is_type_retryable = (
+                        isinstance(e, retryable_exceptions) if retryable_exceptions else False
+                    )
+                    retryable_message = _is_retryable_error(e)
+                    is_retry_all_fallback = (
+                        job_retry_match is None
+                        and not is_type_retryable
+                        and not retryable_message
+                        and getattr(connection.credentials, "retry_all", False)
+                        and not is_statement_timeout
+                        and not is_permanent
+                    )
+
+                    if job_retry_match is not None:
+                        attempt_limit = retry_policy.max_retries + 1
+                        delay = retry_policy.delay_for_attempt(attempt)
+                        retry_reason = f"job_retry:{job_retry_match}"
+                    elif is_type_retryable or retryable_message or is_retry_all_fallback:
+                        attempt_limit = generic_attempt_limit
+                        delay = min(5 * (2 ** (attempt - 1)), 60)
+                        retry_reason = (
+                            "retry_all"
+                            if is_retry_all_fallback
+                            else ("retryable_type" if is_type_retryable else "retryable_message")
+                        )
+                    else:
+                        raise
+
+                    if attempt >= attempt_limit:
+                        raise
+
+                    fire_event(
+                        AdapterEventDebug(
+                            name="FabricSpark",
+                            base_msg=(
+                                f"Got a retryable error ({retry_reason}) {type(e)}. "
+                                f"{attempt_limit - attempt} retries left. "
+                                f"Retrying in {delay} seconds.\nError:\n{e}"
+                            ),
+                            args=[],
+                        )
+                    )
+                    time.sleep(delay)
+                    attempt += 1
 
         connection = self.get_thread_connection()
         if auto_begin and connection.transaction_open is False:
@@ -633,13 +637,16 @@ class FabricSparkConnectionManager(SQLConnectionManager):
             cursor = connection.handle.cursor()
 
             try:
+                retry_policy = getattr(
+                    self,
+                    "_job_retry_policy",
+                    MessageRetryPolicy.disabled(),
+                )
                 _execute_query_with_retry(
                     cursor=cursor,
                     sql=sql,
                     bindings=bindings,
                     retryable_exceptions=retryable_exceptions,
-                    retry_limit=retry_limit,
-                    attempt=1,
                 )
             except Exception as ex:
                 query_exception = ex

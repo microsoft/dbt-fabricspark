@@ -313,6 +313,58 @@ def test_other_retryable_keywords_still_work() -> None:
         assert _is_retryable_error(exc) != "", f"Expected '{keyword}' to be retryable"
 
 
+class TestJobRetryFields:
+    def test_defaults(self) -> None:
+        credentials = FabricSparkCredentials(**_base_fabric_kwargs())
+        assert credentials.enable_job_retry is True
+        assert credentials.job_retry_on_messages == []
+        assert credentials.job_retry_max_attempts == 3
+        assert credentials.job_retry_initial_wait_seconds == 30.0
+        assert credentials.job_retry_max_wait_seconds == 300.0
+
+    def test_custom_values_and_connection_keys(self) -> None:
+        credentials = FabricSparkCredentials(
+            enable_job_retry=False,
+            job_retry_on_messages=["re:ServerBusy", "Transient"],
+            job_retry_max_attempts=5,
+            job_retry_initial_wait_seconds=10,
+            job_retry_max_wait_seconds=120,
+            **_base_fabric_kwargs(),
+        )
+        assert credentials.enable_job_retry is False
+        assert credentials.job_retry_on_messages == ["re:ServerBusy", "Transient"]
+        assert credentials.job_retry_max_attempts == 5
+        keys = credentials._connection_keys()
+        assert "enable_job_retry" in keys
+        assert "job_retry_on_messages" in keys
+        assert "job_retry_max_attempts" in keys
+        assert "job_retry_initial_wait_seconds" in keys
+        assert "job_retry_max_wait_seconds" in keys
+
+    @pytest.mark.parametrize(
+        "kwargs, message",
+        [
+            ({"job_retry_max_attempts": 0}, "job_retry_max_attempts"),
+            ({"job_retry_initial_wait_seconds": 0}, "job_retry_initial_wait_seconds"),
+            ({"job_retry_initial_wait_seconds": float("nan")}, "finite"),
+            ({"job_retry_max_wait_seconds": 0}, "job_retry_max_wait_seconds"),
+            ({"job_retry_max_wait_seconds": float("inf")}, "finite"),
+            (
+                {
+                    "job_retry_initial_wait_seconds": 20,
+                    "job_retry_max_wait_seconds": 10,
+                },
+                "must be <=",
+            ),
+            ({"job_retry_on_messages": [""]}, "non-empty"),
+            ({"job_retry_on_messages": ["re:["]}, "Invalid"),
+        ],
+    )
+    def test_invalid_values(self, kwargs, message) -> None:
+        with pytest.raises(DbtRuntimeError, match=message):
+            FabricSparkCredentials(**kwargs, **_base_fabric_kwargs())
+
+
 # --- Tests for _is_permanent_error (SCHEMA_NOT_FOUND retry-storm regression) ---
 
 

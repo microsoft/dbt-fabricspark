@@ -110,9 +110,9 @@ cat > "${JAFFLE_SHOP_DIR}/macros/local_overrides.sql" <<'MACROEOF'
   {%- call statement('insert_e2e_orders') -%}
     insert into {{ database_name }}.raw_orders (id, user_id, order_date, status)
     values
-      (100, 1, '2018-04-10', 'placed'),
-      (101, 2, '2018-04-11', 'completed'),
-      (102, 3, '2018-04-12', 'shipped')
+      (100, 1, date '2018-04-10', 'placed'),
+      (101, 2, date '2018-04-11', 'completed'),
+      (102, 3, date '2018-04-12', 'shipped')
   {%- endcall -%}
   {%- call statement('insert_e2e_payments') -%}
     insert into {{ database_name }}.raw_payments (id, order_id, payment_method, amount)

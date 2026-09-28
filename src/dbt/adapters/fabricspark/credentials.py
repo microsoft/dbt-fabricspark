@@ -1,3 +1,4 @@
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -30,6 +31,14 @@ LivyMode = Literal["fabric", "local"]
 DEFAULT_SESSION_ID_FILENAME = "livy-session-id.txt"
 
 
+def _validate_experimental_flag(value: Any) -> None:
+    if not isinstance(value, bool):
+        raise DbtRuntimeError(
+            "enable_experimental_unstable must be a boolean in profiles.yml; "
+            "use true or false, not a quoted string or a number."
+        )
+
+
 @dataclass
 class FabricSparkCredentials(Credentials):
     # schema: user-provided from profiles.yml. Defaults to lakehouse name.
@@ -57,6 +66,11 @@ class FabricSparkCredentials(Credentials):
     connect_timeout: int = 10
     create_shortcuts: Optional[bool] = False
     retry_all: bool = False
+    enable_job_retry: bool = True
+    job_retry_on_messages: list[str] = field(default_factory=list)
+    job_retry_max_attempts: int = 3
+    job_retry_initial_wait_seconds: float = 30.0
+    job_retry_max_wait_seconds: float = 300.0
     shortcuts_json_str: Optional[str] = None
     # Auto-detected at connection time via Fabric REST API; not user-configurable.
     # init=False ensures this is never populated from profile YAML.
@@ -124,6 +138,7 @@ class FabricSparkCredentials(Credentials):
     # individual models can override with ``config(auto_optimize=...)`` and the
     # ``DBT_FABRICSPARK_SKIP_OPTIMIZE`` environment variable disables it outright.
     auto_optimize: bool = True
+    enable_experimental_unstable: bool = False
 
     def __repr__(self) -> str:
         """Mask sensitive fields in repr to prevent credential leakage in logs/tracebacks."""
@@ -143,6 +158,7 @@ class FabricSparkCredentials(Credentials):
 
     @classmethod
     def __pre_deserialize__(cls, data: Any) -> Any:
+        _validate_experimental_flag(data.get("enable_experimental_unstable", False))
         data = super().__pre_deserialize__(data)
         if "lakehouse" not in data:
             data["lakehouse"] = None
@@ -175,6 +191,7 @@ class FabricSparkCredentials(Credentials):
         return f"{self.endpoint}/workspaces/{self.workspaceid}/lakehouses/{self.lakehouseid}/livyapi/versions/2023-12-01"
 
     def __post_init__(self) -> None:
+        _validate_experimental_flag(self.enable_experimental_unstable)
         if self.method is None:
             raise DbtRuntimeError("Must specify `method` in profile")
 
@@ -260,6 +277,46 @@ class FabricSparkCredentials(Credentials):
                 "`credential_class` and `credential_kwargs` are only valid when "
                 "authentication='token_credential'."
             )
+
+        if self.job_retry_max_attempts < 1:
+            raise DbtRuntimeError(
+                f"job_retry_max_attempts must be >= 1; got {self.job_retry_max_attempts}"
+            )
+        if (
+            not math.isfinite(self.job_retry_initial_wait_seconds)
+            or self.job_retry_initial_wait_seconds <= 0
+        ):
+            raise DbtRuntimeError(
+                "job_retry_initial_wait_seconds must be finite and > 0; "
+                f"got {self.job_retry_initial_wait_seconds}"
+            )
+        if (
+            not math.isfinite(self.job_retry_max_wait_seconds)
+            or self.job_retry_max_wait_seconds <= 0
+        ):
+            raise DbtRuntimeError(
+                "job_retry_max_wait_seconds must be finite and > 0; "
+                f"got {self.job_retry_max_wait_seconds}"
+            )
+        if self.job_retry_initial_wait_seconds > self.job_retry_max_wait_seconds:
+            raise DbtRuntimeError(
+                "job_retry_initial_wait_seconds must be <= "
+                "job_retry_max_wait_seconds; "
+                f"got {self.job_retry_initial_wait_seconds} > "
+                f"{self.job_retry_max_wait_seconds}"
+            )
+        for entry in self.job_retry_on_messages:
+            if not isinstance(entry, str) or not entry:
+                raise DbtRuntimeError(
+                    f"job_retry_on_messages entries must be non-empty strings; got {entry!r}"
+                )
+            if entry.startswith("re:"):
+                try:
+                    re.compile(entry[3:])
+                except re.error as exc:
+                    raise DbtRuntimeError(
+                        f"Invalid job_retry_on_messages regex {entry!r}: {exc}"
+                    ) from exc
 
     def apply_lakehouse_properties(self, lakehouse_properties: dict) -> None:
         """Apply lakehouse properties after fetching them from the Fabric REST API.
@@ -356,6 +413,12 @@ class FabricSparkCredentials(Credentials):
             "workspace_name",
             "quote_identifiers",
             "auto_optimize",
+            "enable_job_retry",
+            "job_retry_on_messages",
+            "job_retry_max_attempts",
+            "job_retry_initial_wait_seconds",
+            "job_retry_max_wait_seconds",
+            "enable_experimental_unstable",
             "high_concurrency",
             "spark_config",
         )

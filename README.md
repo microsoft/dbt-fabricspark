@@ -816,8 +816,12 @@ JOIN {{ ref('bronze_products') }} p
 | `mlv_constraints` | list   | `[]`             | Data quality constraints (see below)             |
 | `tblproperties`   | dict   | —                | Key-value metadata properties                    |
 | `enable_cdf`      | bool   | `true`           | Auto-enable Change Data Feed on source tables    |
-| `mlv_on_demand`   | bool   | `false`          | Trigger immediate refresh after creation         |
+| `mlv_on_demand`   | bool   | `false`          | Trigger a targeted refresh after creation        |
 | `mlv_schedule`    | dict   | —                | Schedule config for periodic refresh (see below) |
+
+Both refresh options are optional. `CREATE OR REPLACE MATERIALIZED LAKE VIEW`
+materializes the definition, so models can omit them when dbt should only deploy
+the definition and a separate process owns ongoing refreshes.
 
 #### Data Quality Constraints
 
@@ -850,7 +854,7 @@ The adapter automatically enables [Change Data Feed](https://learn.microsoft.com
 
 #### On-Demand Refresh
 
-Trigger an immediate MLV lineage refresh after creation:
+Trigger an immediate refresh of only the MLV created by the model:
 
 ```sql
 {{ config(
@@ -859,11 +863,17 @@ Trigger an immediate MLV lineage refresh after creation:
 ) }}
 ```
 
-This calls the Fabric Job Scheduler API:
+The adapter creates a temporary MLV execution definition that selects the
+current `schema.identifier`, calls the Fabric Job Scheduler API with that
+definition, waits for the targeted job to complete, and then deletes the
+temporary definition:
 
 ```
 POST /v1/workspaces/{workspaceId}/lakehouses/{lakehouseId}/jobs/RefreshMaterializedLakeViews/instances
 ```
+
+`Cancelled` and `Deduped` jobs are retried within `statement_timeout`; they are
+not treated as successful refreshes.
 
 #### Scheduled Refresh
 

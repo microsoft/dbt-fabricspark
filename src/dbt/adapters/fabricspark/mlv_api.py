@@ -13,6 +13,7 @@ from __future__ import annotations
 import random
 import time
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 import requests
 from dbt_common.exceptions import DbtRuntimeError
@@ -47,6 +48,7 @@ _NOT_FOUND_ERROR_CODES = {
     "MLV_NOT_FOUND",
     "MLV_LINEAGE_NOT_FOUND",
     "MLV_ARTIFACT_NOT_FOUND",
+    "MLV_SOURCE_ENTITY_NOT_FOUND",
 }
 
 # Cache: workspace_id -> {lakehouse_name -> lakehouse_id}
@@ -243,6 +245,85 @@ def _job_instance_url(
     )
 
 
+def _execution_definitions_url(
+    credentials: FabricSparkCredentials, lakehouse_id: Optional[str] = None
+) -> str:
+    """Build the base URL for MLV execution definition API calls."""
+    lh_id = lakehouse_id or credentials.lakehouseid
+    return (
+        f"{credentials.endpoint}/workspaces/{credentials.workspaceid}"
+        f"/lakehouses/{lh_id}/mlvexecutiondefinitions"
+    )
+
+
+def create_execution_definition(
+    credentials: FabricSparkCredentials,
+    mlv_name: str,
+    lakehouse_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a temporary execution definition targeting one MLV."""
+    url = _execution_definitions_url(credentials, lakehouse_id)
+    headers = get_headers(credentials)
+    payload = {
+        "displayName": f"dbt-fabricspark-{uuid4().hex}",
+        "description": f"Temporary on-demand refresh for {mlv_name}",
+        "settings": {"refreshMode": "Optimal"},
+        "currentLakehouseExecutionContext": {
+            "mode": "Selected",
+            "selectedMlvs": [mlv_name],
+        },
+    }
+
+    logger.info(f"Creating targeted MLV execution definition for {mlv_name}: POST {url}")
+    response = _request_with_retry(
+        "POST",
+        url,
+        headers,
+        operation=f"create MLV execution definition for {mlv_name}",
+        timeout=credentials.http_timeout,
+        json_body=payload,
+    )
+
+    try:
+        result = response.json()
+    except ValueError:
+        result = {}
+
+    location = response.headers.get("Location", "")
+    definition_id = result.get("id") or (
+        location.rstrip("/").rsplit("/", 1)[-1] if location else ""
+    )
+    if not definition_id:
+        raise MLVApiError(
+            f"create MLV execution definition for {mlv_name}",
+            "Could not extract the execution definition ID from the response.",
+        )
+
+    result["id"] = definition_id
+    logger.info(f"Targeted MLV execution definition created: {definition_id}")
+    return result
+
+
+def delete_execution_definition(
+    credentials: FabricSparkCredentials,
+    execution_definition_id: str,
+    lakehouse_id: Optional[str] = None,
+) -> None:
+    """Delete a temporary MLV execution definition."""
+    url = f"{_execution_definitions_url(credentials, lakehouse_id)}/{execution_definition_id}"
+    headers = get_headers(credentials)
+    logger.info(f"Deleting MLV execution definition {execution_definition_id}: DELETE {url}")
+
+    _request_with_retry(
+        "DELETE",
+        url,
+        headers,
+        operation=f"delete MLV execution definition {execution_definition_id}",
+        timeout=credentials.http_timeout,
+    )
+    logger.info(f"MLV execution definition {execution_definition_id} deleted.")
+
+
 # Terminal job statuses — polling stops when one of these is reached
 _TERMINAL_STATUSES = {"Completed", "Failed", "Cancelled", "Deduped"}
 
@@ -349,20 +430,6 @@ def poll_job_instance_until_complete(
             logger.info(f"MLV on-demand refresh completed successfully (job {job_instance_id}).")
             return job
 
-        if status in {"Cancelled", "Deduped"}:
-            # Fabric returns ``Cancelled``/``Deduped`` when a concurrent (or
-            # previously queued) refresh supersedes this one. The underlying
-            # lineage is (or will be) refreshed by the other job, so from the
-            # caller's perspective this is a successful no-op rather than a
-            # failure. Surfacing it as success avoids brittle retry storms when
-            # multiple tests in the same lakehouse trigger refreshes in quick
-            # succession.
-            logger.info(
-                f"MLV on-demand refresh superseded by concurrent job "
-                f"(job {job_instance_id}, status={status}); treating as success."
-            )
-            return job
-
         if status in _TERMINAL_STATUSES:
             detail = failure_reason or f"Job ended with status: {status}"
             raise MLVApiError(
@@ -389,22 +456,22 @@ def _is_throttle_failure(failure_reason: Any) -> bool:
 
 def run_on_demand_refresh(
     credentials: FabricSparkCredentials,
+    mlv_name: str,
     lakehouse_id: Optional[str] = None,
     max_retries: int = 6,
 ) -> Dict[str, Any]:
-    """Trigger an immediate refresh of MLV lineage and poll until completion.
+    """Trigger a targeted MLV refresh and poll until completion.
 
-    1. POST .../jobs/RefreshMaterializedLakeViews/instances → 202 Accepted
-    2. Extract job instance ID from the ``Location`` header
-    3. Poll GET .../jobs/instances/{jobInstanceId} until terminal status
-    4. Raise ``MLVApiError`` if the job fails or times out
+    1. Create a temporary execution definition selecting ``mlv_name``.
+    2. POST .../jobs/RefreshMaterializedLakeViews/instances with that definition.
+    3. Poll GET .../jobs/instances/{jobInstanceId} until terminal status.
+    4. Delete the temporary execution definition.
+    5. Raise ``MLVApiError`` if the job fails or times out.
 
     Transient conditions that trigger a retry of the full POST+poll cycle:
     - ``Cancelled`` / ``Deduped``: concurrent refresh superseded this one.
-    - ``MLV_NOT_FOUND`` / ``MLV_LINEAGE_NOT_FOUND`` / ``MLV_ARTIFACT_NOT_FOUND``:
-      the job could not resolve the MLV or its lakehouse, either because Fabric's
-      item metadata had not caught up with a just-created MLV or because a
-      concurrent worker dropped one between POST and job execution.
+    - MLV metadata-not-found errors: Fabric metadata has not caught up with the
+      just-created MLV or one of its sources.
     - ``Failed`` with a throttle error code (e.g. ``MLV_SPARK_JOB_CAPACITY_THROTTLING``):
       Fabric couldn't allocate Spark capacity; retry after backoff.
 
@@ -414,70 +481,88 @@ def run_on_demand_refresh(
     url = f"{_base_url(credentials, lakehouse_id)}/instances"
     headers = get_headers(credentials)
     last_err: Optional[MLVApiError] = None
+    execution_definition = create_execution_definition(credentials, mlv_name, lakehouse_id)
+    execution_definition_id = execution_definition["id"]
+    refresh_error: Optional[MLVApiError] = None
 
-    # Overall deadline for all retries so we never exceed statement_timeout.
-    overall_deadline = time.time() + credentials.statement_timeout
+    try:
+        overall_deadline = time.time() + credentials.statement_timeout
 
-    for attempt in range(1, max_retries + 1):
-        if time.time() >= overall_deadline:
-            raise last_err or MLVApiError(
-                "on-demand MLV refresh",
-                f"Overall deadline exceeded after {attempt - 1} attempts.",
+        for attempt in range(1, max_retries + 1):
+            if time.time() >= overall_deadline:
+                raise last_err or MLVApiError(
+                    "on-demand MLV refresh",
+                    f"Overall deadline exceeded after {attempt - 1} attempts.",
+                )
+
+            logger.info(
+                f"Triggering targeted on-demand MLV refresh for {mlv_name}: "
+                f"POST {url} (attempt {attempt}/{max_retries})"
             )
-
-        logger.info(
-            f"Triggering on-demand MLV refresh: POST {url} (attempt {attempt}/{max_retries})"
-        )
-        response = _request_with_retry(
-            "POST",
-            url,
-            headers,
-            operation="on-demand MLV refresh",
-            timeout=credentials.http_timeout,
-        )
-        location = response.headers.get("Location", "")
-        logger.info(f"On-demand MLV refresh triggered. Job instance URL: {location}")
-
-        job_instance_id = location.rstrip("/").rsplit("/", 1)[-1] if location else ""
-        if not job_instance_id:
-            raise MLVApiError(
-                "on-demand MLV refresh",
-                f"Could not extract job instance ID from Location header. Location: '{location}'",
+            response = _request_with_retry(
+                "POST",
+                url,
+                headers,
+                operation=f"on-demand MLV refresh for {mlv_name}",
+                timeout=credentials.http_timeout,
+                json_body={
+                    "executionData": {
+                        "mlvExecutionDefinitionId": execution_definition_id,
+                    }
+                },
             )
+            location = response.headers.get("Location", "")
+            logger.info(f"On-demand MLV refresh triggered. Job instance URL: {location}")
 
+            job_instance_id = location.rstrip("/").rsplit("/", 1)[-1] if location else ""
+            if not job_instance_id:
+                raise MLVApiError(
+                    "on-demand MLV refresh",
+                    f"Could not extract job instance ID from Location header. "
+                    f"Location: '{location}'",
+                )
+
+            try:
+                return poll_job_instance_until_complete(
+                    credentials, job_instance_id, lakehouse_id, deadline=overall_deadline
+                )
+            except MLVApiError as err:
+                msg = str(err)
+                transient = (
+                    "Cancelled" in msg
+                    or "Deduped" in msg
+                    or any(code in msg for code in _NOT_FOUND_ERROR_CODES)
+                )
+                if not transient and "Failed" in msg:
+                    transient = any(code in msg for code in _THROTTLE_ERROR_CODES)
+
+                if not transient or attempt >= max_retries:
+                    raise
+                last_err = err
+                wait = min(2 ** (attempt - 1) * 4.0, 120.0) + random.uniform(0, 5.0)
+                remaining = overall_deadline - time.time()
+                if wait > remaining:
+                    raise
+                logger.warning(
+                    f"MLV refresh transient failure (attempt {attempt}/{max_retries}): "
+                    f"{msg}. Retrying in {wait:.1f}s (remaining budget: {remaining:.0f}s)."
+                )
+                time.sleep(wait)
+
+        raise last_err or MLVApiError("on-demand MLV refresh", "exhausted retries")
+    except MLVApiError as err:
+        refresh_error = err
+        raise
+    finally:
         try:
-            return poll_job_instance_until_complete(
-                credentials, job_instance_id, lakehouse_id, deadline=overall_deadline
-            )
-        except MLVApiError as err:
-            msg = str(err)
-            # Determine if this is a transient failure worth retrying.
-            transient = (
-                "Cancelled" in msg
-                or "Deduped" in msg
-                or any(code in msg for code in _NOT_FOUND_ERROR_CODES)
-            )
-            # Also retry Failed jobs when Fabric reports a throttle error code.
-            if not transient and "Failed" in msg:
-                # Try to extract the structured failureReason from the error.
-                transient = any(code in msg for code in _THROTTLE_ERROR_CODES)
-
-            if not transient or attempt >= max_retries:
+            delete_execution_definition(credentials, execution_definition_id, lakehouse_id)
+        except MLVApiError as cleanup_error:
+            if refresh_error is None:
                 raise
-            last_err = err
-            # Jittered exponential backoff; capped at 120s to survive sustained throttle.
-            wait = min(2 ** (attempt - 1) * 4.0, 120.0) + random.uniform(0, 5.0)
-            remaining = overall_deadline - time.time()
-            if wait > remaining:
-                raise  # Not enough time for another attempt
             logger.warning(
-                f"MLV refresh transient failure (attempt {attempt}/{max_retries}): "
-                f"{msg}. Retrying in {wait:.1f}s (remaining budget: {remaining:.0f}s)."
+                f"Could not delete temporary MLV execution definition "
+                f"{execution_definition_id} after refresh failure: {cleanup_error}"
             )
-            time.sleep(wait)
-
-    # Should be unreachable: loop always returns or raises.
-    raise last_err or MLVApiError("on-demand MLV refresh", "exhausted retries")
 
 
 def list_schedules(

@@ -9,12 +9,15 @@ from dbt.adapters.fabricspark.mlv_api import (
     MAX_RETRIES,
     MLVApiError,
     _base_url,
+    _execution_definitions_url,
     _extract_error_detail,
     _job_instance_url,
     _lakehouse_id_cache,
     _request_with_retry,
+    create_execution_definition,
     create_or_update_schedule,
     create_schedule,
+    delete_execution_definition,
     delete_schedule,
     get_job_instance,
     list_schedules,
@@ -174,6 +177,93 @@ class TestJobInstanceUrl:
         )
 
 
+class TestExecutionDefinitionUrl:
+    def test_uses_credentials_lakehouse(self, mock_credentials):
+        url = _execution_definitions_url(mock_credentials)
+        assert url == (
+            "https://api.fabric.microsoft.com/v1/workspaces/ws-1234"
+            "/lakehouses/lh-5678/mlvexecutiondefinitions"
+        )
+
+    def test_uses_override_lakehouse(self, mock_credentials):
+        url = _execution_definitions_url(mock_credentials, "lh-override")
+        assert url == (
+            "https://api.fabric.microsoft.com/v1/workspaces/ws-1234"
+            "/lakehouses/lh-override/mlvexecutiondefinitions"
+        )
+
+
+class TestExecutionDefinitions:
+    @patch("dbt.adapters.fabricspark.mlv_api.uuid4")
+    @patch("dbt.adapters.fabricspark.mlv_api.get_headers")
+    @patch("dbt.adapters.fabricspark.mlv_api._request_with_retry")
+    def test_creates_targeted_definition(
+        self, mock_request, mock_headers, mock_uuid, mock_credentials
+    ):
+        mock_headers.return_value = {"Authorization": "******"}
+        mock_uuid.return_value.hex = "unique"
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"id": "definition-1"}
+        mock_response.headers = {}
+        mock_request.return_value = mock_response
+
+        result = create_execution_definition(mock_credentials, "dbo.model_a")
+
+        assert result["id"] == "definition-1"
+        assert mock_request.call_args.kwargs["json_body"] == {
+            "displayName": "dbt-fabricspark-unique",
+            "description": "Temporary on-demand refresh for dbo.model_a",
+            "settings": {"refreshMode": "Optimal"},
+            "currentLakehouseExecutionContext": {
+                "mode": "Selected",
+                "selectedMlvs": ["dbo.model_a"],
+            },
+        }
+
+    @patch("dbt.adapters.fabricspark.mlv_api.get_headers")
+    @patch("dbt.adapters.fabricspark.mlv_api._request_with_retry")
+    def test_uses_location_when_response_has_no_id(
+        self, mock_request, mock_headers, mock_credentials
+    ):
+        mock_headers.return_value = {"Authorization": "******"}
+        mock_response = MagicMock()
+        mock_response.json.return_value = {}
+        mock_response.headers = {
+            "Location": "https://api.fabric.microsoft.com/.../definition-from-location"
+        }
+        mock_request.return_value = mock_response
+
+        result = create_execution_definition(mock_credentials, "dbo.model_a")
+
+        assert result["id"] == "definition-from-location"
+
+    @patch("dbt.adapters.fabricspark.mlv_api.get_headers")
+    @patch("dbt.adapters.fabricspark.mlv_api._request_with_retry")
+    def test_raises_when_response_has_no_id(self, mock_request, mock_headers, mock_credentials):
+        mock_headers.return_value = {"Authorization": "******"}
+        mock_response = MagicMock()
+        mock_response.json.return_value = {}
+        mock_response.headers = {}
+        mock_request.return_value = mock_response
+
+        with pytest.raises(MLVApiError, match="Could not extract"):
+            create_execution_definition(mock_credentials, "dbo.model_a")
+
+    @patch("dbt.adapters.fabricspark.mlv_api.get_headers")
+    @patch("dbt.adapters.fabricspark.mlv_api._request_with_retry")
+    def test_deletes_definition(self, mock_request, mock_headers, mock_credentials):
+        mock_headers.return_value = {"Authorization": "******"}
+        mock_request.return_value = MagicMock(status_code=200)
+
+        delete_execution_definition(mock_credentials, "definition-1", "lh-override")
+
+        assert (
+            mock_request.call_args.args[1]
+            == "https://api.fabric.microsoft.com/v1/workspaces/ws-1234"
+            "/lakehouses/lh-override/mlvexecutiondefinitions/definition-1"
+        )
+
+
 class TestGetJobInstance:
     @patch("dbt.adapters.fabricspark.mlv_api.get_headers")
     @patch("dbt.adapters.fabricspark.mlv_api._request_with_retry")
@@ -211,25 +301,12 @@ class TestPollJobInstanceUntilComplete:
         with pytest.raises(MLVApiError, match="OOM error"):
             poll_job_instance_until_complete(mock_credentials, "job-1")
 
-    @patch("dbt.adapters.fabricspark.mlv_api.time.sleep")
+    @pytest.mark.parametrize("status", ["Cancelled", "Deduped"])
     @patch("dbt.adapters.fabricspark.mlv_api.get_job_instance")
-    def test_treats_cancelled_as_success(self, mock_get, mock_sleep, mock_credentials):
-        """``Cancelled``/``Deduped`` indicate the refresh was superseded by a
-        concurrent job — the lineage is (or will be) refreshed by that job, so
-        we surface this as a successful no-op rather than raising.
-        """
-        job = {"status": "Cancelled", "failureReason": None}
-        mock_get.return_value = job
-        result = poll_job_instance_until_complete(mock_credentials, "job-1")
-        assert result == job
-
-    @patch("dbt.adapters.fabricspark.mlv_api.time.sleep")
-    @patch("dbt.adapters.fabricspark.mlv_api.get_job_instance")
-    def test_treats_deduped_as_success(self, mock_get, mock_sleep, mock_credentials):
-        job = {"status": "Deduped", "failureReason": None}
-        mock_get.return_value = job
-        result = poll_job_instance_until_complete(mock_credentials, "job-1")
-        assert result == job
+    def test_raises_on_unverified_terminal_status(self, mock_get, status, mock_credentials):
+        mock_get.return_value = {"status": status, "failureReason": None}
+        with pytest.raises(MLVApiError, match=status):
+            poll_job_instance_until_complete(mock_credentials, "job-1")
 
     @patch("dbt.adapters.fabricspark.mlv_api.time.time")
     @patch("dbt.adapters.fabricspark.mlv_api.time.sleep")
@@ -244,12 +321,23 @@ class TestPollJobInstanceUntilComplete:
 
 
 class TestRunOnDemandRefresh:
+    @patch("dbt.adapters.fabricspark.mlv_api.delete_execution_definition")
+    @patch("dbt.adapters.fabricspark.mlv_api.create_execution_definition")
     @patch("dbt.adapters.fabricspark.mlv_api.poll_job_instance_until_complete")
     @patch("dbt.adapters.fabricspark.mlv_api.get_headers")
     @patch("dbt.adapters.fabricspark.mlv_api._request_with_retry")
-    def test_triggers_and_polls(self, mock_request, mock_headers, mock_poll, mock_credentials):
+    def test_triggers_targeted_refresh_and_cleans_up(
+        self,
+        mock_request,
+        mock_headers,
+        mock_poll,
+        mock_create,
+        mock_delete,
+        mock_credentials,
+    ):
         mock_headers.return_value = {"Authorization": "Bearer token"}
         mock_response = MagicMock()
+        mock_create.return_value = {"id": "definition-1"}
         mock_response.status_code = 202
         mock_response.headers = {
             "Location": "https://api.fabric.microsoft.com/v1/.../instances/job-123",
@@ -257,34 +345,67 @@ class TestRunOnDemandRefresh:
         mock_request.return_value = mock_response
         mock_poll.return_value = {"status": "Completed", "failureReason": None}
 
-        result = run_on_demand_refresh(mock_credentials)
+        result = run_on_demand_refresh(mock_credentials, "dbo.model_a", "lh-target")
 
+        mock_create.assert_called_once_with(mock_credentials, "dbo.model_a", "lh-target")
         mock_request.assert_called_once()
+        assert mock_request.call_args.kwargs["json_body"] == {
+            "executionData": {"mlvExecutionDefinitionId": "definition-1"}
+        }
         mock_poll.assert_called_once()
         call_args = mock_poll.call_args
-        assert call_args[0] == (mock_credentials, "job-123", None)
+        assert call_args[0] == (mock_credentials, "job-123", "lh-target")
         assert "deadline" in call_args[1]
+        mock_delete.assert_called_once_with(mock_credentials, "definition-1", "lh-target")
         assert result["status"] == "Completed"
 
+    @patch("dbt.adapters.fabricspark.mlv_api.delete_execution_definition")
+    @patch("dbt.adapters.fabricspark.mlv_api.create_execution_definition")
     @patch("dbt.adapters.fabricspark.mlv_api.get_headers")
     @patch("dbt.adapters.fabricspark.mlv_api._request_with_retry")
-    def test_raises_when_no_location_header(self, mock_request, mock_headers, mock_credentials):
+    def test_raises_when_no_location_header(
+        self, mock_request, mock_headers, mock_create, mock_delete, mock_credentials
+    ):
         mock_headers.return_value = {"Authorization": "Bearer token"}
         mock_response = MagicMock()
+        mock_create.return_value = {"id": "definition-1"}
         mock_response.headers = {"Location": ""}
         mock_request.return_value = mock_response
 
         with pytest.raises(MLVApiError, match="Could not extract job instance ID"):
-            run_on_demand_refresh(mock_credentials)
+            run_on_demand_refresh(mock_credentials, "dbo.model_a")
 
+        mock_delete.assert_called_once_with(mock_credentials, "definition-1", None)
+
+    @patch("dbt.adapters.fabricspark.mlv_api.delete_execution_definition")
+    @patch("dbt.adapters.fabricspark.mlv_api.create_execution_definition")
+    def test_does_not_cleanup_when_definition_creation_fails(
+        self, mock_create, mock_delete, mock_credentials
+    ):
+        mock_create.side_effect = MLVApiError(
+            "create MLV execution definition", "HTTP 403 — Forbidden"
+        )
+
+        with pytest.raises(MLVApiError, match="Forbidden"):
+            run_on_demand_refresh(mock_credentials, "dbo.model_a")
+
+        mock_delete.assert_not_called()
+
+    @patch("dbt.adapters.fabricspark.mlv_api.delete_execution_definition")
+    @patch("dbt.adapters.fabricspark.mlv_api.create_execution_definition")
     @patch("dbt.adapters.fabricspark.mlv_api.get_headers")
     @patch("dbt.adapters.fabricspark.mlv_api._request_with_retry")
-    def test_propagates_api_error(self, mock_request, mock_headers, mock_credentials):
+    def test_propagates_api_error_and_cleans_up(
+        self, mock_request, mock_headers, mock_create, mock_delete, mock_credentials
+    ):
         mock_headers.return_value = {"Authorization": "Bearer token"}
+        mock_create.return_value = {"id": "definition-1"}
         mock_request.side_effect = MLVApiError("on-demand MLV refresh", "HTTP 403 — Forbidden")
 
         with pytest.raises(MLVApiError, match="Forbidden"):
-            run_on_demand_refresh(mock_credentials)
+            run_on_demand_refresh(mock_credentials, "dbo.model_a")
+
+        mock_delete.assert_called_once_with(mock_credentials, "definition-1", None)
 
     @pytest.mark.parametrize(
         "failure_reason",
@@ -294,10 +415,13 @@ class TestRunOnDemandRefresh:
             "Job failed. failureReason: {'errorCode': 'MLV_ARTIFACT_NOT_FOUND', "
             "'message': 'references a lakehouse that no longer exists or cannot be "
             "resolved', 'isRetriable': False}",
+            "Job failed. failureReason: {'errorCode': 'MLV_SOURCE_ENTITY_NOT_FOUND'}",
             "Job ended with status 'Cancelled'",
             "Job ended with status 'Deduped'",
         ],
     )
+    @patch("dbt.adapters.fabricspark.mlv_api.delete_execution_definition")
+    @patch("dbt.adapters.fabricspark.mlv_api.create_execution_definition")
     @patch("dbt.adapters.fabricspark.mlv_api.time.sleep")
     @patch("dbt.adapters.fabricspark.mlv_api.poll_job_instance_until_complete")
     @patch("dbt.adapters.fabricspark.mlv_api.get_headers")
@@ -308,10 +432,13 @@ class TestRunOnDemandRefresh:
         mock_headers,
         mock_poll,
         mock_sleep,
+        mock_create,
+        mock_delete,
         failure_reason,
         mock_credentials,
     ):
         mock_headers.return_value = {"Authorization": "******"}
+        mock_create.return_value = {"id": "definition-1"}
         mock_credentials.statement_timeout = 3600
         mock_response = MagicMock()
         mock_response.headers = {"Location": "https://api.fabric.microsoft.com/.../job-123"}
@@ -321,19 +448,31 @@ class TestRunOnDemandRefresh:
             {"status": "Completed", "failureReason": None},
         ]
 
-        result = run_on_demand_refresh(mock_credentials)
+        result = run_on_demand_refresh(mock_credentials, "dbo.model_a")
 
         assert result["status"] == "Completed"
         assert mock_poll.call_count == 2
+        assert mock_request.call_count == 2
+        mock_delete.assert_called_once_with(mock_credentials, "definition-1", None)
 
+    @patch("dbt.adapters.fabricspark.mlv_api.delete_execution_definition")
+    @patch("dbt.adapters.fabricspark.mlv_api.create_execution_definition")
     @patch("dbt.adapters.fabricspark.mlv_api.time.sleep")
     @patch("dbt.adapters.fabricspark.mlv_api.poll_job_instance_until_complete")
     @patch("dbt.adapters.fabricspark.mlv_api.get_headers")
     @patch("dbt.adapters.fabricspark.mlv_api._request_with_retry")
     def test_does_not_retry_permanent_failure(
-        self, mock_request, mock_headers, mock_poll, mock_sleep, mock_credentials
+        self,
+        mock_request,
+        mock_headers,
+        mock_poll,
+        mock_sleep,
+        mock_create,
+        mock_delete,
+        mock_credentials,
     ):
         mock_headers.return_value = {"Authorization": "******"}
+        mock_create.return_value = {"id": "definition-1"}
         mock_credentials.statement_timeout = 3600
         mock_response = MagicMock()
         mock_response.headers = {"Location": "https://api.fabric.microsoft.com/.../job-123"}
@@ -344,18 +483,29 @@ class TestRunOnDemandRefresh:
         )
 
         with pytest.raises(MLVApiError, match="MLV_SYNTAX_ERROR"):
-            run_on_demand_refresh(mock_credentials)
+            run_on_demand_refresh(mock_credentials, "dbo.model_a")
 
         assert mock_poll.call_count == 1
+        mock_delete.assert_called_once_with(mock_credentials, "definition-1", None)
 
+    @patch("dbt.adapters.fabricspark.mlv_api.delete_execution_definition")
+    @patch("dbt.adapters.fabricspark.mlv_api.create_execution_definition")
     @patch("dbt.adapters.fabricspark.mlv_api.time.sleep")
     @patch("dbt.adapters.fabricspark.mlv_api.poll_job_instance_until_complete")
     @patch("dbt.adapters.fabricspark.mlv_api.get_headers")
     @patch("dbt.adapters.fabricspark.mlv_api._request_with_retry")
     def test_raises_after_exhausting_retries(
-        self, mock_request, mock_headers, mock_poll, mock_sleep, mock_credentials
+        self,
+        mock_request,
+        mock_headers,
+        mock_poll,
+        mock_sleep,
+        mock_create,
+        mock_delete,
+        mock_credentials,
     ):
         mock_headers.return_value = {"Authorization": "******"}
+        mock_create.return_value = {"id": "definition-1"}
         mock_credentials.statement_timeout = 3600
         mock_response = MagicMock()
         mock_response.headers = {"Location": "https://api.fabric.microsoft.com/.../job-123"}
@@ -366,9 +516,63 @@ class TestRunOnDemandRefresh:
         )
 
         with pytest.raises(MLVApiError, match="MLV_ARTIFACT_NOT_FOUND"):
-            run_on_demand_refresh(mock_credentials, max_retries=3)
+            run_on_demand_refresh(mock_credentials, "dbo.model_a", max_retries=3)
 
         assert mock_poll.call_count == 3
+        mock_delete.assert_called_once_with(mock_credentials, "definition-1", None)
+
+    @patch("dbt.adapters.fabricspark.mlv_api.delete_execution_definition")
+    @patch("dbt.adapters.fabricspark.mlv_api.create_execution_definition")
+    @patch("dbt.adapters.fabricspark.mlv_api.poll_job_instance_until_complete")
+    @patch("dbt.adapters.fabricspark.mlv_api.get_headers")
+    @patch("dbt.adapters.fabricspark.mlv_api._request_with_retry")
+    def test_surfaces_cleanup_failure_after_success(
+        self,
+        mock_request,
+        mock_headers,
+        mock_poll,
+        mock_create,
+        mock_delete,
+        mock_credentials,
+    ):
+        mock_headers.return_value = {"Authorization": "******"}
+        mock_create.return_value = {"id": "definition-1"}
+        mock_response = MagicMock()
+        mock_response.headers = {"Location": "https://api.fabric.microsoft.com/.../job-123"}
+        mock_request.return_value = mock_response
+        mock_poll.return_value = {"status": "Completed", "failureReason": None}
+        mock_delete.side_effect = MLVApiError("delete MLV execution definition", "orphaned")
+
+        with pytest.raises(MLVApiError, match="orphaned"):
+            run_on_demand_refresh(mock_credentials, "dbo.model_a")
+
+    @patch("dbt.adapters.fabricspark.mlv_api.delete_execution_definition")
+    @patch("dbt.adapters.fabricspark.mlv_api.create_execution_definition")
+    @patch("dbt.adapters.fabricspark.mlv_api.poll_job_instance_until_complete")
+    @patch("dbt.adapters.fabricspark.mlv_api.get_headers")
+    @patch("dbt.adapters.fabricspark.mlv_api._request_with_retry")
+    def test_preserves_refresh_failure_when_cleanup_also_fails(
+        self,
+        mock_request,
+        mock_headers,
+        mock_poll,
+        mock_create,
+        mock_delete,
+        mock_credentials,
+    ):
+        mock_headers.return_value = {"Authorization": "******"}
+        mock_create.return_value = {"id": "definition-1"}
+        mock_response = MagicMock()
+        mock_response.headers = {"Location": "https://api.fabric.microsoft.com/.../job-123"}
+        mock_request.return_value = mock_response
+        mock_poll.side_effect = MLVApiError(
+            "on-demand MLV refresh",
+            "Job failed. failureReason: {'errorCode': 'MLV_SYNTAX_ERROR'}",
+        )
+        mock_delete.side_effect = MLVApiError("delete MLV execution definition", "orphaned")
+
+        with pytest.raises(MLVApiError, match="MLV_SYNTAX_ERROR"):
+            run_on_demand_refresh(mock_credentials, "dbo.model_a")
 
 
 class TestListSchedules:

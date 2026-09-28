@@ -45,14 +45,13 @@ skip_no_schema = pytest.mark.skipif(
 # Cross-worker serialization
 # ---------------------------------------------------------------------------
 
-# ``RefreshMaterializedLakeViews`` is a *lakehouse-wide* job: it refreshes every
-# MLV in the lakehouse, not just the one the model created. Every MLV test class
-# shares one lakehouse, and ``--dist=loadscope`` runs classes on separate xdist
-# workers, so an unrelated class creating or dropping an MLV makes another
-# class's refresh fail with MLV_NOT_FOUND / MLV_RUNTIME_ERROR. Workers also share
-# Livy sessions, so the session-scoped ``trident.artifact.type`` conf that
-# ``mlv_allow_schema_evolution`` sets around its CREATE OR REPLACE can be
-# observed by a concurrent class and silently permit a replace that must fail.
+# Every MLV test class shares one lakehouse, and ``--dist=loadscope`` runs
+# classes on separate xdist workers. Scheduled refreshes are lakehouse-wide,
+# while concurrent CREATE/DROP operations can race Fabric's lineage metadata.
+# Workers also share Livy sessions, so the session-scoped
+# ``trident.artifact.type`` conf that ``mlv_allow_schema_evolution`` sets around
+# its CREATE OR REPLACE can be observed by a concurrent class and silently
+# permit a replace that must fail.
 #
 # Both races are inherent to the shared lakehouse, so MLV classes take a lock for
 # their whole lifetime — including project teardown, which is when MLVs are
@@ -232,10 +231,10 @@ group by name
 
 
 # ---------------------------------------------------------------------------
-# MLV model — missing refresh config (should fail validation)
+# MLV model — definition-only deployment
 # ---------------------------------------------------------------------------
 
-_mlv_no_refresh_sql = """
+_mlv_definition_only_sql = """
 {{ config(
     materialized='materialized_lake_view'
 ) }}
@@ -440,12 +439,12 @@ class TestMLVFullBuild:
 
 
 @skip_no_schema
-class TestMLVMissingRefreshConfig:
-    """MLV model without mlv_on_demand or mlv_schedule should fail."""
+class TestMLVDefinitionOnly:
+    """MLV definitions can be deployed without configuring later refreshes."""
 
     @pytest.fixture(scope="class")
     def project_config_update(self):
-        return {"name": "mlv_no_refresh_test"}
+        return {"name": "mlv_definition_only_test"}
 
     @pytest.fixture(scope="class")
     def seeds(self):
@@ -455,16 +454,20 @@ class TestMLVMissingRefreshConfig:
     def models(self):
         return {
             "mlv_source_table.sql": _source_table_sql,
-            "mlv_no_refresh.sql": _mlv_no_refresh_sql,
+            "mlv_definition_only.sql": _mlv_definition_only_sql,
         }
 
-    def test_fails_without_refresh_config(self, project):
-        """Model should fail because neither mlv_on_demand nor mlv_schedule is set."""
+    def test_deploys_without_refresh_config(self, project):
         run_dbt(["seed"])
         run_dbt(["run", "--select", "mlv_source_table"])
-        results = run_dbt(["run", "--select", "mlv_no_refresh"], expect_pass=False)
-        assert len(results) == 1
-        assert results[0].status == "error"
+        results = run_dbt(["run", "--select", "mlv_definition_only"])
+        assert len(results) == 1 and results[0].status == "success"
+
+        result = project.run_sql(
+            f"select count(*) from {_fq_table(project, 'mlv_definition_only')}",
+            fetch="one",
+        )
+        assert int(result[0]) == 3
 
 
 @skip_no_schema

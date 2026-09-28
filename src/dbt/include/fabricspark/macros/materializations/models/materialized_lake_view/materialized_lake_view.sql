@@ -2,8 +2,8 @@
 
      Creates or replaces a Fabric Materialized Lake View using Spark SQL.
      Supports optional partitioning, constraints, comments, and TBLPROPERTIES.
-     Requires either an on-demand refresh or a schedule config — one MUST be
-     provided or the model will fail.
+     Refresh configuration is optional because CREATE OR REPLACE materializes
+     the definition. On-demand and scheduled refreshes manage later refreshes.
 
      CDF (Change Data Feed) is always enabled on upstream source tables;
      this is a hard requirement, not a user-configurable option.
@@ -22,7 +22,7 @@
        mlv_constraints:    List of constraint dicts (optional)
                            Each: {"name": str, "expression": str, "on_mismatch": "DROP"|"FAIL"}
        tblproperties:      Dict of key-value pairs (optional)
-       mlv_on_demand:      Trigger immediate refresh after creation (default: false)
+       mlv_on_demand:      Trigger targeted refresh after creation (default: false)
        mlv_schedule:       Schedule config dict for periodic refresh (optional)
        mlv_allow_schema_evolution:
                            Allow CREATE OR REPLACE to change the column list, source
@@ -32,7 +32,6 @@
      The target lakehouse ID for MLV API calls is resolved automatically
      from the ``database`` config (lakehouse name) via the Fabric REST API.
 
-     NOTE: At least one of ``mlv_on_demand`` or ``mlv_schedule`` MUST be set.
 --#}
 
 {% materialization materialized_lake_view, adapter='fabricspark' -%}
@@ -56,9 +55,12 @@
     {%- set mlv_schedule = config.get('mlv_schedule', none) -%}
     {%- set mlv_allow_schema_evolution = config.get('mlv_allow_schema_evolution', false) -%}
 
-    {#-- Resolve the target lakehouse ID from the database (lakehouse name) --#}
-    {%- set target_lakehouse_name = database or target.lakehouse -%}
-    {%- set mlv_lakehouse_id = adapter.mlv_resolve_lakehouse_id(target_lakehouse_name) -%}
+    {#-- Resolve the target lakehouse only when a REST API operation is requested --#}
+    {%- set mlv_lakehouse_id = none -%}
+    {% if mlv_on_demand or mlv_schedule %}
+        {%- set target_lakehouse_name = database or target.lakehouse -%}
+        {%- set mlv_lakehouse_id = adapter.mlv_resolve_lakehouse_id(target_lakehouse_name) -%}
+    {% endif %}
 
     {#-- =====================================================================
          PRE-FLIGHT VALIDATION
@@ -67,16 +69,7 @@
     {#-- 0. Runtime prerequisites (local mode, Spark version, schema-enabled) --#}
     {% do adapter.mlv_validate_prerequisites() %}
 
-    {#-- 1. Either on-demand or schedule MUST be configured --#}
-    {% if not mlv_on_demand and mlv_schedule is none %}
-        {{ exceptions.raise_compiler_error(
-            "Materialized Lake View '" ~ identifier ~ "' requires either 'mlv_on_demand: true' "
-            "or an 'mlv_schedule' configuration. At least one must be set for the MLV to be "
-            "refreshed after creation."
-        ) }}
-    {% endif %}
-
-    {#-- 2. Validate upstream tables are Delta format --#}
+    {#-- 1. Validate upstream tables are Delta format --#}
     {%- set upstream_relations = [] -%}
     {% for node_id in model.depends_on.nodes %}
         {% set upstream = graph.nodes.get(node_id) %}
@@ -168,10 +161,11 @@
         {%- endcall %}
     {% endif %}
 
-    {#-- Post-creation: on-demand refresh and/or schedule (failures are fatal) --#}
+    {#-- Post-creation: optional targeted refresh and/or schedule (failures are fatal) --#}
     {% if mlv_on_demand %}
-        {{ log("Triggering on-demand MLV refresh...") }}
-        {% do adapter.mlv_run_on_demand(mlv_lakehouse_id) %}
+        {%- set mlv_name = target_relation.schema ~ '.' ~ target_relation.identifier -%}
+        {{ log("Triggering targeted on-demand MLV refresh for " ~ mlv_name ~ "...") }}
+        {% do adapter.mlv_run_on_demand(mlv_name, mlv_lakehouse_id) %}
     {% endif %}
 
     {% if mlv_schedule %}

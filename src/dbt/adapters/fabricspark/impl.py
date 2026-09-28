@@ -419,15 +419,17 @@ class FabricSparkAdapter(SQLAdapter):
             logger.warning(f"Could not restore {SCHEMA_EVOLUTION_CONF} to {previous}: {exc}")
 
     @available
-    def mlv_run_on_demand(self, lakehouse_id: Optional[str] = None) -> Dict[str, Any]:
-        """Trigger an on-demand MLV lineage refresh via the Fabric REST API.
+    def mlv_run_on_demand(
+        self, mlv_name: str, lakehouse_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Trigger a targeted on-demand MLV refresh via the Fabric REST API.
 
         Exposed to macros as ``adapter.mlv_run_on_demand()``.
         Raises ``MLVApiError`` (a ``DbtRuntimeError``) on failure, which
         causes the model to fail.
         """
         conn = self.connections.get_thread_connection()
-        return mlv_api.run_on_demand_refresh(conn.credentials, lakehouse_id)
+        return mlv_api.run_on_demand_refresh(conn.credentials, mlv_name, lakehouse_id)
 
     @available
     def mlv_create_or_update_schedule(

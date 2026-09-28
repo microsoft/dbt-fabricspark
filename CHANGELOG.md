@@ -10,6 +10,19 @@
   expressions, total attempts, and capped exponential backoff. Defaults contain
   no patterns, so existing projects do not retry additional statements.
 
+### Fixes
+
+- Fixed parallel `materialized_lake_view` builds launching a lakehouse-wide
+  on-demand refresh after every model, which could refresh lineage while another
+  MLV was still being created and fail with `MLV_SOURCE_ENTITY_NOT_FOUND`.
+  `mlv_on_demand: true` now creates a temporary Fabric execution definition
+  selecting only the current MLV, requires that targeted job to reach
+  `Completed`, retries `Cancelled`, `Deduped`, and transient source-metadata
+  failures within `statement_timeout`, and deletes the temporary definition
+  afterward. Models can also omit both `mlv_on_demand` and `mlv_schedule` when
+  dbt should deploy the already-materialized definition without starting an
+  additional refresh. ([#294](https://github.com/microsoft/dbt-fabricspark/issues/294))
+
 ## v1.13.6
 
 ### Fixes

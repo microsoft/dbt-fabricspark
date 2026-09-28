@@ -95,6 +95,7 @@
       )
     {% endif %}
     OPTIONS (
+      'displayName' = '{{ model['unique_id'] | replace('\\', '\\\\') | replace("'", "''") }}',
       'trigger' = 'availableNow',
       'outputMode' = '{{ output_mode }}',
       'onQueryChange' = '{{ on_query_change }}'

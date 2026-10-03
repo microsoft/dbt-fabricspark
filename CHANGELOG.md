@@ -6,6 +6,7 @@
 
 - Routed experimental SQL through the adapter connection manager so configured
   per-statement retries and backoff apply to transient failures during creation and polling (#301).
+- Extended configured message-pattern retries to MLV on-demand refresh failures.
 
 ---
 

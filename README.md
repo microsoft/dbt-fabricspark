@@ -589,15 +589,16 @@ models:
 > `threads`) can cause resource contention. Lower `threads` or set
 > `DBT_FABRICSPARK_SKIP_OPTIMIZE=true` if you hit it.
 
-### Transient query retry
+### Transient operation retry
 
-The adapter can retry only the Spark SQL statement that failed when the error
-message matches an explicitly configured pattern. This is disabled by default
-because `job_retry_on_messages` is empty.
+The adapter can retry a failed Spark SQL statement or MLV on-demand refresh when
+the error message matches an explicitly configured pattern. This is disabled by
+default because `job_retry_on_messages` is empty.
 
 ```yaml
 job_retry_on_messages:
   - 're:(?s)(?=.*TableMetadataManagerV202405\.alterTable)(?=.*BlobStorageException)(?=.*Status code 503)(?=.*ServerBusy)'
+  - 're:(?s)(?=.*MLV_RUNTIME_ERROR)(?=.*Unable to execute the materialized lake view)'
 enable_job_retry: true
 job_retry_max_attempts: 3
 job_retry_initial_wait_seconds: 30
@@ -607,8 +608,8 @@ job_retry_max_wait_seconds: 300
 Patterns are case-sensitive plain substrings unless prefixed with `re:`. Total
 attempts include the original execution. Matching failures use capped
 exponential backoff; non-matching failures return immediately without retrying.
-Use narrow patterns because replaying a non-idempotent SQL statement can produce
-duplicate effects.
+Use narrow patterns because replaying a non-idempotent SQL statement or API
+operation can produce duplicate effects.
 
 ### Configuration Reference
 
@@ -651,8 +652,8 @@ duplicate effects.
 | `azure_cli_process_timeout`      | int    | `10`                                  | Subprocess timeout (seconds) for `AzureCliCredential` when acquiring/refreshing tokens under `authentication: CLI`. Raise it when high-concurrency builds trigger `az account get-access-token` refresh storms that fail with "Failed to invoke the Azure CLI". No effect for other auth methods.                                                                                                                |
 | **Other**                        |        |                                       |                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `retry_all`                      | bool   | `false`                               | Retry all operations on failure                                                                                                                                                                                                                                                                                                                                                                                  |
-| `enable_job_retry`               | bool   | `true`                                | Enable message-pattern retries for an individual failed Spark SQL statement. No additional retries occur while `job_retry_on_messages` is empty.                                                                                                                                                                                                                                                                 |
-| `job_retry_on_messages`          | list   | `[]`                                  | Case-sensitive substrings or `re:`-prefixed regular expressions that identify query failures safe to replay.                                                                                                                                                                                                                                                                                                     |
+| `enable_job_retry`               | bool   | `true`                                | Enable message-pattern retries for a failed Spark SQL statement or MLV refresh. No additional retries occur while `job_retry_on_messages` is empty.                                                                                                                                                                                                                                                                 |
+| `job_retry_on_messages`          | list   | `[]`                                  | Case-sensitive substrings or `re:`-prefixed regular expressions that identify operation failures safe to replay.                                                                                                                                                                                                                                                                                                     |
 | `job_retry_max_attempts`         | int    | `3`                                   | Total attempts, including the original query, when a configured message matches.                                                                                                                                                                                                                                                                                                                                 |
 | `job_retry_initial_wait_seconds` | float  | `30`                                  | Initial delay before replaying a matching failed query.                                                                                                                                                                                                                                                                                                                                                          |
 | `job_retry_max_wait_seconds`     | float  | `300`                                 | Maximum capped exponential-backoff delay between matching query retries.                                                                                                                                                                                                                                                                                                                                         |

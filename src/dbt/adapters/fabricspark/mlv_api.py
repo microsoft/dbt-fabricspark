@@ -21,6 +21,7 @@ from dbt.adapters.events.logging import AdapterLogger
 from dbt.adapters.fabricspark._http_utils import parse_retry_after
 from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
 from dbt.adapters.fabricspark.livysession import get_headers
+from dbt.adapters.fabricspark.message_retry import MessageRetryPolicy
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
 
@@ -414,11 +415,13 @@ def run_on_demand_refresh(
     url = f"{_base_url(credentials, lakehouse_id)}/instances"
     headers = get_headers(credentials)
     last_err: Optional[MLVApiError] = None
+    retry_policy = MessageRetryPolicy.for_job_retry(credentials)
+    total_attempt_limit = max(max_retries, retry_policy.max_retries + 1)
 
     # Overall deadline for all retries so we never exceed statement_timeout.
     overall_deadline = time.time() + credentials.statement_timeout
 
-    for attempt in range(1, max_retries + 1):
+    for attempt in range(1, total_attempt_limit + 1):
         if time.time() >= overall_deadline:
             raise last_err or MLVApiError(
                 "on-demand MLV refresh",
@@ -426,7 +429,8 @@ def run_on_demand_refresh(
             )
 
         logger.info(
-            f"Triggering on-demand MLV refresh: POST {url} (attempt {attempt}/{max_retries})"
+            f"Triggering on-demand MLV refresh: POST {url} "
+            f"(attempt {attempt}/{total_attempt_limit})"
         )
         response = _request_with_retry(
             "POST",
@@ -451,6 +455,7 @@ def run_on_demand_refresh(
             )
         except MLVApiError as err:
             msg = str(err)
+            job_retry_match = retry_policy.matches(err)
             # Determine if this is a transient failure worth retrying.
             transient = (
                 "Cancelled" in msg
@@ -462,16 +467,26 @@ def run_on_demand_refresh(
                 # Try to extract the structured failureReason from the error.
                 transient = any(code in msg for code in _THROTTLE_ERROR_CODES)
 
-            if not transient or attempt >= max_retries:
+            if job_retry_match is not None:
+                attempt_limit = retry_policy.max_retries + 1
+                wait = retry_policy.delay_for_attempt(attempt)
+                retry_reason = f"job_retry:{job_retry_match}"
+            elif transient:
+                attempt_limit = max_retries
+                wait = min(2 ** (attempt - 1) * 4.0, 120.0) + random.uniform(0, 5.0)
+                retry_reason = "built-in transient"
+            else:
+                raise
+
+            if attempt >= attempt_limit:
                 raise
             last_err = err
-            # Jittered exponential backoff; capped at 120s to survive sustained throttle.
-            wait = min(2 ** (attempt - 1) * 4.0, 120.0) + random.uniform(0, 5.0)
             remaining = overall_deadline - time.time()
             if wait > remaining:
                 raise  # Not enough time for another attempt
             logger.warning(
-                f"MLV refresh transient failure (attempt {attempt}/{max_retries}): "
+                f"MLV refresh retryable failure ({retry_reason}, "
+                f"attempt {attempt}/{attempt_limit}): "
                 f"{msg}. Retrying in {wait:.1f}s (remaining budget: {remaining:.0f}s)."
             )
             time.sleep(wait)

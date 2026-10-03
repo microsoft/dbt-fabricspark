@@ -4,13 +4,8 @@
 
 ### Bug Fixes
 
-- Routed experimental streaming-table SQL through the adapter connection manager so configured
+- Routed experimental SQL through the adapter connection manager so configured
   per-statement retries and backoff apply to transient failures during creation and polling (#301).
-
-### Dependencies
-
-- Updated pinned Python, npm, and GitHub Actions dependencies and moved project skills to the
-  supported discovery directory (#300).
 
 ---
 
@@ -23,6 +18,11 @@
   statement. Profiles can configure plain substrings or `re:` regular
   expressions, total attempts, and capped exponential backoff. Defaults contain
   no patterns, so existing projects do not retry additional statements.
+
+### Dependencies
+
+- Updated pinned Python, npm, and GitHub Actions dependencies and moved project skills to the
+  supported discovery directory (#300).
 
 ## v1.13.6
 

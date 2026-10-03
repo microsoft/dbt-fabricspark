@@ -18,7 +18,5 @@ def test_execute_uses_connection_manager_query_path() -> None:
 
     assert _execute(adapter, handle, "select 1") == (response, result)
 
-    adapter.connections.add_query.assert_called_once_with(
-        "/* dbt */ select 1", auto_begin=False
-    )
+    adapter.connections.add_query.assert_called_once_with("/* dbt */ select 1", auto_begin=False)
     handle.cursor.assert_not_called()

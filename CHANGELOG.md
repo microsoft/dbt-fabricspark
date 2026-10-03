@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.13.8
+
+### Bug Fixes
+
+- Routed experimental SQL through the adapter connection manager so configured
+  per-statement retries and backoff apply to transient failures during creation and polling (#301).
+- Extended configured message-pattern retries to MLV on-demand refresh failures.
+
+---
+
 ## v1.13.7
 
 ### Features
@@ -9,6 +19,11 @@
   statement. Profiles can configure plain substrings or `re:` regular
   expressions, total attempts, and capped exponential backoff. Defaults contain
   no patterns, so existing projects do not retry additional statements.
+
+### Dependencies
+
+- Updated pinned Python, npm, and GitHub Actions dependencies and moved project skills to the
+  supported discovery directory (#300).
 
 ## v1.13.6
 

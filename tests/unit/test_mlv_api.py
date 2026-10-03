@@ -34,6 +34,11 @@ def mock_credentials():
     creds.http_timeout = 120
     creds.poll_statement_wait = 1
     creds.statement_timeout = 10
+    creds.enable_job_retry = True
+    creds.job_retry_on_messages = []
+    creds.job_retry_max_attempts = 3
+    creds.job_retry_initial_wait_seconds = 30
+    creds.job_retry_max_wait_seconds = 300
     return creds
 
 
@@ -325,6 +330,36 @@ class TestRunOnDemandRefresh:
 
         assert result["status"] == "Completed"
         assert mock_poll.call_count == 2
+
+    @patch("dbt.adapters.fabricspark.mlv_api.time.sleep")
+    @patch("dbt.adapters.fabricspark.mlv_api.poll_job_instance_until_complete")
+    @patch("dbt.adapters.fabricspark.mlv_api.get_headers")
+    @patch("dbt.adapters.fabricspark.mlv_api._request_with_retry")
+    def test_retries_matching_configured_failure(
+        self, mock_request, mock_headers, mock_poll, mock_sleep, mock_credentials
+    ):
+        mock_headers.return_value = {"Authorization": "******"}
+        mock_credentials.statement_timeout = 3600
+        mock_credentials.job_retry_on_messages = [
+            r"re:(?s)(?=.*MLV_RUNTIME_ERROR)(?=.*Unable to execute the materialized lake view)"
+        ]
+        mock_response = MagicMock()
+        mock_response.headers = {"Location": "https://api.fabric.microsoft.com/.../job-123"}
+        mock_request.return_value = mock_response
+        mock_poll.side_effect = [
+            MLVApiError(
+                "on-demand MLV refresh",
+                "Job job-123 Failed. {'errorCode': 'MLV_RUNTIME_ERROR', "
+                "'message': 'Unable to execute the materialized lake view.'}",
+            ),
+            {"status": "Completed", "failureReason": None},
+        ]
+
+        result = run_on_demand_refresh(mock_credentials)
+
+        assert result["status"] == "Completed"
+        assert mock_poll.call_count == 2
+        mock_sleep.assert_called_once_with(30)
 
     @patch("dbt.adapters.fabricspark.mlv_api.time.sleep")
     @patch("dbt.adapters.fabricspark.mlv_api.poll_job_instance_until_complete")

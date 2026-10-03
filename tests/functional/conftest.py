@@ -359,6 +359,10 @@ def dbt_profile_target(request, workspace_id, api_endpoint, schema_mode):
         "lakehouse": lakehouse_name,
         "schema": schema_name or lakehouse_name,
         "retry_all": True,
+        "enable_job_retry": True,
+        "job_retry_on_messages": [
+            r"re:(?s)(?=.*MLV_RUNTIME_ERROR)(?=.*Unable to execute the materialized lake view)"
+        ],
         "create_shortcuts": False,
         "shortcuts_json_str": os.getenv("SHORTCUTS_JSON_STR"),
         "environmentId": os.getenv("FABRIC_ENVIRONMENT_ID"),

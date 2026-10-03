@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.13.8
+
+### Bug Fixes
+
+- Routed experimental streaming-table SQL through the adapter connection manager so configured
+  per-statement retries and backoff apply to transient failures during creation and polling (#301).
+
+### Dependencies
+
+- Updated pinned Python, npm, and GitHub Actions dependencies and moved project skills to the
+  supported discovery directory (#300).
+
+---
+
 ## v1.13.7
 
 ### Features

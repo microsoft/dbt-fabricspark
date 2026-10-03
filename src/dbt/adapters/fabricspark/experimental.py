@@ -112,13 +112,13 @@ def _check_connection(adapter: Any, owner: tuple[Any, Any, Any]) -> None:
 
 def _execute(adapter: Any, handle: Any, sql: str) -> tuple[Any, agate.Table]:
     sql = adapter.connections._add_query_comment(sql)
-    with adapter.connections.exception_handler(sql):
-        cursor = handle.cursor()
-        cursor.execute(sql)
-        return (
-            adapter.connections.get_response(cursor),
-            adapter.connections.get_result_from_cursor(cursor, None),
-        )
+    connection, cursor = adapter.connections.add_query(sql, auto_begin=False)
+    if connection.handle is not handle:
+        raise DbtRuntimeError("The dbt connection changed while executing streaming SQL")
+    return (
+        adapter.connections.get_response(cursor),
+        adapter.connections.get_result_from_cursor(cursor, None),
+    )
 
 
 def execute_streaming_table(adapter: Any, relation: Any, sql: str) -> tuple[Any, agate.Table]:

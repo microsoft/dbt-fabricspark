@@ -8,6 +8,10 @@
   per-statement retries and backoff apply to transient failures during creation and polling (#301).
 - Extended configured message-pattern retries to MLV on-demand refresh failures.
 
+### Maintenance
+
+- Prepared package version 1.13.8 for publication.
+
 ---
 
 ## v1.13.7

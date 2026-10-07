@@ -7,10 +7,13 @@
 - Routed experimental SQL through the adapter connection manager so configured
   per-statement retries and backoff apply to transient failures during creation and polling (#301).
 - Extended configured message-pattern retries to MLV on-demand refresh failures.
-
-### Maintenance
-
-- Prepared package version 1.13.8 for publication.
+- Fixed `method: session` fail-fast cancellation hanging indefinitely on an
+  unresponsive Structured Streaming query. Stream stops now run on daemon workers
+  with one shared deadline, controlled by the experimental
+  `stream_stop_timeout_seconds` profile option (default 30 seconds). Job
+  cancellation remains first, repeated cancellation reuses in-flight stops, and
+  cleanup failures and timed-out query IDs are reported without replacing the
+  original dbt failure (#304).
 
 ---
 

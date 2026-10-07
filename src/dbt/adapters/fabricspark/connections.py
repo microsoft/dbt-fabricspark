@@ -308,7 +308,8 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                     )
 
                     handle = SessionConnectionWrapper(
-                        SessionConnection(spark_config=creds.spark_config)
+                        SessionConnection(spark_config=creds.spark_config),
+                        stream_stop_timeout_seconds=creds.stream_stop_timeout_seconds,
                     )
                     connection.state = ConnectionState.OPEN
 

@@ -1,8 +1,12 @@
+import threading
+from typing import Any
+
 import pytest
 from dbt_common.exceptions import DbtDatabaseError, DbtRuntimeError
 
 from dbt.adapters.fabricspark import FabricSparkCredentials
 from dbt.adapters.fabricspark.connections import _is_permanent_error, _is_retryable_error
+from dbt.adapters.fabricspark.credentials import DEFAULT_STREAM_STOP_TIMEOUT_SECONDS
 
 
 def test_credentials_fabric_mode_defaults_schema_to_lakehouse() -> None:
@@ -363,6 +367,60 @@ class TestJobRetryFields:
     def test_invalid_values(self, kwargs, message) -> None:
         with pytest.raises(DbtRuntimeError, match=message):
             FabricSparkCredentials(**kwargs, **_base_fabric_kwargs())
+
+
+class TestStreamStopTimeoutFields:
+    def test_default(self) -> None:
+        credentials = FabricSparkCredentials(**_base_fabric_kwargs())
+        assert credentials.stream_stop_timeout_seconds == DEFAULT_STREAM_STOP_TIMEOUT_SECONDS
+        assert DEFAULT_STREAM_STOP_TIMEOUT_SECONDS == 30.0
+
+    @pytest.mark.parametrize("value", [1, 0.25, 30.5, threading.TIMEOUT_MAX])
+    def test_custom_values_and_connection_key(self, value: float) -> None:
+        credentials = FabricSparkCredentials(
+            stream_stop_timeout_seconds=value, **_base_fabric_kwargs()
+        )
+        assert credentials.stream_stop_timeout_seconds == value
+        assert "stream_stop_timeout_seconds" in credentials._connection_keys()
+
+    @pytest.mark.parametrize("from_dict", [False, True], ids=["constructor", "from_dict"])
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pytest.param(True, id="true"),
+            pytest.param(False, id="false"),
+            pytest.param(None, id="none"),
+            pytest.param("30", id="integer-string"),
+            pytest.param("0.25", id="fractional-string"),
+            pytest.param("nan", id="nan-string"),
+            pytest.param("inf", id="infinity-string"),
+            pytest.param("", id="empty-string"),
+            pytest.param(0, id="zero-int"),
+            pytest.param(0.0, id="zero-float"),
+            pytest.param(-1, id="negative-int"),
+            pytest.param(-0.25, id="negative-float"),
+            pytest.param(float("nan"), id="nan"),
+            pytest.param(float("inf"), id="positive-infinity"),
+            pytest.param(float("-inf"), id="negative-infinity"),
+            pytest.param(threading.TIMEOUT_MAX + 1, id="above-join-limit-float"),
+            pytest.param(int(threading.TIMEOUT_MAX) + 1, id="above-join-limit-int"),
+            pytest.param(10**1000, id="huge-int"),
+        ],
+    )
+    def test_invalid_values(self, value: Any, from_dict: bool) -> None:
+        kwargs = {"stream_stop_timeout_seconds": value, **_base_fabric_kwargs()}
+        with pytest.raises(DbtRuntimeError, match="stream_stop_timeout_seconds"):
+            if from_dict:
+                FabricSparkCredentials.from_dict(kwargs)
+            else:
+                FabricSparkCredentials(**kwargs)
+
+    @pytest.mark.parametrize("value", [1, 0.25, threading.TIMEOUT_MAX])
+    def test_valid_from_dict(self, value: float) -> None:
+        credentials = FabricSparkCredentials.from_dict(
+            {"stream_stop_timeout_seconds": value, **_base_fabric_kwargs()}
+        )
+        assert credentials.stream_stop_timeout_seconds == value
 
 
 # --- Tests for _is_permanent_error (SCHEMA_NOT_FOUND retry-storm regression) ---

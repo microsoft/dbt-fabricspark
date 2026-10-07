@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
+import os
 import re
+import threading
+import time
 import uuid
 from contextlib import contextmanager
 from types import TracebackType
@@ -13,9 +17,14 @@ from dbt_common.utils.encoding import DECIMALS
 
 from dbt.adapters.events.logging import AdapterLogger
 from dbt.adapters.fabricspark.connections import FabricSparkConnectionWrapper
+from dbt.adapters.fabricspark.credentials import (
+    DEFAULT_STREAM_STOP_TIMEOUT_SECONDS,
+    _validate_stream_stop_timeout_seconds,
+)
 
 if TYPE_CHECKING:
     from pyspark.sql import DataFrame, Row, SparkSession
+    from pyspark.sql.streaming import StreamingQuery
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
 NUMBERS = DECIMALS + (int, float)
@@ -25,6 +34,73 @@ SPARK_JOB_GROUP_PROPERTIES = (
     "spark.job.description",
     "spark.job.interruptOnCancel",
 )
+
+
+def _log_cancel_warning(message: str) -> None:
+    try:
+        logger.warning(message)
+    except Exception:
+        try:
+            logging.getLogger(__name__).warning(message, exc_info=True)
+        except Exception:
+            try:
+                os.write(2, (message + "\n").encode("utf-8", errors="replace"))
+            except OSError:
+                # Broken diagnostic channels must not replace dbt's original failure.
+                pass
+
+
+class _StreamStopWorker(threading.Thread):
+    def __init__(
+        self,
+        query: StreamingQuery,
+        deadline: float,
+        owner: SessionConnectionWrapper,
+    ) -> None:
+        super().__init__(name="dbt-fabricspark-stream-stop", daemon=True)
+        self.query = query
+        self.query_id = "unknown"
+        self.run_id = "unknown"
+        self.deadline = deadline
+        self.owner = owner
+        self.existing_worker: Optional[_StreamStopWorker] = None
+
+    def run(self) -> None:
+        key: Union[str, int] = id(self.query)
+        try:
+            query_id = getattr(self.query, "id", None)
+            if query_id is not None:
+                rendered_id = str(query_id)
+                if rendered_id:
+                    self.query_id = rendered_id
+        except Exception as exc:
+            _log_cancel_warning(
+                f"Failed to read Spark streaming query ID during cancellation: {exc}"
+            )
+
+        try:
+            run_id = getattr(self.query, "runId", None)
+            if run_id is not None:
+                rendered_id = str(run_id)
+                if rendered_id:
+                    self.run_id = rendered_id
+                    key = rendered_id
+        except Exception as exc:
+            _log_cancel_warning(
+                f"Failed to read Spark streaming query run ID during cancellation: {exc}"
+            )
+
+        with self.owner._stream_stop_lock:
+            previous = self.owner._stream_stop_workers.get(key)
+            if previous is not None and previous.is_alive():
+                self.existing_worker = previous
+                return
+            self.owner._stream_stop_workers[key] = self
+
+        try:
+            self.query.stop()
+        except Exception as exc:
+            _log_cancel_warning(f"Failed to stop Spark streaming query {self.query_id}: {exc}")
 
 
 def _dbt_job_description(sql: str) -> str:
@@ -213,15 +289,25 @@ class SessionConnection:
 
 
 class SessionConnectionWrapper(FabricSparkConnectionWrapper):
-    def __init__(self, handle: SessionConnection) -> None:
+    def __init__(
+        self,
+        handle: SessionConnection,
+        *,
+        stream_stop_timeout_seconds: float = DEFAULT_STREAM_STOP_TIMEOUT_SECONDS,
+    ) -> None:
+        _validate_stream_stop_timeout_seconds(stream_stop_timeout_seconds)
         self.handle = handle
         self._cursor: Optional[SessionCursor] = None
+        self._stream_stop_timeout_seconds = stream_stop_timeout_seconds
+        self._stream_stop_workers: dict[Union[str, int], _StreamStopWorker] = {}
+        self._stream_stop_lock = threading.Lock()
 
     def cursor(self) -> SessionConnectionWrapper:
         self._cursor = self.handle.cursor()
         return self
 
     def cancel(self) -> None:
+        """Cancel jobs first; all stream-stop waits share one bounded deadline."""
         cursor = self._cursor
         job_group_id = getattr(cursor, "_job_group_id", None) if cursor else None
         spark_session = self.handle._spark_session
@@ -231,25 +317,50 @@ class SessionConnectionWrapper(FabricSparkConnectionWrapper):
             try:
                 spark_context.cancelJobGroup(job_group_id)
             except Exception as exc:
-                logger.warning(f"Failed to cancel dbt Spark job group {job_group_id}: {exc}")
+                _log_cancel_warning(f"Failed to cancel dbt Spark job group {job_group_id}: {exc}")
 
         try:
             spark_context.cancelAllJobs()
         except Exception as exc:
-            logger.warning(f"Failed to cancel all Spark jobs during dbt fail-fast: {exc}")
+            _log_cancel_warning(f"Failed to cancel all Spark jobs during dbt fail-fast: {exc}")
 
         try:
             active_queries = tuple(spark_session.streams.active)
         except Exception as exc:
-            logger.warning(f"Failed to enumerate active Spark streaming queries: {exc}")
+            _log_cancel_warning(f"Failed to enumerate active Spark streaming queries: {exc}")
             active_queries = ()
 
+        with self._stream_stop_lock:
+            for key, worker in tuple(self._stream_stop_workers.items()):
+                if not worker.is_alive():
+                    del self._stream_stop_workers[key]
+
+        if not active_queries:
+            return
+
+        deadline = time.monotonic() + self._stream_stop_timeout_seconds
+        workers: list[_StreamStopWorker] = []
         for query in active_queries:
+            worker = _StreamStopWorker(query, deadline, self)
             try:
-                query.stop()
+                worker.start()
             except Exception as exc:
-                query_id = getattr(query, "id", "unknown")
-                logger.warning(f"Failed to stop Spark streaming query {query_id}: {exc}")
+                _log_cancel_warning(f"Failed to start Spark streaming query stop worker: {exc}")
+                continue
+            workers.append(worker)
+
+        for worker in workers:
+            worker.join(max(0.0, min(threading.TIMEOUT_MAX, deadline - time.monotonic())))
+            if worker.existing_worker is not None:
+                worker = worker.existing_worker
+                remaining = min(deadline, worker.deadline) - time.monotonic()
+                worker.join(max(0.0, min(threading.TIMEOUT_MAX, remaining)))
+            if worker.is_alive():
+                _log_cancel_warning(
+                    f"Timed out stopping Spark streaming query {worker.query_id} "
+                    f"(run {worker.run_id}); "
+                    "continuing dbt cancellation"
+                )
 
     def close(self) -> None:
         if self._cursor:

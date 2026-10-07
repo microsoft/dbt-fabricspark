@@ -46,7 +46,9 @@ foreach ($process in $dockerProcesses) {
 }
 
 winget uninstall "Docker Desktop" --silent --force --accept-source-agreements 2>$null
-$pkg = Get-ChildItem 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall' | Get-ItemProperty | Where-Object { $_.DisplayName -like "Docker Desktop*" };
+$pkg = Get-ChildItem 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall' |
+    Get-ItemProperty |
+    Where-Object { $_.PSObject.Properties['DisplayName'] -and $_.DisplayName -like "Docker Desktop*" }
 if ($pkg) {
     $cmd = $pkg.UninstallString
     Start-Process "cmd.exe" -ArgumentList "/c $cmd /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /FORCECLOSEAPPLICATIONS" -Wait -ErrorAction SilentlyContinue

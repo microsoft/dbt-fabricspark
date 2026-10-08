@@ -6,6 +6,10 @@ prompts:
       _fixed_method: session
       _fixed_spark_config:
         name: dbt-fabricspark-session
+      stream_stop_timeout_seconds:
+        hint: Experimental, session-only. Maximum total seconds to wait for streaming queries to stop during cancellation.
+        type: 'float'
+        default: 30
     livy:
       _fixed_method: livy
       workspaceid:

@@ -1,6 +1,7 @@
 import math
 import os
 import re
+import threading
 from dataclasses import dataclass, field
 from importlib import import_module
 from typing import Any, Dict, Literal, Optional, Tuple
@@ -29,6 +30,7 @@ LivyMode = Literal["fabric", "local"]
 
 # Default session ID file name
 DEFAULT_SESSION_ID_FILENAME = "livy-session-id.txt"
+DEFAULT_STREAM_STOP_TIMEOUT_SECONDS = 30.0
 
 
 def _validate_experimental_flag(value: Any) -> None:
@@ -36,6 +38,20 @@ def _validate_experimental_flag(value: Any) -> None:
         raise DbtRuntimeError(
             "enable_experimental_unstable must be a boolean in profiles.yml; "
             "use true or false, not a quoted string or a number."
+        )
+
+
+def _validate_stream_stop_timeout_seconds(value: Any) -> None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or value <= 0
+        or value > threading.TIMEOUT_MAX
+        or not math.isfinite(value)
+    ):
+        raise DbtRuntimeError(
+            "stream_stop_timeout_seconds must be a finite int or float greater than 0 "
+            f"and no greater than threading.TIMEOUT_MAX ({threading.TIMEOUT_MAX})."
         )
 
 
@@ -78,6 +94,7 @@ class FabricSparkCredentials(Credentials):
     identifier_prefix: Optional[str] = ""
     accessToken: Optional[str] = None
     spark_config: Dict[str, Any] = field(default_factory=dict)
+    stream_stop_timeout_seconds: float = DEFAULT_STREAM_STOP_TIMEOUT_SECONDS
     environmentId: Optional[str] = None
     session_id_file: Optional[str] = None
     reuse_session: bool = False  # When True, Fabric sessions are kept alive and reused across runs
@@ -159,6 +176,9 @@ class FabricSparkCredentials(Credentials):
     @classmethod
     def __pre_deserialize__(cls, data: Any) -> Any:
         _validate_experimental_flag(data.get("enable_experimental_unstable", False))
+        _validate_stream_stop_timeout_seconds(
+            data.get("stream_stop_timeout_seconds", DEFAULT_STREAM_STOP_TIMEOUT_SECONDS)
+        )
         data = super().__pre_deserialize__(data)
         if "lakehouse" not in data:
             data["lakehouse"] = None
@@ -192,6 +212,7 @@ class FabricSparkCredentials(Credentials):
 
     def __post_init__(self) -> None:
         _validate_experimental_flag(self.enable_experimental_unstable)
+        _validate_stream_stop_timeout_seconds(self.stream_stop_timeout_seconds)
         if self.method is None:
             raise DbtRuntimeError("Must specify `method` in profile")
 
@@ -421,4 +442,5 @@ class FabricSparkCredentials(Credentials):
             "enable_experimental_unstable",
             "high_concurrency",
             "spark_config",
+            "stream_stop_timeout_seconds",
         )

@@ -1,7 +1,10 @@
 import datetime as dt
+import threading
+import time
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import MagicMock, call, patch
+from typing import Any
+from unittest.mock import MagicMock, PropertyMock, call, patch
 
 import pytest
 from dbt_common.exceptions import DbtRuntimeError
@@ -16,11 +19,24 @@ from dbt.adapters.fabricspark.session import (
     SessionCursor,
     _dbt_job_description,
     _load_pyspark,
+    _StreamStopWorker,
 )
 
 
 class FakeAnalysisException(Exception):
     pass
+
+
+def _make_session_connection(spark_session: Any) -> SessionConnection:
+    connection = object.__new__(SessionConnection)
+    connection._spark_session = spark_session
+    connection._analysis_error = FakeAnalysisException
+    connection._fail_fast_cancelled = threading.Event()
+    return connection
+
+
+def _make_session_cursor(spark_session: Any) -> SessionCursor:
+    return _make_session_connection(spark_session).cursor()
 
 
 @pytest.mark.parametrize(
@@ -160,6 +176,76 @@ def test_session_connection_builds_hive_session_from_spark_config() -> None:
     spark_session.stop.assert_not_called()
 
 
+def test_session_cancel_latches_before_cancelling_spark_work() -> None:
+    spark_context = MagicMock()
+    spark_session = MagicMock()
+    spark_session.sparkContext = spark_context
+    spark_session.streams.active = ()
+    connection = _make_session_connection(spark_session)
+    wrapper = SessionConnectionWrapper(connection).cursor()
+    wrapper._cursor._job_group_id = "dbt:model.example.orders:job"
+    cancelled_at_call = []
+    spark_context.cancelJobGroup.side_effect = lambda _: cancelled_at_call.append(
+        connection._fail_fast_cancelled.is_set()
+    )
+    spark_context.cancelAllJobs.side_effect = lambda: cancelled_at_call.append(
+        connection._fail_fast_cancelled.is_set()
+    )
+
+    wrapper.cancel()
+
+    assert cancelled_at_call == [True, True]
+
+
+def test_session_cancel_is_idempotent() -> None:
+    spark_session = MagicMock()
+    spark_session.streams.active = ()
+    connection = _make_session_connection(spark_session)
+    wrapper = SessionConnectionWrapper(connection)
+
+    wrapper.cancel()
+    wrapper.cancel()
+
+    assert connection._fail_fast_cancelled.is_set()
+    assert spark_session.sparkContext.cancelAllJobs.call_count == 2
+
+
+def test_session_cancellation_is_shared_by_existing_and_new_cursors() -> None:
+    spark_session = MagicMock()
+    spark_session.streams.active = ()
+    connection = _make_session_connection(spark_session)
+    existing_cursor = connection.cursor()
+    first_wrapper = SessionConnectionWrapper(connection)
+    second_wrapper = SessionConnectionWrapper(connection)
+
+    first_wrapper.cancel()
+
+    with pytest.raises(DbtRuntimeError, match="another dbt node failed"):
+        existing_cursor.execute("select 1")
+    with pytest.raises(DbtRuntimeError, match="another dbt node failed"):
+        second_wrapper.cursor().execute("select 1")
+    with pytest.raises(DbtRuntimeError, match="another dbt node failed"):
+        connection.cursor().execute("select 1")
+
+    spark_session.sql.assert_not_called()
+
+
+def test_session_cursor_rechecks_cancellation_immediately_before_sql() -> None:
+    spark_context = MagicMock()
+    spark_session = MagicMock()
+    spark_session.sparkContext = spark_context
+    connection = _make_session_connection(spark_session)
+    cursor = connection.cursor()
+    spark_context.setJobGroup.side_effect = lambda *args, **kwargs: (
+        connection.mark_fail_fast_cancelled()
+    )
+
+    with pytest.raises(DbtRuntimeError, match="another dbt node failed"):
+        cursor.execute("select 1")
+
+    spark_session.sql.assert_not_called()
+
+
 def test_session_cursor_executes_and_fetches_rows() -> None:
     spark_session = MagicMock()
     data_type = MagicMock()
@@ -169,7 +255,7 @@ def test_session_cursor_executes_and_fetches_rows() -> None:
     dataframe.schema.fields = [field]
     dataframe.collect.return_value = [("first",), ("second",), ("third",)]
     spark_session.sql.return_value = dataframe
-    cursor = SessionCursor(spark_session, FakeAnalysisException)
+    cursor = _make_session_cursor(spark_session)
 
     cursor.execute("select %s", 1)
 
@@ -194,7 +280,7 @@ def test_session_cursor_labels_eager_and_lazy_spark_work() -> None:
     spark_session = MagicMock()
     spark_session.sparkContext = spark_context
     spark_session.sql.return_value = dataframe
-    cursor = SessionCursor(spark_session, FakeAnalysisException)
+    cursor = _make_session_cursor(spark_session)
 
     cursor.execute('/* {"app": "dbt", "node_id": "model.example.orders"} */ select 1')
     assert cursor.fetchall() == [(1,)]
@@ -213,6 +299,55 @@ def test_session_cursor_labels_eager_and_lazy_spark_work() -> None:
     assert spark_context.setLocalProperty.call_args_list == cleanup * 2
 
 
+def test_session_cursor_rejects_collect_after_session_cancellation() -> None:
+    spark_session = MagicMock()
+    connection = _make_session_connection(spark_session)
+    cursor = connection.cursor()
+    cursor.execute("select 1")
+    connection.mark_fail_fast_cancelled()
+
+    with pytest.raises(DbtRuntimeError, match="another dbt node failed"):
+        cursor.fetchall()
+
+    spark_session.sql.return_value.collect.assert_not_called()
+
+
+def test_session_cursor_rejects_collect_if_cancelled_during_job_group_setup() -> None:
+    spark_context = MagicMock()
+    spark_session = MagicMock()
+    spark_session.sparkContext = spark_context
+    connection = _make_session_connection(spark_session)
+    cursor = connection.cursor()
+    cursor._df = MagicMock()
+    cursor._job_group_id = "dbt:model.example.orders:job"
+    cursor._job_description = "model.example.orders"
+    spark_context.setJobGroup.side_effect = lambda *args, **kwargs: (
+        connection.mark_fail_fast_cancelled()
+    )
+
+    with pytest.raises(DbtRuntimeError, match="another dbt node failed"):
+        cursor.fetchall()
+
+    cursor._df.collect.assert_not_called()
+
+
+def test_session_cursor_job_group_fails_closed_after_cancellation() -> None:
+    spark_context = MagicMock()
+    spark_session = MagicMock()
+    spark_session.sparkContext = spark_context
+    connection = _make_session_connection(spark_session)
+    cursor = connection.cursor()
+    cursor._job_group_id = "dbt:model.example.orders:job"
+    cursor._job_description = "model.example.orders"
+    connection.mark_fail_fast_cancelled()
+
+    with pytest.raises(DbtRuntimeError, match="another dbt node failed"):
+        with cursor._job_group():
+            pytest.fail("cancelled session entered a Spark job group")
+
+    spark_context.setJobGroup.assert_not_called()
+
+
 def test_session_cursor_restores_job_group_after_collect_failure() -> None:
     spark_context = MagicMock()
     spark_context.getLocalProperty.return_value = None
@@ -221,7 +356,7 @@ def test_session_cursor_restores_job_group_after_collect_failure() -> None:
     spark_session = MagicMock()
     spark_session.sparkContext = spark_context
     spark_session.sql.return_value = dataframe
-    cursor = SessionCursor(spark_session, FakeAnalysisException)
+    cursor = _make_session_cursor(spark_session)
     cursor.execute('/* {"app": "dbt", "connection_name": "model.example.orders"} */ select 1')
 
     spark_context.reset_mock()
@@ -250,7 +385,7 @@ def test_session_cursor_restores_job_group_after_collect_failure() -> None:
 
 def test_session_cursor_translates_analysis_errors_and_clears_previous_result() -> None:
     spark_session = MagicMock()
-    cursor = SessionCursor(spark_session, FakeAnalysisException)
+    cursor = _make_session_cursor(spark_session)
     cursor._df = MagicMock()
     spark_session.sql.side_effect = FakeAnalysisException("missing table")
 
@@ -261,7 +396,7 @@ def test_session_cursor_translates_analysis_errors_and_clears_previous_result() 
 
 
 def test_session_cursor_context_manager_does_not_suppress_errors() -> None:
-    cursor = SessionCursor(MagicMock(), FakeAnalysisException)
+    cursor = _make_session_cursor(MagicMock())
 
     with pytest.raises(RuntimeError, match="boom"):
         with cursor:
@@ -354,6 +489,318 @@ def test_session_wrapper_cancel_continues_after_individual_failures() -> None:
     assert warning.call_count == 3
 
 
+def _cancel_wrapper(queries: list[Any], timeout: float = 0.2) -> SessionConnectionWrapper:
+    handle = MagicMock()
+    handle.cursor.return_value._job_group_id = "dbt:model.example.orders:job"
+    handle._spark_session.streams.active = queries
+    return SessionConnectionWrapper(handle, stream_stop_timeout_seconds=timeout).cursor()
+
+
+def _cancel_in_background(
+    wrapper: SessionConnectionWrapper,
+) -> tuple[threading.Thread, threading.Event, list[BaseException]]:
+    finished = threading.Event()
+    errors: list[BaseException] = []
+
+    def cancel() -> None:
+        try:
+            wrapper.cancel()
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    caller = threading.Thread(target=cancel, daemon=True)
+    caller.start()
+    return caller, finished, errors
+
+
+@pytest.mark.parametrize("query_count", [1, 5])
+def test_session_wrapper_blocked_streams_share_one_deadline(query_count: int) -> None:
+    release_stop = threading.Event()
+    entered = [threading.Event() for _ in range(query_count)]
+    stopping_threads: list[threading.Thread] = []
+    order: list[str] = []
+    queries = []
+
+    def stop(index: int) -> None:
+        order.append(f"stop-{index}")
+        stopping_threads.append(threading.current_thread())
+        entered[index].set()
+        release_stop.wait()
+
+    for index in range(query_count):
+        query = MagicMock()
+        query.id = f"blocked-{index}"
+        query.stop.side_effect = lambda index=index: stop(index)
+        queries.append(query)
+
+    timeout = 0.2
+    wrapper = _cancel_wrapper(queries, timeout)
+    spark_context = wrapper.handle._spark_session.sparkContext
+    spark_context.cancelJobGroup.side_effect = lambda _: order.append("group")
+    spark_context.cancelAllJobs.side_effect = lambda: order.append("all")
+    with patch("dbt.adapters.fabricspark.session.logger.warning") as warning:
+        started = time.monotonic()
+        caller, finished, errors = _cancel_in_background(wrapper)
+        try:
+            assert finished.wait(timeout + 0.5), "cancel exceeded the shared stream-stop deadline"
+            assert time.monotonic() - started < timeout + 0.6
+            assert errors == []
+            assert all(event.is_set() for event in entered)
+            assert order[:2] == ["group", "all"]
+            assert len(set(stopping_threads)) == query_count
+            assert all(worker.daemon and worker is not caller for worker in stopping_threads)
+            for index, query in enumerate(queries):
+                query.stop.assert_called_once_with()
+                assert any(
+                    f"Timed out stopping Spark streaming query blocked-{index}" in args.args[0]
+                    for args in warning.call_args_list
+                )
+        finally:
+            release_stop.set()
+            caller.join(1)
+            for worker in stopping_threads:
+                worker.join(1)
+            assert not caller.is_alive()
+            assert all(not worker.is_alive() for worker in stopping_threads)
+
+
+def test_session_wrapper_repeated_cancel_reuses_inflight_query_id() -> None:
+    release_stop = threading.Event()
+    entered = threading.Event()
+    stopping_threads: list[threading.Thread] = []
+
+    def stop() -> None:
+        stopping_threads.append(threading.current_thread())
+        entered.set()
+        release_stop.wait()
+
+    first_query = MagicMock()
+    first_query.id = "shared-query"
+    first_query.runId = "shared-run"
+    first_query.stop.side_effect = stop
+    wrapper = _cancel_wrapper([first_query], timeout=0.1)
+    caller, finished, errors = _cancel_in_background(wrapper)
+    try:
+        assert finished.wait(0.6)
+        assert entered.is_set()
+        assert errors == []
+        worker = wrapper._stream_stop_workers["shared-run"]
+        second_query = MagicMock()
+        second_query.id = "shared-query"
+        second_query.runId = "shared-run"
+        wrapper.handle._spark_session.streams.active = [second_query]
+
+        with patch.object(worker, "join", wraps=worker.join) as join:
+            wrapper.cancel()
+
+        join.assert_called_once_with(0.0)
+        first_query.stop.assert_called_once_with()
+        second_query.stop.assert_not_called()
+    finally:
+        release_stop.set()
+        caller.join(1)
+        for worker in stopping_threads:
+            worker.join(1)
+        assert not caller.is_alive()
+        assert all(not worker.is_alive() for worker in stopping_threads)
+
+
+def test_session_wrapper_cancel_stops_restarted_query_with_same_id() -> None:
+    release_stop = threading.Event()
+    stopping_threads: list[threading.Thread] = []
+
+    def stop() -> None:
+        stopping_threads.append(threading.current_thread())
+        release_stop.wait()
+
+    first_query = MagicMock()
+    first_query.id = "checkpoint-query"
+    first_query.runId = "first-run"
+    first_query.stop.side_effect = stop
+    wrapper = _cancel_wrapper([first_query], timeout=0.1)
+    caller, finished, errors = _cancel_in_background(wrapper)
+    try:
+        assert finished.wait(0.6)
+        assert errors == []
+        second_query = MagicMock()
+        second_query.id = "checkpoint-query"
+        second_query.runId = "second-run"
+        wrapper.handle._spark_session.streams.active = [second_query]
+
+        wrapper.cancel()
+
+        first_query.stop.assert_called_once_with()
+        second_query.stop.assert_called_once_with()
+    finally:
+        release_stop.set()
+        caller.join(1)
+        for worker in stopping_threads:
+            worker.join(1)
+        assert not caller.is_alive()
+        assert all(not worker.is_alive() for worker in stopping_threads)
+
+
+def test_session_wrapper_cancel_without_streams_does_not_start_workers() -> None:
+    wrapper = _cancel_wrapper([])
+    with patch("dbt.adapters.fabricspark.session._StreamStopWorker") as worker:
+        wrapper.cancel()
+    worker.assert_not_called()
+    wrapper.handle._spark_session.sparkContext.cancelAllJobs.assert_called_once_with()
+
+
+def test_session_wrapper_cancel_handles_stream_enumeration_failure() -> None:
+    wrapper = _cancel_wrapper([])
+    streams = wrapper.handle._spark_session.streams
+    with (
+        patch.object(type(streams), "active", new_callable=PropertyMock, create=True) as active,
+        patch("dbt.adapters.fabricspark.session.logger.warning") as warning,
+    ):
+        active.side_effect = RuntimeError("streams unavailable")
+        wrapper.cancel()
+
+    wrapper.handle._spark_session.sparkContext.cancelAllJobs.assert_called_once_with()
+    assert "Failed to enumerate active Spark streaming queries" in warning.call_args.args[0]
+
+
+def test_session_wrapper_cancel_handles_query_id_failure() -> None:
+    query = MagicMock()
+    wrapper = _cancel_wrapper([query])
+    with (
+        patch.object(type(query), "id", new_callable=PropertyMock, create=True) as query_id,
+        patch("dbt.adapters.fabricspark.session.logger.warning") as warning,
+    ):
+        query_id.side_effect = RuntimeError("query id unavailable")
+        wrapper.cancel()
+
+    query.stop.assert_called_once_with()
+    assert "Failed to read Spark streaming query ID" in warning.call_args.args[0]
+
+
+def test_session_wrapper_cancel_bounds_blocked_query_id_lookup() -> None:
+    release_id = threading.Event()
+    lookup_entered = threading.Event()
+    lookup_threads: list[threading.Thread] = []
+    query = MagicMock()
+    wrapper = _cancel_wrapper([query], timeout=0.1)
+
+    def query_id() -> str:
+        lookup_threads.append(threading.current_thread())
+        lookup_entered.set()
+        release_id.wait()
+        return "late-query"
+
+    with (
+        patch.object(type(query), "id", new_callable=PropertyMock, create=True) as identifier,
+        patch("dbt.adapters.fabricspark.session.logger.warning") as warning,
+    ):
+        identifier.side_effect = query_id
+        caller, finished, errors = _cancel_in_background(wrapper)
+        try:
+            assert lookup_entered.wait(0.5)
+            assert finished.wait(0.6)
+            assert errors == []
+            assert "Timed out stopping Spark streaming query unknown" in warning.call_args.args[0]
+        finally:
+            release_id.set()
+            caller.join(1)
+            for worker in lookup_threads:
+                worker.join(1)
+            assert not caller.is_alive()
+            assert all(not worker.is_alive() for worker in lookup_threads)
+    query.stop.assert_called_once_with()
+
+
+def test_session_wrapper_cancel_continues_after_worker_start_failure() -> None:
+    failed_query = MagicMock()
+    other_query = MagicMock()
+    wrapper = _cancel_wrapper([failed_query, other_query])
+    real_start = _StreamStopWorker.start
+
+    def start(worker: _StreamStopWorker) -> None:
+        if worker.query is failed_query:
+            raise RuntimeError("thread creation failed")
+        real_start(worker)
+
+    with (
+        patch("dbt.adapters.fabricspark.session._StreamStopWorker.start", autospec=True) as launch,
+        patch("dbt.adapters.fabricspark.session.logger.warning") as warning,
+    ):
+        launch.side_effect = start
+        wrapper.cancel()
+
+    failed_query.stop.assert_not_called()
+    other_query.stop.assert_called_once_with()
+    assert "Failed to start Spark streaming query stop worker" in warning.call_args.args[0]
+
+
+def test_session_wrapper_cancel_preserves_original_error_when_logging_fails(caplog) -> None:
+    query = MagicMock()
+    query.id = "failed-query"
+    query.stop.side_effect = RuntimeError("query stop failed")
+    wrapper = _cancel_wrapper([query])
+    spark_context = wrapper.handle._spark_session.sparkContext
+    spark_context.cancelJobGroup.side_effect = RuntimeError("group cancel failed")
+    spark_context.cancelAllJobs.side_effect = RuntimeError("all jobs cancel failed")
+    original = DbtRuntimeError("original model failure")
+
+    with (
+        patch(
+            "dbt.adapters.fabricspark.session.logger.warning",
+            side_effect=RuntimeError("adapter logging failed"),
+        ),
+        pytest.raises(DbtRuntimeError) as error,
+    ):
+        try:
+            raise original
+        except DbtRuntimeError:
+            wrapper.cancel()
+            raise
+
+    assert error.value is original
+    query.stop.assert_called_once_with()
+    assert "Failed to stop Spark streaming query failed-query" in caplog.text
+    assert "Failed to cancel all Spark jobs" in caplog.text
+
+
+def test_session_wrapper_cancel_falls_back_to_stderr_when_loggers_fail(capfd) -> None:
+    wrapper = _cancel_wrapper([])
+    wrapper.handle._spark_session.sparkContext.cancelAllJobs.side_effect = RuntimeError(
+        "all jobs cancel failed"
+    )
+    with (
+        patch(
+            "dbt.adapters.fabricspark.session.logger.warning",
+            side_effect=RuntimeError("adapter logging failed"),
+        ),
+        patch("dbt.adapters.fabricspark.session.logging.getLogger") as fallback,
+    ):
+        fallback.return_value.warning.side_effect = RuntimeError("fallback logging failed")
+        wrapper.cancel()
+
+    assert "Failed to cancel all Spark jobs" in capfd.readouterr().err
+
+
+def test_session_wrapper_cancel_survives_unavailable_diagnostic_channels() -> None:
+    wrapper = _cancel_wrapper([])
+    wrapper.handle._spark_session.sparkContext.cancelAllJobs.side_effect = RuntimeError(
+        "all jobs cancel failed"
+    )
+    with (
+        patch(
+            "dbt.adapters.fabricspark.session.logger.warning",
+            side_effect=RuntimeError("adapter logging failed"),
+        ),
+        patch("dbt.adapters.fabricspark.session.logging.getLogger") as fallback,
+        patch("dbt.adapters.fabricspark.session.os.write", side_effect=OSError("stderr closed")),
+    ):
+        fallback.return_value.warning.side_effect = RuntimeError("fallback logging failed")
+        wrapper.cancel()
+
+    wrapper.handle._spark_session.sparkContext.cancelAllJobs.assert_called_once_with()
+
+
 def test_session_cursor_bulk_loads_seed_with_bounded_partitions() -> None:
     spark_context = MagicMock()
     spark_context.getLocalProperty.return_value = None
@@ -365,7 +812,7 @@ def test_session_cursor_bulk_loads_seed_with_bounded_partitions() -> None:
     spark_session = MagicMock()
     spark_session.sparkContext = spark_context
     spark_session.createDataFrame.return_value = raw_df
-    cursor = SessionCursor(spark_session, FakeAnalysisException)
+    cursor = _make_session_cursor(spark_session)
 
     rows = [("1", "a"), (None, "b")]
     cursor.execute_seed_insert(
@@ -386,10 +833,60 @@ def test_session_cursor_bulk_loads_seed_with_bounded_partitions() -> None:
     assert group_id.startswith("dbt:dbt seed load: silver.dbo.my_seed:")
 
 
+def test_session_cursor_seed_rechecks_cancellation_before_parallelize() -> None:
+    spark_context = MagicMock()
+    spark_session = MagicMock()
+    spark_session.sparkContext = spark_context
+    connection = _make_session_connection(spark_session)
+    cursor = connection.cursor()
+    spark_context.setJobGroup.side_effect = lambda *args, **kwargs: (
+        connection.mark_fail_fast_cancelled()
+    )
+
+    with pytest.raises(DbtRuntimeError, match="another dbt node failed"):
+        cursor.execute_seed_insert(
+            rows=[("1",)],
+            string_schema="`id` STRING",
+            cast_exprs=["CAST(`id` AS int) AS `id`"],
+            table_name="silver.dbo.my_seed",
+            num_partitions=1,
+        )
+
+    spark_context.parallelize.assert_not_called()
+    spark_session.createDataFrame.assert_not_called()
+
+
+def test_session_cursor_seed_rechecks_cancellation_before_insert_into() -> None:
+    spark_context = MagicMock()
+    spark_session = MagicMock()
+    spark_session.sparkContext = spark_context
+    connection = _make_session_connection(spark_session)
+    cursor = connection.cursor()
+    raw_dataframe = MagicMock()
+    typed_dataframe = MagicMock()
+    raw_dataframe.selectExpr.return_value = typed_dataframe
+    spark_session.createDataFrame.return_value = raw_dataframe
+    spark_session.createDataFrame.side_effect = lambda *args, **kwargs: (
+        connection.mark_fail_fast_cancelled() or raw_dataframe
+    )
+
+    with pytest.raises(DbtRuntimeError, match="another dbt node failed"):
+        cursor.execute_seed_insert(
+            rows=[("1",)],
+            string_schema="`id` STRING",
+            cast_exprs=["CAST(`id` AS int) AS `id`"],
+            table_name="silver.dbo.my_seed",
+            num_partitions=1,
+        )
+
+    spark_context.parallelize.assert_called_once_with([("1",)], numSlices=1)
+    typed_dataframe.write.insertInto.assert_not_called()
+
+
 def test_session_cursor_bulk_load_translates_analysis_errors() -> None:
     spark_session = MagicMock()
     spark_session.createDataFrame.side_effect = FakeAnalysisException("bad schema")
-    cursor = SessionCursor(spark_session, FakeAnalysisException)
+    cursor = _make_session_cursor(spark_session)
 
     with pytest.raises(DbtRuntimeError, match="bad schema"):
         cursor.execute_seed_insert(
@@ -420,12 +917,53 @@ def test_session_wrapper_delegates_load_seed_to_cursor() -> None:
     )
 
 
+def test_running_dbt_worker_cannot_submit_sql_after_shared_cancellation() -> None:
+    spark_session = MagicMock()
+    spark_session.streams.active = ()
+    connection = _make_session_connection(spark_session)
+    cursor = connection.cursor()
+    planning_started = threading.Event()
+    resume_planning = threading.Event()
+    worker_errors: list[BaseException] = []
+
+    def pause_planning(_: str) -> str:
+        planning_started.set()
+        assert resume_planning.wait(1)
+        return "dbt query"
+
+    def run_worker() -> None:
+        try:
+            with patch("dbt.adapters.fabricspark.session._dbt_job_description", pause_planning):
+                cursor.execute("select 1")
+        except BaseException as exc:
+            worker_errors.append(exc)
+
+    worker = threading.Thread(target=run_worker, daemon=True)
+    worker.start()
+    try:
+        assert planning_started.wait(1)
+        SessionConnectionWrapper(connection).cancel()
+        resume_planning.set()
+        worker.join(1)
+
+        assert not worker.is_alive()
+        assert len(worker_errors) == 1
+        assert isinstance(worker_errors[0], DbtRuntimeError)
+        assert "another dbt node failed" in str(worker_errors[0])
+        spark_session.sql.assert_not_called()
+    finally:
+        resume_planning.set()
+        worker.join(1)
+        assert not worker.is_alive()
+
+
 def test_connection_manager_routes_session_without_fabric_or_livy() -> None:
     with patch("dbt.adapters.fabricspark.credentials.import_module", return_value=object()):
         credentials = FabricSparkCredentials(
             method="session",
             lakehouse="dbt_session_e2e",
             schema="dbt_session_e2e",
+            stream_stop_timeout_seconds=0.75,
             spark_config={"name": "dbt-session", "conf": {"spark.master": "local[2]"}},
         )
     connection = Connection(
@@ -448,6 +986,7 @@ def test_connection_manager_routes_session_without_fabric_or_livy() -> None:
 
     assert opened.state == ConnectionState.OPEN
     assert isinstance(opened.handle, SessionConnectionWrapper)
+    assert opened.handle._stream_stop_timeout_seconds == 0.75
     session_connection.assert_called_once_with(spark_config=credentials.spark_config)
     get_properties.assert_not_called()
 

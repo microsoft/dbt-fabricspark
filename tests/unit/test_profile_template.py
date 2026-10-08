@@ -20,4 +20,12 @@ def test_profile_template_is_valid_yaml() -> None:
     assert session == {
         "_fixed_method": "session",
         "_fixed_spark_config": {"name": "dbt-fabricspark-session"},
+        "stream_stop_timeout_seconds": {
+            "hint": (
+                "Experimental, session-only. Maximum total seconds to wait for streaming "
+                "queries to stop during cancellation."
+            ),
+            "type": "float",
+            "default": 30,
+        },
     }

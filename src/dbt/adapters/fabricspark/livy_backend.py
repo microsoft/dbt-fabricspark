@@ -124,6 +124,7 @@ class LivyBackend(ABC):
         """Release backend-owned resources for this instance.
 
         Singleton mode keeps the underlying Livy session alive when
-        ``reuse_session`` is true; HC mode always deletes its per-thread HC
-        session so the REPL slot frees up immediately.
+        ``reuse_session`` is true. HC mode keeps per-thread REPLs alive and
+        persists their IDs for later invocations when ``reuse_session`` is
+        true; otherwise it deletes them so their slots free up immediately.
         """

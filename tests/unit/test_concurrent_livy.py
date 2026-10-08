@@ -17,6 +17,8 @@ Mocked-HTTP coverage of the HC lifecycle:
 
 from __future__ import annotations
 
+import json
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import get_context
@@ -26,6 +28,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from dbt.adapters.contracts.connection import Connection, ConnectionState
+from dbt.adapters.exceptions import FailedToConnectError
 from dbt.adapters.fabricspark import concurrent_livy
 from dbt.adapters.fabricspark.concurrent_livy import (
     HighConcurrencyConnection,
@@ -137,6 +140,28 @@ class TestDeriveSessionTag:
 
 
 class TestHighConcurrencySessionAcquire:
+    def test_registry_is_scoped_to_lakehouse(self, tmp_path):
+        session_id_file = str(tmp_path / "livy-session-id.txt")
+        first = _make_creds(
+            reuse_session=True,
+            session_id_file=session_id_file,
+            lakehouseid="11111111-1111-1111-1111-111111111111",
+        )
+        second = _make_creds(
+            reuse_session=True,
+            session_id_file=session_id_file,
+            lakehouseid="22222222-2222-2222-2222-222222222222",
+        )
+        registry_path = concurrent_livy._hc_session_registry_path(first)
+        first_target = concurrent_livy._hc_session_target(first)
+        with open(registry_path, "w", encoding="utf-8") as registry_file:
+            json.dump({first_target: ["hc-first"]}, registry_file)
+
+        assert concurrent_livy._pop_reusable_hc_session(second) is None
+
+        with open(registry_path, encoding="utf-8") as registry_file:
+            assert json.load(registry_file) == {first_target: ["hc-first"]}
+
     @patch("dbt.adapters.fabricspark.concurrent_livy._get_headers", return_value={})
     @patch("dbt.adapters.fabricspark.concurrent_livy.time.sleep")
     @patch("dbt.adapters.fabricspark.concurrent_livy.requests.get")
@@ -168,6 +193,86 @@ class TestHighConcurrencySessionAcquire:
         assert "sessionTag" in post_body
         # Session is now in the active registry so atexit will reap it.
         assert hc in concurrent_livy._active_sessions
+
+    @patch("dbt.adapters.fabricspark.concurrent_livy._get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.concurrent_livy.requests.post")
+    @patch("dbt.adapters.fabricspark.concurrent_livy.requests.get")
+    def test_reclaims_persisted_idle_session_without_post(
+        self, mock_get, mock_post, _headers, tmp_path
+    ):
+        credentials = _make_creds(
+            reuse_session=True, session_id_file=str(tmp_path / "livy-session-id.txt")
+        )
+        registry_path = concurrent_livy._hc_session_registry_path(credentials)
+        target = concurrent_livy._hc_session_target(credentials)
+        with open(registry_path, "w", encoding="utf-8") as registry_file:
+            json.dump({target: ["hc-saved"]}, registry_file)
+        mock_get.return_value = _mock_response(
+            200, {"state": "Idle", "sessionId": "livy-saved", "replId": "repl-saved"}
+        )
+
+        session = HighConcurrencySession(credentials, credentials.spark_config)
+        session.acquire()
+
+        assert (session.hc_id, session.session_id, session.repl_id) == (
+            "hc-saved",
+            "livy-saved",
+            "repl-saved",
+        )
+        mock_post.assert_not_called()
+        mock_get.assert_called_once()
+        with open(registry_path, encoding="utf-8") as registry_file:
+            assert json.load(registry_file) == {}
+        assert session in concurrent_livy._active_sessions
+
+    @patch("dbt.adapters.fabricspark.concurrent_livy._get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.concurrent_livy.time.sleep")
+    @patch("dbt.adapters.fabricspark.concurrent_livy.requests.post")
+    @patch("dbt.adapters.fabricspark.concurrent_livy.requests.get")
+    def test_discards_unusable_persisted_id_then_creates_session(
+        self, mock_get, mock_post, _sleep, _headers, tmp_path
+    ):
+        credentials = _make_creds(
+            reuse_session=True, session_id_file=str(tmp_path / "livy-session-id.txt")
+        )
+        registry_path = concurrent_livy._hc_session_registry_path(credentials)
+        target = concurrent_livy._hc_session_target(credentials)
+        with open(registry_path, "w", encoding="utf-8") as registry_file:
+            json.dump({target: ["hc-not-idle"]}, registry_file)
+        mock_get.side_effect = [
+            _mock_response(200, {"state": "Running"}),
+            _mock_response(200, {"state": "Idle", "sessionId": "livy-new", "replId": "repl-new"}),
+        ]
+        mock_post.return_value = _mock_response(202, {"id": "hc-new"})
+
+        session = HighConcurrencySession(credentials, credentials.spark_config)
+        session.acquire()
+
+        assert session.hc_id == "hc-new"
+        assert mock_get.call_count == 2
+        assert "hc-not-idle" in mock_get.call_args_list[0].args[0]
+        assert "hc-not-idle" not in mock_get.call_args_list[1].args[0]
+        mock_post.assert_called_once()
+
+    @patch("dbt.adapters.fabricspark.concurrent_livy._get_headers", return_value={})
+    @patch("dbt.adapters.fabricspark.concurrent_livy.requests.get")
+    def test_restores_saved_id_when_status_check_fails(self, mock_get, _headers, tmp_path):
+        credentials = _make_creds(
+            reuse_session=True, session_id_file=str(tmp_path / "livy-session-id.txt")
+        )
+        registry_path = concurrent_livy._hc_session_registry_path(credentials)
+        target = concurrent_livy._hc_session_target(credentials)
+        with open(registry_path, "w", encoding="utf-8") as registry_file:
+            json.dump({target: ["hc-retry"]}, registry_file)
+        mock_get.side_effect = concurrent_livy.requests.exceptions.ConnectionError("offline")
+
+        session = HighConcurrencySession(credentials, credentials.spark_config)
+        with pytest.raises(FailedToConnectError, match="Unable to check persisted HC session"):
+            session.acquire()
+
+        with open(registry_path, encoding="utf-8") as registry_file:
+            assert json.load(registry_file) == {target: ["hc-retry"]}
+        assert session not in concurrent_livy._active_sessions
 
     @patch("dbt.adapters.fabricspark.concurrent_livy._get_headers", return_value={})
     @patch("dbt.adapters.fabricspark.concurrent_livy.time.sleep")
@@ -833,15 +938,22 @@ class TestHighConcurrencyConnectionManager:
 class TestHighConcurrencyAtexitCleanup:
     @patch("dbt.adapters.fabricspark.concurrent_livy._get_headers", return_value={})
     @patch("dbt.adapters.fabricspark.concurrent_livy.requests.delete")
-    def test_atexit_deletes_only_non_reuse_sessions(self, mock_delete, _headers):
+    def test_atexit_deletes_non_reuse_and_persists_reuse_sessions(
+        self, mock_delete, _headers, tmp_path
+    ):
         # reuse_session sessions are left alive so the underlying Livy session
         # stays warm; non-reuse sessions are deleted to free REPL slots (#232).
         mock_delete.return_value = _mock_response(200)
 
         hc_fresh = HighConcurrencySession(_make_creds(reuse_session=False), {})
         hc_fresh.hc_id = "hc-del"
-        hc_reuse = HighConcurrencySession(_make_creds(reuse_session=True), {})
+        credentials = _make_creds(
+            reuse_session=True, session_id_file=str(tmp_path / "livy-session-id.txt")
+        )
+        hc_reuse = HighConcurrencySession(credentials, {})
         hc_reuse.hc_id = "hc-keep"
+        hc_reuse.session_id = "livy-keep"
+        hc_reuse.repl_id = "repl-keep"
         concurrent_livy._active_sessions.update({hc_fresh, hc_reuse})
 
         concurrent_livy._atexit_cleanup_hc()
@@ -857,6 +969,52 @@ class TestHighConcurrencyAtexitCleanup:
         # reuse_session session is untouched and still active.
         assert hc_reuse.hc_id == "hc-keep"
         assert hc_reuse in concurrent_livy._active_sessions
+        registry_path = concurrent_livy._hc_session_registry_path(credentials)
+        target = concurrent_livy._hc_session_target(credentials)
+        with open(registry_path, encoding="utf-8") as registry_file:
+            assert json.load(registry_file) == {target: ["hc-keep"]}
+
+
+class TestHighConcurrencyRegistryLock:
+    def test_lock_serializes_file_access(self, tmp_path):
+        lock_path = str(tmp_path / "sessions.hc.json")
+        acquired = threading.Event()
+        release = threading.Event()
+        second_acquired = threading.Event()
+
+        def hold_lock():
+            with concurrent_livy._hc_session_registry_lock(lock_path):
+                acquired.set()
+                assert release.wait(timeout=5)
+
+        def wait_for_lock():
+            with concurrent_livy._hc_session_registry_lock(lock_path):
+                second_acquired.set()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(hold_lock)
+            assert acquired.wait(timeout=5)
+            second = executor.submit(wait_for_lock)
+            assert not second_acquired.wait(timeout=0.1)
+            release.set()
+            first.result(timeout=5)
+            second.result(timeout=5)
+
+        assert second_acquired.is_set()
+
+    def test_windows_lock_uses_msvcrt(self, tmp_path, monkeypatch):
+        msvcrt = MagicMock()
+        msvcrt.LK_LOCK = 1
+        msvcrt.LK_UNLCK = 2
+        monkeypatch.setitem(sys.modules, "msvcrt", msvcrt)
+        monkeypatch.setattr(concurrent_livy.sys, "platform", "win32")
+
+        with concurrent_livy._hc_session_registry_lock(str(tmp_path / "sessions.hc.json")):
+            pass
+
+        locking_calls = msvcrt.locking.call_args_list
+        assert [entry.args[1:] for entry in locking_calls] == [(1, 1), (2, 1)]
+        assert locking_calls[0].args[0] == locking_calls[1].args[0]
 
 
 # --------------------------------------------------------------------------- #

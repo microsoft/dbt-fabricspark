@@ -132,9 +132,10 @@ def _load_pyspark() -> tuple[Any, type[Exception]]:
 
 
 class SessionCursor:
-    def __init__(self, spark_session: SparkSession, analysis_error: type[Exception]) -> None:
-        self._spark_session = spark_session
-        self._analysis_error = analysis_error
+    def __init__(self, connection: SessionConnection) -> None:
+        self._connection = connection
+        self._spark_session = connection._spark_session
+        self._analysis_error = connection._analysis_error
         self._df: Optional[DataFrame] = None
         self._rows: Optional[list[Row]] = None
         self._fetch_index = 0
@@ -183,6 +184,7 @@ class SessionCursor:
 
     @contextmanager
     def _job_group(self) -> Iterator[None]:
+        self._connection.require_not_cancelled()
         if self._job_group_id is None or self._job_description is None:
             yield
             return
@@ -192,6 +194,7 @@ class SessionCursor:
             name: spark_context.getLocalProperty(name) for name in SPARK_JOB_GROUP_PROPERTIES
         }
         try:
+            self._connection.require_not_cancelled()
             spark_context.setJobGroup(
                 self._job_group_id,
                 self._job_description,
@@ -203,6 +206,7 @@ class SessionCursor:
                 spark_context.setLocalProperty(name, value)
 
     def execute(self, sql: str, *parameters: Any) -> None:
+        self._connection.require_not_cancelled()
         if parameters:
             sql = sql % parameters
 
@@ -213,6 +217,7 @@ class SessionCursor:
         self._job_group_id = f"dbt:{self._job_description}:{uuid.uuid4().hex}"
         try:
             with self._job_group():
+                self._connection.require_not_cancelled()
                 self._df = self._spark_session.sql(sql)
         except self._analysis_error as exc:
             raise DbtRuntimeError(str(exc)) from exc
@@ -233,6 +238,7 @@ class SessionCursor:
         explicitly to ``parallelize`` so this local-data DataFrame does not
         silently inherit ``sc.defaultParallelism`` (see issue #290).
         """
+        self._connection.require_not_cancelled()
         self._df = None
         self._rows = None
         self._fetch_index = 0
@@ -241,16 +247,21 @@ class SessionCursor:
         try:
             with self._job_group():
                 spark_context = self._spark_session.sparkContext
+                self._connection.require_not_cancelled()
                 rdd = spark_context.parallelize(rows, numSlices=num_partitions)
                 raw_df = self._spark_session.createDataFrame(rdd, schema=string_schema)
                 typed_df = raw_df.selectExpr(cast_exprs)
-                typed_df.write.insertInto(table_name, overwrite=False)
+                writer = typed_df.write
+                self._connection.require_not_cancelled()
+                writer.insertInto(table_name, overwrite=False)
         except self._analysis_error as exc:
             raise DbtRuntimeError(str(exc)) from exc
 
     def fetchall(self) -> Optional[list[Row]]:
+        self._connection.require_not_cancelled()
         if self._rows is None and self._df is not None:
             with self._job_group():
+                self._connection.require_not_cancelled()
                 self._rows = self._df.collect()
         return self._rows
 
@@ -273,6 +284,7 @@ class SessionCursor:
 
 class SessionConnection:
     def __init__(self, *, spark_config: dict[str, Any]) -> None:
+        self._fail_fast_cancelled = threading.Event()
         spark_session_type, analysis_error = _load_pyspark()
         builder = spark_session_type.builder
         for parameter, value in spark_config.get("conf", {}).items():
@@ -281,8 +293,17 @@ class SessionConnection:
         self._spark_session = builder.getOrCreate()
         self._analysis_error = analysis_error
 
+    def mark_fail_fast_cancelled(self) -> None:
+        self._fail_fast_cancelled.set()
+
+    def require_not_cancelled(self) -> None:
+        if self._fail_fast_cancelled.is_set():
+            raise DbtRuntimeError(
+                "Spark session was cancelled because another dbt node failed"
+            )
+
     def cursor(self) -> SessionCursor:
-        return SessionCursor(self._spark_session, self._analysis_error)
+        return SessionCursor(self)
 
     def close(self) -> None:
         pass
@@ -308,6 +329,7 @@ class SessionConnectionWrapper(FabricSparkConnectionWrapper):
 
     def cancel(self) -> None:
         """Cancel jobs first; all stream-stop waits share one bounded deadline."""
+        self.handle.mark_fail_fast_cancelled()
         cursor = self._cursor
         job_group_id = getattr(cursor, "_job_group_id", None) if cursor else None
         spark_session = self.handle._spark_session

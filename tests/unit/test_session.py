@@ -27,6 +27,18 @@ class FakeAnalysisException(Exception):
     pass
 
 
+def _make_session_connection(spark_session: Any) -> SessionConnection:
+    connection = object.__new__(SessionConnection)
+    connection._spark_session = spark_session
+    connection._analysis_error = FakeAnalysisException
+    connection._fail_fast_cancelled = threading.Event()
+    return connection
+
+
+def _make_session_cursor(spark_session: Any) -> SessionCursor:
+    return _make_session_connection(spark_session).cursor()
+
+
 @pytest.mark.parametrize(
     ("sql", "expected"),
     [
@@ -164,6 +176,76 @@ def test_session_connection_builds_hive_session_from_spark_config() -> None:
     spark_session.stop.assert_not_called()
 
 
+def test_session_cancel_latches_before_cancelling_spark_work() -> None:
+    spark_context = MagicMock()
+    spark_session = MagicMock()
+    spark_session.sparkContext = spark_context
+    spark_session.streams.active = ()
+    connection = _make_session_connection(spark_session)
+    wrapper = SessionConnectionWrapper(connection).cursor()
+    wrapper._cursor._job_group_id = "dbt:model.example.orders:job"
+    cancelled_at_call = []
+    spark_context.cancelJobGroup.side_effect = lambda _: cancelled_at_call.append(
+        connection._fail_fast_cancelled.is_set()
+    )
+    spark_context.cancelAllJobs.side_effect = lambda: cancelled_at_call.append(
+        connection._fail_fast_cancelled.is_set()
+    )
+
+    wrapper.cancel()
+
+    assert cancelled_at_call == [True, True]
+
+
+def test_session_cancel_is_idempotent() -> None:
+    spark_session = MagicMock()
+    spark_session.streams.active = ()
+    connection = _make_session_connection(spark_session)
+    wrapper = SessionConnectionWrapper(connection)
+
+    wrapper.cancel()
+    wrapper.cancel()
+
+    assert connection._fail_fast_cancelled.is_set()
+    assert spark_session.sparkContext.cancelAllJobs.call_count == 2
+
+
+def test_session_cancellation_is_shared_by_existing_and_new_cursors() -> None:
+    spark_session = MagicMock()
+    spark_session.streams.active = ()
+    connection = _make_session_connection(spark_session)
+    existing_cursor = connection.cursor()
+    first_wrapper = SessionConnectionWrapper(connection)
+    second_wrapper = SessionConnectionWrapper(connection)
+
+    first_wrapper.cancel()
+
+    with pytest.raises(DbtRuntimeError, match="another dbt node failed"):
+        existing_cursor.execute("select 1")
+    with pytest.raises(DbtRuntimeError, match="another dbt node failed"):
+        second_wrapper.cursor().execute("select 1")
+    with pytest.raises(DbtRuntimeError, match="another dbt node failed"):
+        connection.cursor().execute("select 1")
+
+    spark_session.sql.assert_not_called()
+
+
+def test_session_cursor_rechecks_cancellation_immediately_before_sql() -> None:
+    spark_context = MagicMock()
+    spark_session = MagicMock()
+    spark_session.sparkContext = spark_context
+    connection = _make_session_connection(spark_session)
+    cursor = connection.cursor()
+    spark_context.setJobGroup.side_effect = lambda *args, **kwargs: (
+        connection.mark_fail_fast_cancelled()
+    )
+
+    with pytest.raises(DbtRuntimeError, match="another dbt node failed"):
+        cursor.execute("select 1")
+
+    spark_session.sql.assert_not_called()
+
+
 def test_session_cursor_executes_and_fetches_rows() -> None:
     spark_session = MagicMock()
     data_type = MagicMock()
@@ -173,7 +255,7 @@ def test_session_cursor_executes_and_fetches_rows() -> None:
     dataframe.schema.fields = [field]
     dataframe.collect.return_value = [("first",), ("second",), ("third",)]
     spark_session.sql.return_value = dataframe
-    cursor = SessionCursor(spark_session, FakeAnalysisException)
+    cursor = _make_session_cursor(spark_session)
 
     cursor.execute("select %s", 1)
 
@@ -198,7 +280,7 @@ def test_session_cursor_labels_eager_and_lazy_spark_work() -> None:
     spark_session = MagicMock()
     spark_session.sparkContext = spark_context
     spark_session.sql.return_value = dataframe
-    cursor = SessionCursor(spark_session, FakeAnalysisException)
+    cursor = _make_session_cursor(spark_session)
 
     cursor.execute('/* {"app": "dbt", "node_id": "model.example.orders"} */ select 1')
     assert cursor.fetchall() == [(1,)]
@@ -217,6 +299,55 @@ def test_session_cursor_labels_eager_and_lazy_spark_work() -> None:
     assert spark_context.setLocalProperty.call_args_list == cleanup * 2
 
 
+def test_session_cursor_rejects_collect_after_session_cancellation() -> None:
+    spark_session = MagicMock()
+    connection = _make_session_connection(spark_session)
+    cursor = connection.cursor()
+    cursor.execute("select 1")
+    connection.mark_fail_fast_cancelled()
+
+    with pytest.raises(DbtRuntimeError, match="another dbt node failed"):
+        cursor.fetchall()
+
+    spark_session.sql.return_value.collect.assert_not_called()
+
+
+def test_session_cursor_rejects_collect_if_cancelled_during_job_group_setup() -> None:
+    spark_context = MagicMock()
+    spark_session = MagicMock()
+    spark_session.sparkContext = spark_context
+    connection = _make_session_connection(spark_session)
+    cursor = connection.cursor()
+    cursor._df = MagicMock()
+    cursor._job_group_id = "dbt:model.example.orders:job"
+    cursor._job_description = "model.example.orders"
+    spark_context.setJobGroup.side_effect = lambda *args, **kwargs: (
+        connection.mark_fail_fast_cancelled()
+    )
+
+    with pytest.raises(DbtRuntimeError, match="another dbt node failed"):
+        cursor.fetchall()
+
+    cursor._df.collect.assert_not_called()
+
+
+def test_session_cursor_job_group_fails_closed_after_cancellation() -> None:
+    spark_context = MagicMock()
+    spark_session = MagicMock()
+    spark_session.sparkContext = spark_context
+    connection = _make_session_connection(spark_session)
+    cursor = connection.cursor()
+    cursor._job_group_id = "dbt:model.example.orders:job"
+    cursor._job_description = "model.example.orders"
+    connection.mark_fail_fast_cancelled()
+
+    with pytest.raises(DbtRuntimeError, match="another dbt node failed"):
+        with cursor._job_group():
+            pytest.fail("cancelled session entered a Spark job group")
+
+    spark_context.setJobGroup.assert_not_called()
+
+
 def test_session_cursor_restores_job_group_after_collect_failure() -> None:
     spark_context = MagicMock()
     spark_context.getLocalProperty.return_value = None
@@ -225,7 +356,7 @@ def test_session_cursor_restores_job_group_after_collect_failure() -> None:
     spark_session = MagicMock()
     spark_session.sparkContext = spark_context
     spark_session.sql.return_value = dataframe
-    cursor = SessionCursor(spark_session, FakeAnalysisException)
+    cursor = _make_session_cursor(spark_session)
     cursor.execute('/* {"app": "dbt", "connection_name": "model.example.orders"} */ select 1')
 
     spark_context.reset_mock()
@@ -254,7 +385,7 @@ def test_session_cursor_restores_job_group_after_collect_failure() -> None:
 
 def test_session_cursor_translates_analysis_errors_and_clears_previous_result() -> None:
     spark_session = MagicMock()
-    cursor = SessionCursor(spark_session, FakeAnalysisException)
+    cursor = _make_session_cursor(spark_session)
     cursor._df = MagicMock()
     spark_session.sql.side_effect = FakeAnalysisException("missing table")
 
@@ -265,7 +396,7 @@ def test_session_cursor_translates_analysis_errors_and_clears_previous_result() 
 
 
 def test_session_cursor_context_manager_does_not_suppress_errors() -> None:
-    cursor = SessionCursor(MagicMock(), FakeAnalysisException)
+    cursor = _make_session_cursor(MagicMock())
 
     with pytest.raises(RuntimeError, match="boom"):
         with cursor:
@@ -681,7 +812,7 @@ def test_session_cursor_bulk_loads_seed_with_bounded_partitions() -> None:
     spark_session = MagicMock()
     spark_session.sparkContext = spark_context
     spark_session.createDataFrame.return_value = raw_df
-    cursor = SessionCursor(spark_session, FakeAnalysisException)
+    cursor = _make_session_cursor(spark_session)
 
     rows = [("1", "a"), (None, "b")]
     cursor.execute_seed_insert(
@@ -702,10 +833,60 @@ def test_session_cursor_bulk_loads_seed_with_bounded_partitions() -> None:
     assert group_id.startswith("dbt:dbt seed load: silver.dbo.my_seed:")
 
 
+def test_session_cursor_seed_rechecks_cancellation_before_parallelize() -> None:
+    spark_context = MagicMock()
+    spark_session = MagicMock()
+    spark_session.sparkContext = spark_context
+    connection = _make_session_connection(spark_session)
+    cursor = connection.cursor()
+    spark_context.setJobGroup.side_effect = lambda *args, **kwargs: (
+        connection.mark_fail_fast_cancelled()
+    )
+
+    with pytest.raises(DbtRuntimeError, match="another dbt node failed"):
+        cursor.execute_seed_insert(
+            rows=[("1",)],
+            string_schema="`id` STRING",
+            cast_exprs=["CAST(`id` AS int) AS `id`"],
+            table_name="silver.dbo.my_seed",
+            num_partitions=1,
+        )
+
+    spark_context.parallelize.assert_not_called()
+    spark_session.createDataFrame.assert_not_called()
+
+
+def test_session_cursor_seed_rechecks_cancellation_before_insert_into() -> None:
+    spark_context = MagicMock()
+    spark_session = MagicMock()
+    spark_session.sparkContext = spark_context
+    connection = _make_session_connection(spark_session)
+    cursor = connection.cursor()
+    raw_dataframe = MagicMock()
+    typed_dataframe = MagicMock()
+    raw_dataframe.selectExpr.return_value = typed_dataframe
+    spark_session.createDataFrame.return_value = raw_dataframe
+    spark_session.createDataFrame.side_effect = lambda *args, **kwargs: (
+        connection.mark_fail_fast_cancelled() or raw_dataframe
+    )
+
+    with pytest.raises(DbtRuntimeError, match="another dbt node failed"):
+        cursor.execute_seed_insert(
+            rows=[("1",)],
+            string_schema="`id` STRING",
+            cast_exprs=["CAST(`id` AS int) AS `id`"],
+            table_name="silver.dbo.my_seed",
+            num_partitions=1,
+        )
+
+    spark_context.parallelize.assert_called_once_with([("1",)], numSlices=1)
+    typed_dataframe.write.insertInto.assert_not_called()
+
+
 def test_session_cursor_bulk_load_translates_analysis_errors() -> None:
     spark_session = MagicMock()
     spark_session.createDataFrame.side_effect = FakeAnalysisException("bad schema")
-    cursor = SessionCursor(spark_session, FakeAnalysisException)
+    cursor = _make_session_cursor(spark_session)
 
     with pytest.raises(DbtRuntimeError, match="bad schema"):
         cursor.execute_seed_insert(
@@ -734,6 +915,46 @@ def test_session_wrapper_delegates_load_seed_to_cursor() -> None:
     cursor.execute_seed_insert.assert_called_once_with(
         [("1",)], "`id` STRING", ["CAST(`id` AS int) AS `id`"], "silver.dbo.my_seed", 1
     )
+
+
+def test_running_dbt_worker_cannot_submit_sql_after_shared_cancellation() -> None:
+    spark_session = MagicMock()
+    spark_session.streams.active = ()
+    connection = _make_session_connection(spark_session)
+    cursor = connection.cursor()
+    planning_started = threading.Event()
+    resume_planning = threading.Event()
+    worker_errors: list[BaseException] = []
+
+    def pause_planning(_: str) -> str:
+        planning_started.set()
+        assert resume_planning.wait(1)
+        return "dbt query"
+
+    def run_worker() -> None:
+        try:
+            with patch("dbt.adapters.fabricspark.session._dbt_job_description", pause_planning):
+                cursor.execute("select 1")
+        except BaseException as exc:
+            worker_errors.append(exc)
+
+    worker = threading.Thread(target=run_worker, daemon=True)
+    worker.start()
+    try:
+        assert planning_started.wait(1)
+        SessionConnectionWrapper(connection).cancel()
+        resume_planning.set()
+        worker.join(1)
+
+        assert not worker.is_alive()
+        assert len(worker_errors) == 1
+        assert isinstance(worker_errors[0], DbtRuntimeError)
+        assert "another dbt node failed" in str(worker_errors[0])
+        spark_session.sql.assert_not_called()
+    finally:
+        resume_planning.set()
+        worker.join(1)
+        assert not worker.is_alive()
 
 
 def test_connection_manager_routes_session_without_fabric_or_livy() -> None:

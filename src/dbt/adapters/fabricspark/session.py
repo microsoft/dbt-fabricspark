@@ -23,7 +23,7 @@ from dbt.adapters.fabricspark.credentials import (
 )
 
 if TYPE_CHECKING:
-    from pyspark.sql import DataFrame, Row, SparkSession
+    from pyspark.sql import DataFrame, Row
     from pyspark.sql.streaming import StreamingQuery
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
@@ -298,9 +298,7 @@ class SessionConnection:
 
     def require_not_cancelled(self) -> None:
         if self._fail_fast_cancelled.is_set():
-            raise DbtRuntimeError(
-                "Spark session was cancelled because another dbt node failed"
-            )
+            raise DbtRuntimeError("Spark session was cancelled because another dbt node failed")
 
     def cursor(self) -> SessionCursor:
         return SessionCursor(self)

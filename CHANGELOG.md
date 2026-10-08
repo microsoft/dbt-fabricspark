@@ -13,7 +13,8 @@
   `stream_stop_timeout_seconds` profile option (default 30 seconds). Job
   cancellation remains first, repeated cancellation reuses in-flight stops, and
   cleanup failures and timed-out query IDs are reported without replacing the
-  original dbt failure (#304).
+  original dbt failure (#304). A session-wide latch also prevents already-running
+  dbt workers from submitting new Spark jobs after cancellation.
 
 ---
 

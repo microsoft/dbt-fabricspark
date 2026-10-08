@@ -4,12 +4,16 @@ import atexit
 import datetime as dt
 import hashlib
 import json
+import os
 import re
+import sys
+import tempfile
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from types import TracebackType
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterator, Optional
 
 import requests
 from dbt_common.exceptions import DbtDatabaseError, DbtRuntimeError
@@ -36,8 +40,8 @@ _active_sessions_lock = threading.Lock()
 # All in-flight HighConcurrencySession instances across every dbt thread.
 # On process exit the atexit handler DELETEs each HC id whose credentials do
 # NOT set reuse_session, freeing REPL slots promptly instead of waiting for
-# Fabric's idle reaper. reuse_session sessions are intentionally left alive so
-# the underlying Livy session stays warm for the next invocation.
+# Fabric's idle reaper. reuse_session sessions are recorded for the next
+# invocation so their REPL slots can be reclaimed.
 _active_sessions: "set[HighConcurrencySession]" = set()
 
 
@@ -58,6 +62,117 @@ _shortcuts_done: "set[tuple[str, str]]" = set()
 
 def _get_headers(credentials: FabricSparkCredentials, tokenPrint: bool = False) -> dict[str, str]:
     return _livy_helpers.get_headers(credentials, tokenPrint)
+
+
+def _hc_session_registry_path(credentials: FabricSparkCredentials) -> str:
+    return credentials.resolved_session_id_file + ".hc.json"
+
+
+def _hc_session_target(credentials: FabricSparkCredentials) -> str:
+    return credentials.lakehouse_endpoint.rstrip("/")
+
+
+@contextmanager
+def _hc_session_registry_lock(path: str) -> Iterator[None]:
+    lock_path = path + ".lock"
+    directory = os.path.dirname(lock_path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+
+    with open(lock_path, "a+b") as lock_file:
+        if sys.platform == "win32":
+            import msvcrt
+
+            lock_file.seek(0, os.SEEK_END)
+            if lock_file.tell() == 0:
+                lock_file.write(b"\0")
+                lock_file.flush()
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+
+        try:
+            yield
+        finally:
+            if sys.platform == "win32":
+                import msvcrt
+
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _read_hc_session_registry(path: str) -> dict[str, list[str]]:
+    try:
+        with open(path, encoding="utf-8") as registry_file:
+            value = json.load(registry_file)
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning(f"Unable to read HC session registry {path}: {exc}")
+        return {}
+
+    if not isinstance(value, dict):
+        logger.warning(f"Ignoring invalid HC session registry {path}: expected a JSON object")
+        return {}
+
+    registry: dict[str, list[str]] = {}
+    for target, hc_ids in value.items():
+        if not isinstance(target, str) or not isinstance(hc_ids, list):
+            logger.warning(f"Ignoring invalid HC session registry entry in {path}")
+            continue
+        registry[target] = list(dict.fromkeys(hc_id for hc_id in hc_ids if isinstance(hc_id, str)))
+    return registry
+
+
+def _write_hc_session_registry(path: str, registry: dict[str, list[str]]) -> None:
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, temporary_path = tempfile.mkstemp(dir=directory, prefix=".hc-session-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as registry_file:
+            json.dump(registry, registry_file)
+            registry_file.flush()
+            os.fsync(registry_file.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        if os.path.exists(temporary_path):
+            os.unlink(temporary_path)
+
+
+def _pop_reusable_hc_session(credentials: FabricSparkCredentials) -> Optional[str]:
+    path = _hc_session_registry_path(credentials)
+    target = _hc_session_target(credentials)
+    with _hc_session_registry_lock(path):
+        registry = _read_hc_session_registry(path)
+        hc_ids = registry.get(target, [])
+        if not hc_ids:
+            return None
+
+        hc_id = hc_ids.pop(0)
+        if hc_ids:
+            registry[target] = hc_ids
+        else:
+            registry.pop(target, None)
+        _write_hc_session_registry(path, registry)
+        return hc_id
+
+
+def _restore_reusable_hc_session(credentials: FabricSparkCredentials, hc_id: str) -> None:
+    path = _hc_session_registry_path(credentials)
+    target = _hc_session_target(credentials)
+    with _hc_session_registry_lock(path):
+        registry = _read_hc_session_registry(path)
+        hc_ids = registry.setdefault(target, [])
+        if hc_id not in hc_ids:
+            hc_ids.insert(0, hc_id)
+        _write_hc_session_registry(path, registry)
 
 
 def derive_session_tag(credentials: FabricSparkCredentials) -> str:
@@ -126,11 +241,20 @@ class HighConcurrencySession:
     # ---- acquire ---------------------------------------------------------
 
     def acquire(self) -> None:
-        """POST /highConcurrencySessions then poll until Idle.
+        """Reuse a saved idle HC session or POST then poll until Idle.
 
         On success, ``self.hc_id``, ``self.session_id`` and ``self.repl_id``
         are all populated and the REPL is ready for statement submission.
         """
+        if self.credential.reuse_session and self._try_reuse_session():
+            self.is_new_session_required = False
+            self.is_dead = False
+            logger.debug(
+                f"Reclaimed HC session {self.hc_id} from the persisted registry "
+                f"(sessionId={self.session_id}, replId={self.repl_id})"
+            )
+            return
+
         payload = self._build_acquire_payload()
         url = self.connect_url + "/highConcurrencySessions"
         logger.debug(
@@ -193,6 +317,61 @@ class HighConcurrencySession:
         logger.debug(
             f"HC session ready: hc_id={self.hc_id} sessionId={self.session_id} replId={self.repl_id}"
         )
+
+    def _try_reuse_session(self) -> bool:
+        while True:
+            try:
+                hc_id = _pop_reusable_hc_session(self.credential)
+            except OSError as exc:
+                raise FailedToConnectError(
+                    f"Unable to claim a persisted HC session: {exc}"
+                ) from exc
+            if not hc_id:
+                return False
+
+            url = self.connect_url + "/highConcurrencySessions/" + hc_id
+            try:
+                response = requests.get(
+                    url,
+                    headers=_get_headers(self.credential, False),
+                    timeout=self.credential.http_timeout,
+                )
+                if response.status_code == 404:
+                    logger.debug(f"Discarding expired HC session {hc_id} from the registry")
+                    continue
+                response.raise_for_status()
+                body = response.json()
+            except requests.exceptions.JSONDecodeError as exc:
+                logger.warning(f"Discarding HC session {hc_id}: GET returned invalid JSON: {exc}")
+                continue
+            except requests.exceptions.RequestException as exc:
+                try:
+                    _restore_reusable_hc_session(self.credential, hc_id)
+                except OSError as lock_exc:
+                    raise FailedToConnectError(
+                        f"Unable to restore HC session {hc_id} to the reuse registry: {lock_exc}"
+                    ) from lock_exc
+                raise FailedToConnectError(
+                    f"Unable to check persisted HC session {hc_id}: {exc}"
+                ) from exc
+
+            if not isinstance(body, dict):
+                logger.warning(f"Discarding HC session {hc_id}: GET returned an invalid payload")
+                continue
+
+            if body.get("state") == "Idle" and body.get("sessionId") and body.get("replId"):
+                self.hc_id = hc_id
+                self.session_id = body["sessionId"]
+                self.repl_id = body["replId"]
+                with _active_sessions_lock:
+                    _active_sessions.add(self)
+                return True
+
+            logger.debug(
+                f"Discarding HC session {hc_id} from the reuse registry "
+                f"(state={body.get('state')!r})"
+            )
+        return False
 
     def _build_acquire_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = dict(self.spark_config)
@@ -954,24 +1133,39 @@ class HighConcurrencyConnectionWrapper(object):
 
 
 def _atexit_cleanup_hc() -> None:
-    """DELETE still-active HC sessions on process exit.
+    """Persist reusable HC sessions and DELETE non-reusable ones on exit.
 
     Iterates ``_active_sessions`` rather than relying on
     ``connection_managers`` in ``connections.py``, which can be cleared by
     ``cleanup_all`` before exit. Sessions whose credentials set
-    ``reuse_session`` are left alive so the underlying Livy session stays warm
-    for the next invocation (Fabric reaps them on ``session_idle_timeout``).
+    ``reuse_session`` are saved in the reuse registry and left alive so the
+    next invocation can reclaim the REPL.
     """
     with _active_sessions_lock:
         sessions = list(_active_sessions)
+
+    reusable_sessions: dict[tuple[str, str], list[str]] = {}
     for s in sessions:
         if s.credential.reuse_session:
-            logger.debug(f"atexit: keeping HC session {s.hc_id} alive for reuse")
+            if s.hc_id and s.session_id and s.repl_id and not s.is_dead:
+                key = (_hc_session_registry_path(s.credential), _hc_session_target(s.credential))
+                reusable_sessions.setdefault(key, []).append(s.hc_id)
             continue
         try:
             s.delete()
         except Exception as ex:
             logger.debug(f"atexit HC delete failed for {s.hc_id}: {ex}")
+
+    for (path, target), hc_ids in reusable_sessions.items():
+        try:
+            with _hc_session_registry_lock(path):
+                registry = _read_hc_session_registry(path)
+                existing = registry.setdefault(target, [])
+                registry[target] = list(dict.fromkeys([*existing, *hc_ids]))
+                _write_hc_session_registry(path, registry)
+            logger.debug(f"atexit: saved {len(hc_ids)} HC session(s) for reuse in {path}")
+        except OSError as exc:
+            logger.warning(f"Unable to persist reusable HC sessions to {path}: {exc}")
 
 
 atexit.register(_atexit_cleanup_hc)

@@ -15,6 +15,11 @@
   cleanup failures and timed-out query IDs are reported without replacing the
   original dbt failure (#304). A session-wide latch also prevents already-running
   dbt workers from submitting new Spark jobs after cancellation.
+- Fixed high-concurrency Livy with `reuse_session: true` accumulating idle REPLs
+  across dbt invocations. Reusable REPL IDs are now persisted beside
+  `session_id_file`, checked for idle state, and reclaimed under a cross-process
+  file lock instead of creating more REPLs until Fabric spills to another Livy
+  session. ([#303](https://github.com/microsoft/dbt-fabricspark/issues/303))
 
 ---
 

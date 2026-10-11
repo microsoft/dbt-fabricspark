@@ -133,7 +133,9 @@ def execute_streaming_table(adapter: Any, relation: Any, sql: str) -> tuple[Any,
     owner = _connection_owner(adapter)
     response, created = _execute(adapter, owner[1], sql)
     _check_connection(adapter, owner)
-    _await_streaming_table(adapter, namespace, table, created, owner, timeout, interval)
+    _await_streaming_table(
+        adapter, namespace, table, relation.identifier, created, owner, timeout, interval
+    )
     return response, created
 
 
@@ -141,6 +143,7 @@ def _await_streaming_table(
     adapter: Any,
     namespace: str,
     table: str,
+    identifier: str,
     create_result: Any,
     owner: tuple[Any, Any, Any],
     timeout: float,
@@ -160,6 +163,8 @@ def _await_streaming_table(
     if expected["table_name"] != table and not expected["table_name"].endswith("." + table):
         raise DbtRuntimeError("CREATE STREAMING TABLE returned a different target table")
     deadline = time.monotonic() + timeout
+    pattern = identifier.replace("\\", "\\\\").replace("'", "\\'")
+    show_sql = f"SHOW STREAMING TABLES IN {namespace} LIKE '{pattern}'"
 
     def check_deadline() -> None:
         if time.monotonic() >= deadline:
@@ -171,7 +176,7 @@ def _await_streaming_table(
     while True:
         check_deadline()
         _check_connection(adapter, owner)
-        _, result = _execute(adapter, owner[1], f"SHOW STREAMING TABLES IN {namespace}")
+        _, result = _execute(adapter, owner[1], show_sql)
         check_deadline()
         _check_connection(adapter, owner)
         matches = [

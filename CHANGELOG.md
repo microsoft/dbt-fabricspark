@@ -4,12 +4,7 @@
 
 ### Bug Fixes
 
-- Experimental streaming-table polling now issues `SHOW STREAMING TABLES IN
-  namespace LIKE 'target_identifier'` rather than enumerating every streaming
-  table before selecting the submitted run. Requires OpenIVM's filtered SHOW
-  support. SQL literals are escaped, and owning-connection, timeout,
-  table/query/run/checkpoint/definition identity, failure, and stopped/inactive
-  completion checks remain unchanged.
+- Fixed a polling bug in experimental features.
 
 ## v1.13.8
 

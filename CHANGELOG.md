@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.13.9
+
+### Bug Fixes
+
+- Fixed a polling bug in experimental features.
+
 ## v1.13.8
 
 ### Bug Fixes

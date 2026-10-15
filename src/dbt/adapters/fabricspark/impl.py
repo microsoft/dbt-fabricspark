@@ -173,6 +173,31 @@ class FabricSparkAdapter(SQLAdapter):
         return experimental.execute_streaming_table(self, relation, sql)
 
     @available
+    def get_materialized_view_query_hash(
+        self, relation: BaseRelation, allow_missing_delta: bool = False
+    ) -> Optional[str]:
+        """Read the target hash, allowing explicit rebuild of a missing Delta target."""
+        try:
+            _, result = self.execute(
+                f"SHOW TBLPROPERTIES {relation} ('dbt.fabricspark.materialized_view.query_hash')",
+                auto_begin=False,
+                fetch=True,
+            )
+        except DbtRuntimeError as exc:
+            missing_delta = re.match(
+                r"(?:(?:Runtime|Database) Error\s+)*\[DELTA_PATH_DOES_NOT_EXIST\]",
+                str(exc).lstrip(),
+            )
+            if not allow_missing_delta or missing_delta is None:
+                raise
+            logger.warning(
+                f"Materialized-view target {relation} has no committed Delta log; "
+                "proceeding with the explicitly requested on_query_change='rebuild'."
+            )
+            return None
+        return result.rows[0][1] if len(result.rows) == 1 else None
+
+    @available
     def get_workspace_name_from_config(self, config) -> Optional[str]:
         """Resolve ``workspace_name`` from a model's ``config`` (top-level or
         ``meta.workspace_name``), exposed to macros via ``adapter``.

@@ -89,12 +89,10 @@
     {% endcall %}
   {% endif %}
 
-  {% call statement('materialized_view_query_hash', fetch_result=True) %}
-    SHOW TBLPROPERTIES {{ target_relation }} ('{{ query_hash_property }}')
-  {% endcall %}
-  {% set property_result = load_result('materialized_view_query_hash') %}
-  {% set property_rows = property_result['data'] if property_result is not none else [] %}
-  {% set existing_hash = property_rows[0][1] if property_rows | length == 1 else none %}
+  {% set existing_hash = adapter.get_materialized_view_query_hash(
+    target_relation,
+    allow_missing_delta=(existing_relation is not none and on_query_change == 'rebuild')
+  ) %}
   {% if existing_hash != query_hash %}
     {% if on_query_change == 'fail' %}
       {{ exceptions.raise_compiler_error(

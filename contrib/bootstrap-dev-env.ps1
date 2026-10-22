@@ -82,7 +82,7 @@ Add-Type -AssemblyName UIAutomationClient
     Where-Object { $_.Current.Name -match '\[(Dev Container|WSL)\b.*Visual Studio Code' } |
     ForEach-Object { Write-Host "Closing VS Code window: $($_.Current.Name)"; $_.GetCurrentPattern([Windows.Automation.WindowPattern]::Pattern).Close() }
 
-$distros =  (wsl -l -q) | Where-Object { $_ -and $_.Trim() } | ForEach-Object { $_.Trim().Replace("`0", "") } | Where-Object { $_ }
+$distros = (wsl -l -q) | Where-Object { $_ -and $_.Trim() } | ForEach-Object { $_.Trim().Replace("`0", "") } | Where-Object { $_ }
 foreach ($distro in $distros) {
     Write-Host "Unregistering WSL distro: $distro"
     wsl --unregister $distro

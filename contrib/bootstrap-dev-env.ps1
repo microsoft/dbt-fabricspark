@@ -208,5 +208,5 @@ wsl --manage Ubuntu-24.04 --set-default-user $LinuxUser
 if ($LASTEXITCODE) { throw "Could not make $LinuxUser the default WSL user." }
 
 Write-Host "Cloning $Branch into /workspaces/dbt-fabricspark"
-wsl -d Ubuntu-24.04 --exec bash -c 'git config --global user.name "$1" && git config --global user.email "$2" && git config --global credential.helper "$(printf %q "$(wslpath -u "$5")")" && GIT_TERMINAL_PROMPT=0 git clone --branch "$3" "$4" /workspaces/dbt-fabricspark' bash (git -C $PSScriptRoot config user.name) (git -C $PSScriptRoot config user.email) $Branch $origin $gcm
+wsl -d Ubuntu-24.04 --cd ~ --exec bash -c 'git config --global user.name "$1" && git config --global user.email "$2" && git config --global credential.helper "$(printf %q "$(wslpath -u "$5")")" && GIT_TERMINAL_PROMPT=0 git clone --branch "$3" "$4" /workspaces/dbt-fabricspark' bash (git -C $PSScriptRoot config user.name) (git -C $PSScriptRoot config user.email) $Branch $origin $gcm
 if ($LASTEXITCODE) { throw "Could not clone $Branch into /workspaces/dbt-fabricspark." }

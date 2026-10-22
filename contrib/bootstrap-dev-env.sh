@@ -9,6 +9,8 @@
 # ---------------------------------------------------------------------------------------
 #
 
+set -eo pipefail
+
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
 ACR_NAME="dbtfabric"
@@ -49,23 +51,16 @@ echo "docker is installed, restarting..."
 sudo systemctl restart docker
 
 sudo chmod 666 /var/run/docker.sock
+sudo usermod -aG docker "$USER"
 docker container ls
 docker ps -q | xargs -r docker kill
 
 if grep -q "$ACR_URL" ~/.docker/config.json 2>/dev/null; then
      echo "Already logged in to ${ACR_URL}"
- else
-    if [ -n "$ACR_PASSWORD" ]; then
-        docker_password="$ACR_PASSWORD"
-    else
-        read -sp "If you are a Microsoft Employee and you plan on contributing to the Devcontainer image, please ping @mdrrahman and enter Docker Admin password for ${ACR_URL} - otherwise, leave blank and press [ENTER]: " docker_password
-        echo
-    fi
-    if [ -z "$docker_password" ]; then
-        echo "You left the password empty, skipping docker login"
-    else
-        echo "$docker_password" | docker login "$ACR_URL" --username "$ACR_NAME" --password-stdin
-    fi
+elif [ -z "$ACR_PASSWORD" ]; then
+    echo "ACR_PASSWORD is not set, skipping docker login; only devcontainer image publishers need it"
+else
+    echo "$ACR_PASSWORD" | docker login "$ACR_URL" --username "$ACR_NAME" --password-stdin
 fi
 docker pull "$(jq -r .image "$REPO_ROOT/.devcontainer/devcontainer.json")"
 
@@ -79,7 +74,7 @@ else
   echo "WSL npm is available."
 fi
 
-AZ_PATH=$(which az 2>/dev/null)
+AZ_PATH=$(which az 2>/dev/null || true)
 if [[ -z "$AZ_PATH" || "$AZ_PATH" == *"/mnt/c"* ]]; then
   echo "Native Linux Azure CLI not found, installing..."
   curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
@@ -88,10 +83,12 @@ if [[ -z "$AZ_PATH" || "$AZ_PATH" == *"/mnt/c"* ]]; then
 else
   echo "Native Linux Azure CLI already installed at: $AZ_PATH"
 fi
-az account get-access-token --query "expiresOn" -o tsv >/dev/null 2>&1
-if [[ $? -ne 0 ]]; then
+if ! az account get-access-token --query "expiresOn" -o tsv >/dev/null 2>&1; then
     echo "az is not logged in, logging in..."
-    az login >/dev/null
+    # prompt=none lets the signed-in Windows browser complete the login with single sign-on, without clicks.
+    # Login experience v2 off skips the subscription picker that waits for input in a terminal.
+    BROWSER='bash -c "exec wslview \"${0/prompt=select_account/prompt=none}\"" %s' AZURE_CORE_LOGIN_EXPERIENCE_V2=off \
+        az login --output none
 fi
 
 cd "$REPO_ROOT"

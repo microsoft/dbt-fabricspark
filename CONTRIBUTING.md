@@ -18,47 +18,23 @@ Therefore, if the tests pass locally, they are highly likely to pass in CI as we
    winget install -e --id Microsoft.VisualStudioCode
    ```
 
-1. Get a fresh new WSL machine up:
+1. Clone your fork on Windows, then check out and push the branch you want to work on:
 
    ```powershell
-   $GIT_ROOT = git rev-parse --show-toplevel
-   & "$GIT_ROOT\contrib\bootstrap-dev-env.ps1"
+   git clone https://github.com/<your-github-user>/dbt-fabricspark.git
    ```
 
-1. Clone the repo, and open VSCode in it:
+1. From an **elevated PowerShell 7** prompt in the checkout, install [Task](https://taskfile.dev) and run [`contrib/bootstrap-dev-env.yaml`](contrib/bootstrap-dev-env.yaml):
 
-   ```bash
-   sudo mkdir -p /workspaces && sudo chmod 777 /workspaces && cd /workspaces
+   > ⚠️ This **deletes every WSL distribution** on the machine before recreating `Ubuntu-24.04`. Push any work inside WSL first.
 
-   read -p "Enter your name (e.g. 'FirstName LastName'): " user_name
-   read -p "Enter your email (e.g. 'your-alias@foo.com'): " user_email
-   read -p "Enter your git fork (e.g. 'https://github.com/microsoft/dbt-fabricspark.git'): " git_fork_url
-   read -p "Enter the existing branch to switch to: (e.g. 'main'): " branch_name
-   
-   git config --global user.name "$user_name"
-   git config --global user.email "$user_email"
-   git clone "$git_fork_url"
-
-   cd /workspaces/dbt-fabricspark
-   git checkout "$branch_name"
-
-   code .
+   ```powershell
+   winget install Task.Task
+   $env:PATH = [Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH', 'User')
+   task --taskfile contrib/bootstrap-dev-env.yaml
    ```
 
-1. Run the bootstrapper script, that installs all tools idempotently:
-
-   ```bash
-   GIT_ROOT=$(git rev-parse --show-toplevel)
-   chmod +x ${GIT_ROOT}/contrib/bootstrap-dev-env.sh && ${GIT_ROOT}/contrib/bootstrap-dev-env.sh
-   ```
-
-1. Launch the devcontainer:
-
-   ```bash
-   cd /workspaces/dbt-fabricspark
-   HEX=$(printf '%s' "$(wslpath -w .)" | xxd -ps -c 256)
-   code --folder-uri "vscode-remote://dev-container+${HEX}/workspaces/dbt-fabricspark"
-   ```
+   Without any prompts, this recreates WSL on the drive with the most free space and clones your current branch into `/workspaces/dbt-fabricspark`. It then runs [`contrib/bootstrap-dev-env.sh`](contrib/bootstrap-dev-env.sh), which signs in the Azure CLI through your signed-in browser with single sign-on (no clicks), then starts the devcontainer and opens it in VS Code. After a restart, run `task --taskfile contrib/bootstrap-dev-env.yaml up` instead; it keeps WSL and reopens the devcontainer.
 
 1. Install recommended developer tooling (optional):
 

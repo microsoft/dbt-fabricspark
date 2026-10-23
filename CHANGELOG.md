@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.13.10
+
+### Bug Fixes
+
+- Fixed `on_schema_change: sync_all_columns` and `sync_remove_only` on Delta
+  incremental models. Removed columns are now dropped with `ALTER TABLE ... DROP COLUMNS`
+  when the table already uses Delta column mapping, or when the new
+  `enable_column_mapping_on_drop` model config lets dbt enable it. Otherwise dbt
+  raises a compile error that explains both options, instead of the misleading
+  "Delta tables does not support dropping columns" error or a Spark syntax error.
+
 ## v1.13.9
 
 ### Bug Fixes

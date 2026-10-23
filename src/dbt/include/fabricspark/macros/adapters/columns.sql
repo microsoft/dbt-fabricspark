@@ -25,28 +25,60 @@
 {% macro fabricspark__alter_relation_add_remove_columns(relation, add_columns, remove_columns) %}
 
   {% if remove_columns %}
-    {% if relation.is_delta %}
-      {{ exceptions.raise_compiler_error('Delta tables does not support dropping columns from tables') }}
+    {% if relation.is_delta is false %}
+      {{ exceptions.raise_compiler_error('Dropping columns is only supported on Delta tables; ' ~ relation ~ ' is not a Delta table.') }}
     {% endif %}
+    {% do fabricspark__ensure_delta_column_mapping(relation) %}
   {% endif %}
 
-  {% if add_columns is none %}
-    {% set add_columns = [] %}
+  {% if add_columns %}
+    {% set sql -%}
+      alter {{ relation.type }} {{ relation }} add columns
+        {% for column in add_columns %}
+          {{ column.name }} {{ column.data_type }}{{ ',' if not loop.last }}
+        {% endfor %}
+    {%- endset -%}
+    {% do run_query(sql) %}
   {% endif %}
 
-  {% set sql -%}
+  {% if remove_columns %}
+    {% set sql -%}
+      alter {{ relation.type }} {{ relation }} drop columns (
+        {% for column in remove_columns %}
+          {{ adapter.quote(column.name) }}{{ ',' if not loop.last }}
+        {% endfor %}
+      )
+    {%- endset -%}
+    {% do run_query(sql) %}
+  {% endif %}
 
-     alter {{ relation.type }} {{ relation }}
+{% endmacro %}
 
-       {% if add_columns %} add columns {% endif %}
-            {% for column in add_columns %}
-               {{ column.name }} {{ column.data_type }}{{ ',' if not loop.last }}
-            {% endfor %}
+{#- Delta only drops columns when column mapping is on; enabling it upgrades the table protocol, so it is opt-in. -#}
+{% macro fabricspark__ensure_delta_column_mapping(relation) %}
+  {% set properties = {} %}
+  {% for row in run_query('show tblproperties ' ~ relation) %}
+    {% do properties.update({row[0]: row[1]}) %}
+  {% endfor %}
 
-  {%- endset -%}
-
-  {% do run_query(sql) %}
-
+  {% if properties.get('delta.columnMapping.mode', 'none') | lower in ['name', 'id'] %}
+  {% elif config.get('enable_column_mapping_on_drop', false) %}
+    {% set upgrades = ["'delta.columnMapping.mode' = 'name'"] %}
+    {% if properties.get('delta.minReaderVersion', '1') | int < 2 %}
+      {% do upgrades.append("'delta.minReaderVersion' = '2'") %}
+    {% endif %}
+    {% if properties.get('delta.minWriterVersion', '2') | int < 5 %}
+      {% do upgrades.append("'delta.minWriterVersion' = '5'") %}
+    {% endif %}
+    {% do run_query('alter table ' ~ relation ~ ' set tblproperties (' ~ upgrades | join(', ') ~ ')') %}
+  {% else %}
+    {{ exceptions.raise_compiler_error(
+        'Dropping columns from Delta table ' ~ relation ~ ' requires Delta column mapping. '
+        ~ "Set enable_column_mapping_on_drop=true on the model to let dbt set delta.columnMapping.mode = 'name' "
+        ~ '(this upgrades the table protocol to at least reader version 2 / writer version 5, so older Delta readers can no longer read it), '
+        ~ "or run: ALTER TABLE " ~ relation ~ " SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name', 'delta.minReaderVersion' = '2', 'delta.minWriterVersion' = '5')"
+    ) }}
+  {% endif %}
 {% endmacro %}
 
 {% macro fabricspark__alter_column_comment(relation, column_dict) %}

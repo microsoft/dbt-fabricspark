@@ -1,0 +1,26 @@
+version: '3'
+
+vars:
+  DISTRO: Ubuntu-24.04
+  REPO: /workspaces/dbt-fabricspark
+  UNC: \\wsl.localhost\{{.DISTRO}}\workspaces\dbt-fabricspark
+
+tasks:
+  default:
+    desc: Delete and recreate WSL, clone the current branch into it, then run the up task
+    platforms: [windows]
+    cmds:
+      - pwsh -NoProfile -NonInteractive -File bootstrap-dev-env.ps1
+      - task: up
+
+  up:
+    desc: Bootstrap the existing WSL clone, start its devcontainer, and open VS Code (use after a restart)
+    platforms: [windows]
+    cmds:
+      - wsl -d {{.DISTRO}} --cd {{.REPO}} --exec ./contrib/bootstrap-dev-env.sh
+      # These labels match the ones VS Code uses, so VS Code attaches to this container instead of creating another.
+      - >-
+        wsl -d {{.DISTRO}} --cd {{.REPO}} --exec npx --no-install devcontainer up --workspace-folder {{.REPO}}
+        --id-label 'devcontainer.local_folder={{.UNC}}'
+        --id-label 'devcontainer.config_file={{.REPO}}/.devcontainer/devcontainer.json'
+      - code --folder-uri 'vscode-remote://dev-container+{{printf "%x" .UNC}}{{.REPO}}'

@@ -11,6 +11,11 @@
   raises a compile error that explains both options, instead of the misleading
   "Delta tables does not support dropping columns" error or a Spark syntax error.
 
+### Dependencies
+
+- Consolidated Dependabot dependency bumps: `nx` 23.1.2 → 23.3.0 (drops the transitive
+  `follow-redirects`) and `handlebars` 4.7.9 → 4.7.10 (#313, #312)
+
 ## v1.13.9
 
 ### Bug Fixes

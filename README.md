@@ -532,6 +532,30 @@ require Fabric Runtime 1.3 or newer.
 ) }}
 ```
 
+#### Dropping columns with `on_schema_change`
+
+`on_schema_change: sync_all_columns` and `sync_remove_only` drop target columns that
+are no longer in the model. Delta Lake can only drop columns when
+[column mapping](https://docs.delta.io/latest/delta-column-mapping.html) is enabled on
+the table (`delta.columnMapping.mode` = `name` or `id`):
+
+- If the table already uses column mapping, dbt drops the columns with `ALTER TABLE ... DROP COLUMNS`.
+- If it does not, set `enable_column_mapping_on_drop: true` to let dbt enable it
+  (`delta.columnMapping.mode = 'name'`) before the drop. This upgrades the table
+  protocol to at least reader version 2 / writer version 5, so older Delta readers can no
+  longer read the table; existing higher protocol versions are never downgraded.
+- Otherwise dbt raises a compile error that names both options.
+
+```sql
+{{ config(
+    materialized='incremental',
+    incremental_strategy='merge',
+    unique_key='id',
+    file_format='delta',
+    on_schema_change='sync_all_columns',
+    enable_column_mapping_on_drop=true
+) }}
+```
 ### Automatic OPTIMIZE
 
 Every write leaves small Parquet files behind inside a Delta table, and small-file

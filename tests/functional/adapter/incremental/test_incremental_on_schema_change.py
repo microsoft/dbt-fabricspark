@@ -3,7 +3,7 @@ import pytest
 from dbt.tests.adapter.incremental.test_incremental_on_schema_change import (
     BaseIncrementalOnSchemaChangeSetup,
 )
-from dbt.tests.util import run_dbt
+from dbt.tests.util import relation_from_name, run_dbt
 
 
 class IncrementalOnSchemaChangeIgnoreFail(BaseIncrementalOnSchemaChangeSetup):
@@ -56,22 +56,67 @@ class TestDeltaOnSchemaChange(BaseIncrementalOnSchemaChangeSetup):
     def run_incremental_sync_all_columns(self, project):
         select = "model_a incremental_sync_all_columns incremental_sync_all_columns_target"
         run_dbt(["run", "--models", select, "--full-refresh"])
-        # Delta Lake doesn"t support removing columns -- show a nice compilation error
         results = run_dbt(["run", "--models", select], expect_pass=False)
         assert "Compilation Error" in results[1].message
+        assert "enable_column_mapping_on_drop" in results[1].message
 
     def run_incremental_sync_remove_only(self, project):
         select = "model_a incremental_sync_remove_only incremental_sync_remove_only_target"
         run_dbt(["run", "--models", select, "--full-refresh"])
-        # Delta Lake doesn"t support removing columns -- show a nice compilation error
         results = run_dbt(["run", "--models", select], expect_pass=False)
         assert "Compilation Error" in results[1].message
+        assert "enable_column_mapping_on_drop" in results[1].message
 
     def test_run_incremental_append_new_columns(self, project):
-        # only adding new columns in supported
         self.run_incremental_append_new_columns(project)
-        # handling columns that have been removed doesn"t work on Delta Lake today
 
     def test_run_incremental_sync_all_columns(self, project):
         self.run_incremental_sync_all_columns(project)
+        self.run_incremental_sync_remove_only(project)
+
+
+def _column_mapping_mode(project, name):
+    relation = relation_from_name(project.adapter, name)
+    rows = project.run_sql(f"show tblproperties {relation}", fetch="all")
+    return {row[0]: row[1] for row in rows}.get("delta.columnMapping.mode")
+
+
+class TestDeltaOnSchemaChangeEnableColumnMappingOnDrop(BaseIncrementalOnSchemaChangeSetup):
+    @pytest.fixture(scope="class")
+    def project_config_update(self):
+        return {
+            "models": {
+                "+file_format": "delta",
+                "+incremental_strategy": "merge",
+                "+unique_key": "id",
+                "+enable_column_mapping_on_drop": True,
+            }
+        }
+
+    def test_run_incremental_sync_all_columns(self, project):
+        self.run_incremental_sync_all_columns(project)
+        assert _column_mapping_mode(project, "incremental_sync_all_columns") == "name"
+
+    def test_run_incremental_sync_remove_only(self, project):
+        self.run_incremental_sync_remove_only(project)
+        assert _column_mapping_mode(project, "incremental_sync_remove_only") == "name"
+
+
+class TestDeltaOnSchemaChangeExistingColumnMapping(BaseIncrementalOnSchemaChangeSetup):
+    @pytest.fixture(scope="class")
+    def project_config_update(self):
+        return {
+            "models": {
+                "+file_format": "delta",
+                "+incremental_strategy": "merge",
+                "+unique_key": "id",
+                "+tblproperties": {
+                    "delta.columnMapping.mode": "name",
+                    "delta.minReaderVersion": "2",
+                    "delta.minWriterVersion": "5",
+                },
+            }
+        }
+
+    def test_run_incremental_sync_remove_only(self, project):
         self.run_incremental_sync_remove_only(project)

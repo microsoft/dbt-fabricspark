@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.13.11
+
+### Bug Fixes
+
+- `streaming_table` polling no longer fails on a `metadata_error` status row whose
+  failure matches `job_retry_on_messages`, such as a catalog read timeout while
+  verifying ownership. The adapter backs off and keeps polling until
+  `statement_timeout`.
+- `connect_retries` is now the number of retries for built-in transient errors, so the
+  default of `1` retries once instead of not at all.
+
 ## v1.13.10
 
 ### Bug Fixes

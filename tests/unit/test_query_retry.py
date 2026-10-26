@@ -146,3 +146,18 @@ def test_statement_timeout_is_never_retried_by_job_pattern() -> None:
 
     cursor.execute.assert_called_once()
     sleep.assert_not_called()
+
+
+def test_generic_retry_honours_connect_retries_as_retry_count() -> None:
+    cursor = mock.Mock()
+    cursor.execute.side_effect = [
+        RuntimeError("Failed to get database metadata: Read timed out"),
+        None,
+    ]
+    manager = _manager(cursor, policy=MessageRetryPolicy.disabled(), connect_retries=1)
+
+    with mock.patch("dbt.adapters.fabricspark.connections.time.sleep") as sleep:
+        manager.add_query("select 1", auto_begin=False)
+
+    assert cursor.execute.call_count == 2
+    sleep.assert_called_once_with(5)

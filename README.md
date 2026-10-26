@@ -635,6 +635,11 @@ exponential backoff; non-matching failures return immediately without retrying.
 Use narrow patterns because replaying a non-idempotent SQL statement or API
 operation can produce duplicate effects.
 
+While a `streaming_table` model awaits its run, a `metadata_error` status row whose
+failure matches a pattern is treated as a transient catalog read. The adapter keeps
+polling with the same backoff until `statement_timeout`; any other failure still
+fails the model.
+
 ### Configuration Reference
 
 | Option                           | Type   | Default                               | Description                                                                                                                                                                                                                                                                                                                                                                                                      |

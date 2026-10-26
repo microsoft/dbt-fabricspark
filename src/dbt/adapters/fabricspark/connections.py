@@ -558,7 +558,7 @@ class FabricSparkConnectionManager(SQLConnectionManager):
             retryable_exceptions: Tuple[Type[Exception], ...],
         ):
             attempt = 1
-            generic_attempt_limit = connection.credentials.connect_retries or 3
+            generic_attempt_limit = (connection.credentials.connect_retries or 2) + 1
             while True:
                 try:
                     cursor.execute(sql, bindings)

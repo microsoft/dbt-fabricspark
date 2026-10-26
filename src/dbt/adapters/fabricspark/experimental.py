@@ -8,6 +8,7 @@ import agate
 from dbt_common.exceptions import DbtRuntimeError
 
 from dbt.adapters.contracts.connection import ConnectionState
+from dbt.adapters.fabricspark.message_retry import MessageRetryPolicy
 
 LIFECYCLE_COLUMNS = frozenset(
     {"table_name", "query_id", "run_id", "status", "checkpoint_location", "definition_hash"}
@@ -163,6 +164,8 @@ def _await_streaming_table(
     if expected["table_name"] != table and not expected["table_name"].endswith("." + table):
         raise DbtRuntimeError("CREATE STREAMING TABLE returned a different target table")
     deadline = time.monotonic() + timeout
+    retry_policy = MessageRetryPolicy.for_job_retry(adapter.config.credentials)
+    transient_failures = 0
     pattern = identifier.replace("\\", "\\\\").replace("'", "\\'")
     show_sql = f"SHOW STREAMING TABLES IN {namespace} LIKE '{pattern}'"
 
@@ -191,6 +194,20 @@ def _await_streaming_table(
             )
         observed = matches[0]
         failure = observed["last_failure"]
+        if (
+            observed["status"] == "metadata_error"
+            and isinstance(failure, str)
+            and retry_policy.matches(RuntimeError(failure)) is not None
+        ):
+            transient_failures += 1
+            time.sleep(
+                min(
+                    retry_policy.delay_for_attempt(transient_failures),
+                    max(0.0, deadline - time.monotonic()),
+                )
+            )
+            continue
+        transient_failures = 0
         if failure is not None and (not isinstance(failure, str) or failure.strip()):
             raise DbtRuntimeError(f"Streaming table {expected['table_name']} failed: {failure}")
         status = _text(observed, "status")

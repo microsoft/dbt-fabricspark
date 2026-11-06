@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.13.12
+
+### Dependencies
+
+- Updated locked Python dependencies to `certifi` 2026.10.23, `cryptography`
+  50.0.2, `msgpack` 1.2.4, and `oauthlib` 4.0.1 (#318, #320, #322, #324).
+- Updated the Azure CLI dependency chain to 2.92.0 for compatibility with
+  `cryptography` 50. The updated graph no longer depends on `setuptools`,
+  superseding its standalone version bump (#319, #320).
+- Updated `nx` to 24.0.4 and its pinned `undici` dependency to 7.30.1 (#323).
+
 ## v1.13.11
 
 ### Bug Fixes

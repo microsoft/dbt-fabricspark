@@ -42,6 +42,9 @@ def _metadata(**changes):
     return agate.Table([list(row.values())], list(row))
 
 
+STOPPING = {"status": "stopping", "is_active": False}
+
+
 @pytest.mark.parametrize(
     ("identifier", "literal"),
     [
@@ -90,7 +93,11 @@ def test_streaming_poll_targets_bare_identifier(identifier, literal):
         ({"status": "failed"}, "returned status"),
         ({"status": "stopped", "is_active": True}, "inconsistent activity"),
         ({"is_active": False}, "inconsistent activity"),
+        ({"is_active": "maybe"}, "non-boolean is_active"),
         ({"table_name": "other"}, "disappeared"),
+        ({**STOPPING, "last_failure": "upstream failed"}, "failed: upstream failed"),
+        ({**STOPPING, "run_id": "other"}, "changed run_id"),
+        ({**STOPPING, "is_active": "maybe"}, "non-boolean is_active"),
     ],
 )
 def test_targeted_streaming_poll_preserves_run_guards(changes, error):
@@ -199,3 +206,68 @@ def test_matching_failure_on_a_run_status_still_fails():
     failed = _metadata(last_failure=CATALOG_TIMEOUT)
     with pytest.raises(DbtRuntimeError, match="failed: Streaming table ownership"):
         _await(_retrying_adapter(), [failed])
+
+
+@pytest.mark.parametrize("stopping_active", [False, True])
+def test_stopping_is_polled_again_until_stopped(stopping_active):
+    result, sleep, execute = _await(
+        MagicMock(),
+        [
+            _metadata(status="stopping", is_active=stopping_active),
+            _metadata(status="stopped", is_active=False),
+        ],
+    )
+    assert result["status"] == "stopped"
+    assert execute.call_count == 2
+    assert [call.args[0] for call in sleep.call_args_list] == [0.1]
+
+
+class _Clock:
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
+def test_repeated_stopping_is_bounded_by_statement_timeout():
+    clock = _Clock()
+    with (
+        patch("dbt.adapters.fabricspark.experimental._check_connection"),
+        patch("dbt.adapters.fabricspark.experimental.time.monotonic", clock.monotonic),
+        patch("dbt.adapters.fabricspark.experimental.time.sleep", clock.sleep),
+        patch(
+            "dbt.adapters.fabricspark.experimental._execute",
+            return_value=(None, _metadata(**STOPPING)),
+        ) as execute,
+        pytest.raises(DbtRuntimeError, match="Timed out after 1s"),
+    ):
+        _await_streaming_table(
+            MagicMock(),
+            "`insights_raw`.`dbo`",
+            "`insights_raw`.`dbo`.`st_migration_events`",
+            "st_migration_events",
+            _metadata(),
+            (MagicMock(), MagicMock(), MagicMock()),
+            1,
+            0.25,
+        )
+    assert execute.call_count == 4
+    assert clock.now == 1.0
+
+
+def test_create_result_still_rejects_stopping():
+    with pytest.raises(DbtRuntimeError, match="CREATE STREAMING TABLE returned unsuccessful"):
+        _await_streaming_table(
+            MagicMock(),
+            "`insights_raw`.`dbo`",
+            "`insights_raw`.`dbo`.`st_migration_events`",
+            "st_migration_events",
+            _metadata(**STOPPING),
+            (MagicMock(), MagicMock(), MagicMock()),
+            10,
+            0.1,
+        )

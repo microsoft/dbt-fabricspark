@@ -15,6 +15,8 @@ LIFECYCLE_COLUMNS = frozenset(
 )
 SHOW_COLUMNS = LIFECYCLE_COLUMNS | {"is_active", "last_progress", "last_failure"}
 RUN_STATUSES = frozenset({"active", "initializing", "rebuilding", "restarted", "stopped"})
+# A run reports "stopping" until the engine confirms its termination; CREATE never accepts it.
+AWAIT_STATUSES = RUN_STATUSES | {"stopping"}
 
 
 def require_experimental_unstable(adapter: Any, feature: str) -> None:
@@ -211,7 +213,7 @@ def _await_streaming_table(
         if failure is not None and (not isinstance(failure, str) or failure.strip()):
             raise DbtRuntimeError(f"Streaming table {expected['table_name']} failed: {failure}")
         status = _text(observed, "status")
-        if status not in RUN_STATUSES:
+        if status not in AWAIT_STATUSES:
             raise DbtRuntimeError(
                 f"Streaming table {expected['table_name']} returned status {status!r}"
             )
@@ -224,7 +226,7 @@ def _await_streaming_table(
         active = _active(observed["is_active"])
         if status == "stopped" and not active:
             return observed
-        if status == "stopped" or not active:
+        if status == "stopped" or (status != "stopping" and not active):
             raise DbtRuntimeError(
                 f"Streaming table {expected['table_name']} returned inconsistent activity"
             )

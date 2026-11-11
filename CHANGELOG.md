@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.13.13
+
+### Bug Fixes
+
+- Fixed unchanged OneLake shortcuts being deleted and recreated by matching Fabric's `oneLake` response shape and comparing only the configured target fields. (#327)
+- Shortcut creation failures now fail the dbt run with the shortcut name and HTTP cause; deterministic client errors are not retried. (#328)
+
+### Features
+
+- Added opt-in `prune_shortcuts` to remove unconfigured shortcuts from configured parent folders only. An empty shortcut list prunes nothing. (#329)
+
 ## v1.13.12
 
 ### Dependencies

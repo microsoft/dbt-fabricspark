@@ -20,7 +20,7 @@ from dbt.adapters.fabricspark import livysession as _livy_helpers
 from dbt.adapters.fabricspark._http_utils import parse_retry_after
 from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
 from dbt.adapters.fabricspark.livy_backend import LivyBackend, coerce_time_columns
-from dbt.adapters.fabricspark.shortcuts import ShortcutClient
+from dbt.adapters.fabricspark.shortcuts import ShortcutClient, create_and_prune_shortcuts
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
 NUMBERS = DECIMALS + (int, float)
@@ -725,6 +725,7 @@ atexit.register(_atexit_cleanup)
 
 class LivySessionManager(LivyBackend):
     livy_global_session: Optional[LivySession] = None
+    _shortcuts_pending_key: Optional[tuple[str, str]] = None
 
     @classmethod
     def connect(cls, credentials: FabricSparkCredentials) -> LivyConnection:  # type: ignore[override]
@@ -812,24 +813,36 @@ class LivySessionManager(LivyBackend):
         """Same strategy as local mode: in-memory > file > create."""
         session_file_path = credentials.resolved_session_id_file
         session = LivySessionManager.livy_global_session
+        shortcut_key = (credentials.workspaceid or "", credentials.lakehouseid or "")
+        retry_shortcuts = (
+            credentials.create_shortcuts
+            and LivySessionManager._shortcuts_pending_key == shortcut_key
+        )
 
         if (
-            session is not None
+            not retry_shortcuts
+            and session is not None
             and session.is_valid_session()
             and not session.is_new_session_required
         ):
             logger.debug(f"Reusing Fabric session: {session.session_id}")
             return
 
-        if session is None:
+        if not retry_shortcuts and session is None:
             session = LivySession(credentials)
             LivySessionManager.livy_global_session = session
 
-        existing_session_id = _livy_helpers.read_session_id_from_file(session_file_path)
-        if existing_session_id and existing_session_id != session.session_id:
-            if session.try_reuse_session(existing_session_id):
-                logger.info(f"Reused existing Fabric session from file: {existing_session_id}")
-                return
+        if not retry_shortcuts:
+            existing_session_id = _livy_helpers.read_session_id_from_file(session_file_path)
+            if existing_session_id and (
+                session is None or existing_session_id != session.session_id
+            ):
+                if session is None:
+                    session = LivySession(credentials)
+                    LivySessionManager.livy_global_session = session
+                if session.try_reuse_session(existing_session_id):
+                    logger.info(f"Reused existing Fabric session from file: {existing_session_id}")
+                    return
 
         LivySessionManager._create_fabric_session(credentials, spark_config)
         _livy_helpers.write_session_id_to_file(
@@ -839,7 +852,32 @@ class LivySessionManager(LivyBackend):
 
     @staticmethod
     def _create_fabric_session(credentials: FabricSparkCredentials, spark_config) -> None:
-        LivySessionManager.livy_global_session = LivySession(credentials)
+        shortcut_key = (credentials.workspaceid or "", credentials.lakehouseid or "")
+        if credentials.create_shortcuts:
+            try:
+                _get_headers(credentials, False)
+                shortcut_client = ShortcutClient(
+                    _livy_helpers.accessToken.token,
+                    credentials.workspaceid,
+                    credentials.lakehouseid,
+                    credentials.endpoint,
+                )
+                create_and_prune_shortcuts(
+                    shortcut_client,
+                    credentials.shortcuts_json_str,
+                    prune=credentials.prune_shortcuts,
+                )
+            except Exception:
+                LivySessionManager.livy_global_session = None
+                if credentials.reuse_session:
+                    LivySessionManager._shortcuts_pending_key = shortcut_key
+                raise
+            else:
+                if LivySessionManager._shortcuts_pending_key == shortcut_key:
+                    LivySessionManager._shortcuts_pending_key = None
+
+        session = LivySession(credentials)
+        LivySessionManager.livy_global_session = session
 
         if credentials.environmentId:
             spark_config = {
@@ -861,20 +899,8 @@ class LivySessionManager(LivyBackend):
             }
             logger.debug(f"Session idle timeout: {credentials.session_idle_timeout}")
 
-        LivySessionManager.livy_global_session.create_session(spark_config)
-        LivySessionManager.livy_global_session.is_new_session_required = False
-
-        if credentials.create_shortcuts:
-            try:
-                shortcut_client = ShortcutClient(
-                    _livy_helpers.accessToken.token,
-                    credentials.workspaceid,
-                    credentials.lakehouseid,
-                    credentials.endpoint,
-                )
-                shortcut_client.create_shortcuts(credentials.shortcuts_json_str)
-            except Exception as ex:
-                logger.error(f"Unable to create shortcuts: {ex}")
+        session.create_session(spark_config)
+        session.is_new_session_required = False
 
     @staticmethod
     def _create_and_persist_session(spark_config, session_file_path: str) -> None:

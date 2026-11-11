@@ -25,7 +25,7 @@ from dbt.adapters.fabricspark import livysession as _livy_helpers
 from dbt.adapters.fabricspark._http_utils import parse_retry_after
 from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
 from dbt.adapters.fabricspark.livy_backend import LivyBackend, coerce_time_columns
-from dbt.adapters.fabricspark.shortcuts import ShortcutClient
+from dbt.adapters.fabricspark.shortcuts import ShortcutClient, create_and_prune_shortcuts
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
 NUMBERS = DECIMALS + (int, float)
@@ -998,29 +998,27 @@ class HighConcurrencyConnection:
 
 
 def _maybe_create_shortcuts(credentials: FabricSparkCredentials) -> None:
-    """Create OneLake shortcuts once per process per (workspace, lakehouse)."""
+    """Create configured shortcuts once per process per (workspace, lakehouse)."""
     if not credentials.create_shortcuts:
         return
     key = (credentials.workspaceid or "", credentials.lakehouseid or "")
     with _shortcuts_done_lock:
         if key in _shortcuts_done:
             return
-        _shortcuts_done.add(key)
 
-    # Force a header build so the module-level accessToken is populated
-    # before instantiating ShortcutClient.
-    _ = _get_headers(credentials, False)
-
-    try:
+        _get_headers(credentials, False)
         shortcut_client = ShortcutClient(
             _livy_helpers.accessToken.token,
             credentials.workspaceid,
             credentials.lakehouseid,
             credentials.endpoint,
         )
-        shortcut_client.create_shortcuts(credentials.shortcuts_json_str)
-    except Exception as ex:
-        logger.error(f"Unable to create shortcuts: {ex}")
+        create_and_prune_shortcuts(
+            shortcut_client,
+            credentials.shortcuts_json_str,
+            prune=credentials.prune_shortcuts,
+        )
+        _shortcuts_done.add(key)
 
 
 class HighConcurrencySessionManager(LivyBackend):
@@ -1036,8 +1034,8 @@ class HighConcurrencySessionManager(LivyBackend):
             if self._pool is None:
                 self._pool = HighConcurrencyReplPool(max_size=1)
             self._credentials = credentials
-            self._hc_session = self._pool.borrow(credentials)
             _maybe_create_shortcuts(credentials)
+            self._hc_session = self._pool.borrow(credentials)
             self._connection = HighConcurrencyConnection(
                 credentials,
                 self._hc_session,

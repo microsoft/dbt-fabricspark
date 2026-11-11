@@ -73,7 +73,7 @@ class Shortcut:
         if self.target == TargetName.onelake:
             return {
                 "type": "OneLake",
-                "onelake": {
+                "oneLake": {
                     "workspaceId": self.source_workspace_id,
                     "itemId": self.source_item_id,
                     "path": self.source_path,

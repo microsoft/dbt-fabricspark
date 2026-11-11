@@ -1198,3 +1198,44 @@ class TestBuildAcquirePayloadForwarding:
         hc = HighConcurrencySession(creds, creds.spark_config)
         hc._build_acquire_payload()
         assert creds.spark_config == {"name": "test-session", "conf": {"a": "b"}}
+
+
+def test_shortcut_failure_happens_before_hc_pool_borrow():
+    credentials = _make_creds(create_shortcuts=True)
+    pool = MagicMock()
+    manager = HighConcurrencySessionManager(pool)
+
+    with (
+        patch(
+            "dbt.adapters.fabricspark.concurrent_livy._maybe_create_shortcuts",
+            side_effect=RuntimeError("shortcut failed"),
+        ),
+        pytest.raises(RuntimeError, match="shortcut failed"),
+    ):
+        manager.connect(credentials)
+
+    pool.borrow.assert_not_called()
+
+
+def test_shortcut_attempt_is_retried_after_failure_and_cached_only_after_success():
+    credentials = _make_creds(create_shortcuts=True)
+    client = MagicMock()
+    create_and_prune = MagicMock(side_effect=[RuntimeError("shortcut failed"), None])
+
+    with (
+        patch("dbt.adapters.fabricspark.concurrent_livy._get_headers", return_value={}),
+        patch.object(concurrent_livy._livy_helpers, "accessToken", MagicMock(token="test-token")),
+        patch("dbt.adapters.fabricspark.concurrent_livy.ShortcutClient", return_value=client),
+        patch.object(
+            concurrent_livy,
+            "create_and_prune_shortcuts",
+            create_and_prune,
+            create=True,
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="shortcut failed"):
+            concurrent_livy._maybe_create_shortcuts(credentials)
+        concurrent_livy._maybe_create_shortcuts(credentials)
+        concurrent_livy._maybe_create_shortcuts(credentials)
+
+    assert create_and_prune.call_count == 2

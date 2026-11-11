@@ -81,6 +81,7 @@ class FabricSparkCredentials(Credentials):
     connect_retries: int = 1
     connect_timeout: int = 10
     create_shortcuts: Optional[bool] = False
+    prune_shortcuts: bool = False
     retry_all: bool = False
     enable_job_retry: bool = True
     job_retry_on_messages: list[str] = field(default_factory=list)

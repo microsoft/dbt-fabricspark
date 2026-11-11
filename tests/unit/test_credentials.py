@@ -653,3 +653,11 @@ def test_high_concurrency_in_connection_keys() -> None:
     """high_concurrency decides which backend sends spark_config, so dbt debug must show it."""
     credentials = FabricSparkCredentials(**_base_fabric_kwargs())
     assert "high_concurrency" in credentials._connection_keys()
+
+
+def test_prune_shortcuts_defaults_off_and_parses_profile_value():
+    defaults = FabricSparkCredentials(**_base_fabric_kwargs())
+    assert defaults.prune_shortcuts is False
+
+    parsed = FabricSparkCredentials.from_dict({"prune_shortcuts": True, **_base_fabric_kwargs()})
+    assert parsed.prune_shortcuts is True

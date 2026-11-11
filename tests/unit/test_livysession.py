@@ -1306,3 +1306,59 @@ class TestCreateSessionPayload:
 
         assert self._posted_body(mock_post) == spark_config
         assert "kind" not in self._posted_body(mock_post)
+
+
+def test_shortcut_failure_precedes_session_creation_and_retries_before_file_reuse():
+    from dbt.adapters.fabricspark import singleton_livy
+
+    credentials = _make_fabric_credentials(reuse_session=True, create_shortcuts=True)
+    manager = LivySessionManager
+    manager.livy_global_session = None
+    if hasattr(manager, "_shortcuts_pending_key"):
+        manager._shortcuts_pending_key = None
+    calls = []
+
+    def apply_shortcuts(*args, **kwargs):
+        calls.append("shortcuts")
+        if calls.count("shortcuts") == 1:
+            raise RuntimeError("shortcut failed")
+
+    def create_session(spark_config):
+        calls.append("session")
+        manager.livy_global_session.session_id = "new-session"
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            credentials.session_id_file = os.path.join(tmp, "session.txt")
+            with (
+                patch("dbt.adapters.fabricspark.singleton_livy._get_headers", return_value={}),
+                patch.object(
+                    singleton_livy._livy_helpers, "accessToken", MagicMock(token="test-token")
+                ),
+                patch.object(
+                    singleton_livy,
+                    "create_and_prune_shortcuts",
+                    side_effect=apply_shortcuts,
+                    create=True,
+                ),
+                patch(
+                    "dbt.adapters.fabricspark.livysession.LivySession.create_session",
+                    side_effect=create_session,
+                ) as create,
+                patch.object(LivySession, "try_reuse_session", return_value=True) as reuse,
+            ):
+                with pytest.raises(RuntimeError, match="shortcut failed"):
+                    manager._connect_fabric_reuse(credentials, {"name": "test"})
+
+                assert create.call_count == 0
+                assert manager.livy_global_session is None
+                write_session_id_to_file(credentials.session_id_file, "existing-session")
+                manager._connect_fabric_reuse(credentials, {"name": "test"})
+
+            assert calls == ["shortcuts", "shortcuts", "session"]
+            assert create.call_count == 1
+            reuse.assert_not_called()
+    finally:
+        manager.livy_global_session = None
+        if hasattr(manager, "_shortcuts_pending_key"):
+            manager._shortcuts_pending_key = None

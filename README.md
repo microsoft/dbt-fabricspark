@@ -195,6 +195,7 @@ fabric-spark-test:
         job_retry_initial_wait_seconds: 30
         job_retry_max_wait_seconds: 300
         # create_shortcuts: false
+        # prune_shortcuts: false
         # shortcuts_json_str: '<json-string>'
 
         # Spark configuration (optional)
@@ -688,8 +689,11 @@ fails the model.
 | `job_retry_max_wait_seconds`     | float  | `300`                                 | Maximum capped exponential-backoff delay between matching query retries.                                                                                                                                                                                                                                                                                                                                         |
 | `create_shortcuts`               | bool   | `false`                               | Enable Fabric shortcut creation                                                                                                                                                                                                                                                                                                                                                                                  |
 | `shortcuts_json_str`             | string | —                                     | JSON string defining shortcuts                                                                                                                                                                                                                                                                                                                                                                                   |
+| `prune_shortcuts`                | bool   | `false`                               | Delete unlisted shortcuts only from parent paths in `shortcuts_json_str`                                                                                                                                                                                                                                                                                                                                        |
 | `livy_mode`                      | string | `fabric`                              | `fabric` for Fabric cloud, `local` for local Livy                                                                                                                                                                                                                                                                                                                                                                |
 | `livy_url`                       | string | `http://localhost:8998`               | Local Livy URL (local mode only)                                                                                                                                                                                                                                                                                                                                                                                 |
+
+Shortcuts are applied when the adapter creates a new Fabric session; they are not reapplied when an existing session is reused. Shortcut creation failures fail the dbt run. Set `prune_shortcuts: true` to remove unlisted shortcuts only from parent folders named in `shortcuts_json_str`. An empty shortcut list names no parent folders, so it prunes nothing.
 
 ### Inspecting `spark_config`
 

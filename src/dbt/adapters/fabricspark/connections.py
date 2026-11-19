@@ -622,7 +622,8 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                             args=[],
                         )
                     )
-                    time.sleep(delay)
+                    with adapter_span("adapter.retry_wait", work_class="wait"):
+                        time.sleep(delay)
                     attempt += 1
 
         connection = self.get_thread_connection()

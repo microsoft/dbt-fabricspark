@@ -641,6 +641,15 @@ failure matches a pattern is treated as a transient catalog read. The adapter ke
 polling with the same backoff until `statement_timeout`; any other failure still
 fails the model.
 
+### Experimental guarded materialized-view refresh
+
+Set `DBT_FABRICSPARK_GUARDED_REFRESH=1` to try the guarded refresh for OpenIVM
+`materialized_view` models using `method: session` and `on_query_change='fail'`.
+The adapter uses it only when the loaded Spark extension advertises
+`ensure_refresh_v1`. Older extensions and explicit rebuilds keep the original
+path. An absent target uses the original create path; an execution failure,
+definition mismatch, or invalid lifecycle proof is not retried.
+
 ### Configuration Reference
 
 | Option                           | Type   | Default                               | Description                                                                                                                                                                                                                                                                                                                                                                                                      |

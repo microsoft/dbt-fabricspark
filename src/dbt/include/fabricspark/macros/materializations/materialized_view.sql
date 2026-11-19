@@ -60,7 +60,10 @@
   {% do properties.update({query_hash_property: query_hash}) %}
 
   {% set target_relation = this.incorporate(type='table') %}
-  {% set existing_relation = load_cached_relation(target_relation) %}
+  {% set use_guarded_refresh = on_query_change == 'fail'
+      and env_var('DBT_FABRICSPARK_GUARDED_REFRESH', '0') == '1'
+      and adapter.supports_guarded_materialized_view_refresh() %}
+  {% set existing_relation = none if use_guarded_refresh else load_cached_relation(target_relation) %}
   {% call adapter.measure_materialized_view_phase('adapter.namespace_ensure') %}
     {% do ensure_database_exists(target_relation.schema, database=target_relation.database, workspace=target_relation.workspace) %}
   {% endcall %}
@@ -87,41 +90,53 @@
     {{ run_hooks(pre_hooks, inside_transaction=True) }}
   {% endcall %}
 
-  {% if existing_relation is none %}
-    {% call statement('ensure_materialized_view') %}
-      {{ create_sql | replace('CREATE MATERIALIZED VIEW', 'CREATE MATERIALIZED VIEW IF NOT EXISTS') }}
+  {% set guarded_refreshed = false %}
+  {% if use_guarded_refresh %}
+    {% call adapter.run_guarded_materialized_view_refresh() %}
+      {% call statement('main', fetch_result=True) %}
+        REFRESH MATERIALIZED VIEW {{ target_relation }} EXPECT QUERY HASH '{{ query_hash }}' IF EXISTS
+      {% endcall %}
     {% endcall %}
+    {% set guarded_refreshed = adapter.materialized_view_was_refreshed(load_result('main').table, query_hash) %}
   {% endif %}
 
-  {% set existing_hash = adapter.get_materialized_view_query_hash(
-    target_relation,
-    allow_missing_delta=(existing_relation is not none and on_query_change == 'rebuild')
-  ) %}
-  {% if existing_hash != query_hash %}
-    {% if on_query_change == 'fail' %}
-      {{ exceptions.raise_compiler_error(
-        "materialized_view SQL changed or the existing relation is not adapter-managed. "
-        ~ "Set on_query_change='rebuild' to replace it explicitly."
-      ) }}
-    {% endif %}
+  {% if not guarded_refreshed %}
     {% if existing_relation is none %}
-      {% call statement('drop_changed_materialized_view') %}
-        DROP MATERIALIZED VIEW {{ target_relation }}
-      {% endcall %}
-    {% elif existing_hash is none or existing_hash | length != 32 %}
-      {% do adapter.drop_relation(existing_relation) %}
-    {% else %}
-      {% call statement('drop_changed_materialized_view') %}
-        DROP MATERIALIZED VIEW {{ target_relation }}
+      {% call statement('ensure_materialized_view') %}
+        {{ create_sql | replace('CREATE MATERIALIZED VIEW', 'CREATE MATERIALIZED VIEW IF NOT EXISTS') }}
       {% endcall %}
     {% endif %}
-    {% call statement('main') %}
-      {{ create_sql }}
-    {% endcall %}
-  {% else %}
-    {% call statement('main') %}
-      REFRESH MATERIALIZED VIEW {{ target_relation }}
-    {% endcall %}
+
+    {% set existing_hash = adapter.get_materialized_view_query_hash(
+      target_relation,
+      allow_missing_delta=(existing_relation is not none and on_query_change == 'rebuild')
+    ) %}
+    {% if existing_hash != query_hash %}
+      {% if on_query_change == 'fail' %}
+        {{ exceptions.raise_compiler_error(
+          "materialized_view SQL changed or the existing relation is not adapter-managed. "
+          ~ "Set on_query_change='rebuild' to replace it explicitly."
+        ) }}
+      {% endif %}
+      {% if existing_relation is none %}
+        {% call statement('drop_changed_materialized_view') %}
+          DROP MATERIALIZED VIEW {{ target_relation }}
+        {% endcall %}
+      {% elif existing_hash is none or existing_hash | length != 32 %}
+        {% do adapter.drop_relation(existing_relation) %}
+      {% else %}
+        {% call statement('drop_changed_materialized_view') %}
+          DROP MATERIALIZED VIEW {{ target_relation }}
+        {% endcall %}
+      {% endif %}
+      {% call statement('main') %}
+        {{ create_sql }}
+      {% endcall %}
+    {% else %}
+      {% call statement('main') %}
+        REFRESH MATERIALIZED VIEW {{ target_relation }}
+      {% endcall %}
+    {% endif %}
   {% endif %}
 
   {% call adapter.measure_materialized_view_phase('adapter.hooks') %}

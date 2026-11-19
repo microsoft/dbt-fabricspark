@@ -10,7 +10,8 @@ import time
 import uuid
 from contextlib import contextmanager
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Iterator, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Optional, Sequence, Tuple, Union
+from weakref import WeakKeyDictionary
 
 from dbt_common.exceptions import DbtRuntimeError
 from dbt_common.utils.encoding import DECIMALS
@@ -292,6 +293,18 @@ class SessionCursor:
 
 
 class SessionConnection:
+    _openivm_capabilities: WeakKeyDictionary = WeakKeyDictionary()
+    _capability_lock = threading.Lock()
+
+    def supports_openivm_guarded_refresh(self, discover: Callable[[], bool]) -> bool:
+        self.require_not_cancelled()
+        with self._capability_lock:
+            self.require_not_cancelled()
+            session = self._spark_session
+            if session not in self._openivm_capabilities:
+                self._openivm_capabilities[session] = discover()
+            return self._openivm_capabilities[session]
+
     def __init__(self, *, spark_config: dict[str, Any]) -> None:
         self._fail_fast_cancelled = threading.Event()
         spark_session_type, analysis_error = _load_pyspark()

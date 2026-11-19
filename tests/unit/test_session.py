@@ -93,6 +93,21 @@ def test_session_spans_link_sql_collect_and_failure_to_captured_model():
     assert all(record["clock_domain_id"] == context["clock_domain_id"] for record in records)
 
 
+def test_openivm_capability_is_reused_only_for_the_same_spark_session():
+    spark = MagicMock()
+    lookup = MagicMock(side_effect=[FakeAnalysisException("probe failed"), True, False])
+    connection = _make_session_connection(spark)
+    with pytest.raises(FakeAnalysisException, match="probe failed"):
+        connection.supports_openivm_guarded_refresh(lookup)
+    assert connection.supports_openivm_guarded_refresh(lookup)
+    assert _make_session_connection(spark).supports_openivm_guarded_refresh(lookup)
+    assert not _make_session_connection(MagicMock()).supports_openivm_guarded_refresh(lookup)
+    assert lookup.call_count == 3
+    connection.mark_fail_fast_cancelled()
+    with pytest.raises(DbtRuntimeError, match="cancelled"):
+        connection.supports_openivm_guarded_refresh(lookup)
+
+
 def test_credentials_session_mode() -> None:
     with patch("dbt.adapters.fabricspark.credentials.import_module", return_value=object()):
         credentials = FabricSparkCredentials(

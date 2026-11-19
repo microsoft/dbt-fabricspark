@@ -61,7 +61,9 @@
 
   {% set target_relation = this.incorporate(type='table') %}
   {% set existing_relation = load_cached_relation(target_relation) %}
-  {% do ensure_database_exists(target_relation.schema, database=target_relation.database, workspace=target_relation.workspace) %}
+  {% call adapter.measure_materialized_view_phase('adapter.namespace_ensure') %}
+    {% do ensure_database_exists(target_relation.schema, database=target_relation.database, workspace=target_relation.workspace) %}
+  {% endcall %}
 
   {% set create_sql %}
     CREATE MATERIALIZED VIEW {{ target_relation }}
@@ -80,8 +82,10 @@
     AS {{ compiled_code }}
   {% endset %}
 
-  {{ run_hooks(pre_hooks, inside_transaction=False) }}
-  {{ run_hooks(pre_hooks, inside_transaction=True) }}
+  {% call adapter.measure_materialized_view_phase('adapter.hooks') %}
+    {{ run_hooks(pre_hooks, inside_transaction=False) }}
+    {{ run_hooks(pre_hooks, inside_transaction=True) }}
+  {% endcall %}
 
   {% if existing_relation is none %}
     {% call statement('ensure_materialized_view') %}
@@ -120,7 +124,9 @@
     {% endcall %}
   {% endif %}
 
-  {{ run_hooks(post_hooks, inside_transaction=True) }}
-  {{ run_hooks(post_hooks, inside_transaction=False) }}
+  {% call adapter.measure_materialized_view_phase('adapter.hooks') %}
+    {{ run_hooks(post_hooks, inside_transaction=True) }}
+    {{ run_hooks(post_hooks, inside_transaction=False) }}
+  {% endcall %}
   {{ return({'relations': [target_relation]}) }}
 {% endmaterialization %}

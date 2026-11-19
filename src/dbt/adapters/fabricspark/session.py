@@ -21,6 +21,7 @@ from dbt.adapters.fabricspark.credentials import (
     DEFAULT_STREAM_STOP_TIMEOUT_SECONDS,
     _validate_stream_stop_timeout_seconds,
 )
+from dbt.adapters.fabricspark.telemetry import adapter_span
 
 if TYPE_CHECKING:
     from pyspark.sql import DataFrame, Row
@@ -218,7 +219,10 @@ class SessionCursor:
         try:
             with self._job_group():
                 self._connection.require_not_cancelled()
-                self._df = self._spark_session.sql(sql)
+                with adapter_span(
+                    "adapter.sql", work_class="lifecycle", spark_job_group_id=self._job_group_id
+                ):
+                    self._df = self._spark_session.sql(sql)
         except self._analysis_error as exc:
             raise DbtRuntimeError(str(exc)) from exc
 
@@ -262,7 +266,12 @@ class SessionCursor:
         if self._rows is None and self._df is not None:
             with self._job_group():
                 self._connection.require_not_cancelled()
-                self._rows = self._df.collect()
+                with adapter_span(
+                    "adapter.collect",
+                    work_class="lifecycle",
+                    spark_job_group_id=self._job_group_id,
+                ):
+                    self._rows = self._df.collect()
         return self._rows
 
     def fetchmany(self, size: Optional[int] = None) -> Optional[list[Row]]:

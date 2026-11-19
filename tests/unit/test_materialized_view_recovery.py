@@ -26,6 +26,7 @@ def _materialize(*, error=None, stored_hash=QUERY_HASH, policy="rebuild", exists
     relation.database = "analytics"
     relation.workspace = None
     adapter = MagicMock(spec=FabricSparkAdapter)
+    adapter.measure_materialized_view_phase.side_effect = lambda operation, caller: caller()
     rows = [] if stored_hash is None else [["query_hash", stored_hash]]
     adapter.execute.return_value = (None, agate.Table(rows, ["key", "value"]))
     adapter.execute.side_effect = error

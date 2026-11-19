@@ -40,6 +40,7 @@ from dbt.adapters.fabricspark import (
     mlv_api,
 )
 from dbt.adapters.fabricspark.relation import FabricSparkRelation
+from dbt.adapters.fabricspark.telemetry import adapter_span, measure_adapter_phase
 from dbt.adapters.sql import SQLAdapter
 
 logger = AdapterLogger("fabricspark")
@@ -173,6 +174,13 @@ class FabricSparkAdapter(SQLAdapter):
         return experimental.execute_streaming_table(self, relation, sql)
 
     @available
+    def measure_materialized_view_phase(self, operation: str, caller) -> str:
+        work_class = "lifecycle" if operation == "adapter.hooks" else "metadata"
+        with adapter_span(operation, work_class=work_class):
+            return caller()
+
+    @available
+    @measure_adapter_phase("adapter.query_hash")
     def get_materialized_view_query_hash(
         self, relation: BaseRelation, allow_missing_delta: bool = False
     ) -> Optional[str]:
@@ -825,6 +833,7 @@ class FabricSparkAdapter(SQLAdapter):
                 )
                 return []
 
+    @measure_adapter_phase("adapter.relation_lookup")
     def get_relation(self, database: str, schema: str, identifier: str) -> Optional[BaseRelation]:
         if not self.Relation.get_default_include_policy().database:
             database = None  # type: ignore

@@ -21,6 +21,7 @@ from dbt.adapters.fabricspark.session import (
     _load_pyspark,
     _StreamStopWorker,
 )
+from dbt.adapters.fabricspark.telemetry import adapter_span, capture_adapter_spans
 
 
 class FakeAnalysisException(Exception):
@@ -57,6 +58,39 @@ def _make_session_cursor(spark_session: Any) -> SessionCursor:
 )
 def test_dbt_job_description(sql: str, expected: str) -> None:
     assert _dbt_job_description(sql) == expected
+
+
+def test_session_spans_link_sql_collect_and_failure_to_captured_model():
+    spark = MagicMock()
+    data_frame = spark.sql.return_value
+    data_frame.collect.side_effect = [(("first",),), FakeAnalysisException("query failed")]
+    records = []
+    cursor = _make_session_cursor(spark)
+    context = {
+        "campaign_id": "campaign",
+        "request_id": "request",
+        "correlation_id": "correlation",
+        "dbt_node_id": "model.package.orders.v2",
+        "parent_span_id": "runner",
+        "clock_domain_id": "python:runner",
+    }
+    with capture_adapter_spans(records.append, context), adapter_span("adapter.query_hash"):
+        cursor.execute("SHOW TBLPROPERTIES orders")
+        assert cursor.fetchall() == (("first",),)
+        cursor.execute("SHOW TBLPROPERTIES orders")
+        with pytest.raises(FakeAnalysisException):
+            cursor.fetchall()
+
+    first_sql, first_collect, second_sql, second_collect, hash_lookup = records
+    assert first_sql["operation"] == "adapter.sql"
+    assert first_collect["operation"] == "adapter.collect"
+    assert first_sql["spark_job_group_id"] == first_collect["spark_job_group_id"]
+    assert second_sql["spark_job_group_id"] != first_sql["spark_job_group_id"]
+    assert second_collect["status"] == "failed"
+    assert first_sql["parent_span_id"] == hash_lookup["span_id"]
+    assert hash_lookup["parent_span_id"] == context["parent_span_id"]
+    assert all(record["dbt_node_id"] == context["dbt_node_id"] for record in records)
+    assert all(record["clock_domain_id"] == context["clock_domain_id"] for record in records)
 
 
 def test_credentials_session_mode() -> None:

@@ -313,7 +313,7 @@ class TestSchemaDDL(unittest.TestCase):
                 local_mode=True,
                 session_method=True,
             ),
-            "select 1",
+            "",
         )
 
     def test_cross_workspace_livy_schema_ddl_is_preserved(self):

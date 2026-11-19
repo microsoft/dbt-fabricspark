@@ -106,8 +106,10 @@
 
   {% if not guarded_refreshed %}
     {% if existing_relation is none %}
-      {% call statement('ensure_materialized_view') %}
-        {{ create_sql | replace('CREATE MATERIALIZED VIEW', 'CREATE MATERIALIZED VIEW IF NOT EXISTS') }}
+      {% call adapter.measure_materialized_view_phase('adapter.create_guard_statement') %}
+        {% call statement('ensure_materialized_view') %}
+          {{ create_sql | replace('CREATE MATERIALIZED VIEW', 'CREATE MATERIALIZED VIEW IF NOT EXISTS') }}
+        {% endcall %}
       {% endcall %}
     {% endif %}
 

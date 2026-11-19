@@ -22,7 +22,7 @@ from dbt.adapters.fabricspark.credentials import (
     DEFAULT_STREAM_STOP_TIMEOUT_SECONDS,
     _validate_stream_stop_timeout_seconds,
 )
-from dbt.adapters.fabricspark.telemetry import adapter_span
+from dbt.adapters.fabricspark.telemetry import adapter_span, measure_adapter_phase
 
 if TYPE_CHECKING:
     from pyspark.sql import DataFrame, Row
@@ -157,6 +157,7 @@ class SessionCursor:
         return False
 
     @property
+    @measure_adapter_phase("adapter.session_result_schema")
     def description(
         self,
     ) -> Sequence[
@@ -207,6 +208,7 @@ class SessionCursor:
             for name, value in previous_properties.items():
                 spark_context.setLocalProperty(name, value)
 
+    @measure_adapter_phase("adapter.session_dispatch", work_class="lifecycle")
     def execute(self, sql: str, *parameters: Any) -> None:
         self._connection.require_not_cancelled()
         if parameters:
@@ -262,6 +264,7 @@ class SessionCursor:
         except self._analysis_error as exc:
             raise DbtRuntimeError(str(exc)) from exc
 
+    @measure_adapter_phase("adapter.session_fetch_dispatch", work_class="lifecycle")
     def fetchall(self) -> Optional[list[Row]]:
         self._connection.require_not_cancelled()
         if self._rows is None and self._df is not None:

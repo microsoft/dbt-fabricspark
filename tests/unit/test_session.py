@@ -81,13 +81,38 @@ def test_session_spans_link_sql_collect_and_failure_to_captured_model():
         with pytest.raises(FakeAnalysisException):
             cursor.fetchall()
 
-    first_sql, first_collect, second_sql, second_collect, hash_lookup = records
+    (
+        first_sql,
+        first_dispatch,
+        first_collect,
+        first_fetch,
+        second_sql,
+        second_dispatch,
+        second_collect,
+        second_fetch,
+        hash_lookup,
+    ) = records
     assert first_sql["operation"] == "adapter.sql"
     assert first_collect["operation"] == "adapter.collect"
     assert first_sql["spark_job_group_id"] == first_collect["spark_job_group_id"]
     assert second_sql["spark_job_group_id"] != first_sql["spark_job_group_id"]
     assert second_collect["status"] == "failed"
-    assert first_sql["parent_span_id"] == hash_lookup["span_id"]
+    assert (
+        first_dispatch["operation"] == second_dispatch["operation"] == "adapter.session_dispatch"
+    )
+    assert (
+        first_fetch["operation"] == second_fetch["operation"] == "adapter.session_fetch_dispatch"
+    )
+    for child, parent in (
+        (first_sql, first_dispatch),
+        (second_sql, second_dispatch),
+        (first_collect, first_fetch),
+        (second_collect, second_fetch),
+        (first_dispatch, hash_lookup),
+    ):
+        assert child["parent_span_id"] == parent["span_id"]
+        assert 0 <= child["duration_ns"] <= parent["duration_ns"]
+    assert second_fetch["status"] == "failed"
     assert hash_lookup["parent_span_id"] == context["parent_span_id"]
     assert all(record["dbt_node_id"] == context["dbt_node_id"] for record in records)
     assert all(record["clock_domain_id"] == context["clock_domain_id"] for record in records)

@@ -50,7 +50,7 @@ def _adapter_span(
     parent_span_id = _parent_span_id.get()
     token = _parent_span_id.set(span_id)
     utc = datetime.now(timezone.utc).isoformat()
-    start_ns = time.monotonic_ns()
+    start_ns = time.perf_counter_ns()
     status = "success"
     try:
         yield
@@ -61,7 +61,7 @@ def _adapter_span(
         status = "failed"
         raise
     finally:
-        duration_ns = time.monotonic_ns() - start_ns
+        duration_ns = time.perf_counter_ns() - start_ns
         _parent_span_id.reset(token)
         record = {
             **context,

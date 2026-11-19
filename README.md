@@ -651,6 +651,14 @@ name. Older extensions, four-part targets, and explicit rebuilds keep the
 original path. An absent target uses the original create path; an execution
 failure, definition mismatch, or invalid lifecycle proof is not retried.
 
+The optional `capture_adapter_spans(emit, context)` diagnostic binds to the
+executing dbt worker. Supply explicit `run_id`, `dbt_node_id`, and `request_id`
+in the runner context. For a legacy run, `adapter.create_guard_statement`
+marks the first CREATE statement boundary when that statement is needed.
+`adapter.session_dispatch` contains `adapter.sql`, and
+`adapter.session_fetch_dispatch` contains `adapter.collect`; do not add
+those pairs as independent elapsed times. Outside a capture no spans are emitted.
+
 ### Configuration Reference
 
 | Option                           | Type   | Default                               | Description                                                                                                                                                                                                                                                                                                                                                                                                      |

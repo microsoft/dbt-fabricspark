@@ -60,9 +60,12 @@
   {% do properties.update({query_hash_property: query_hash}) %}
 
   {% set target_relation = this.incorporate(type='table') %}
-  {% set use_guarded_refresh = on_query_change == 'fail'
-      and env_var('DBT_FABRICSPARK_GUARDED_REFRESH', '0') == '1'
-      and adapter.supports_guarded_materialized_view_refresh() %}
+  {% set guard_target = none %}
+  {% if on_query_change == 'fail' and env_var('DBT_FABRICSPARK_GUARDED_REFRESH', '0') == '1' %}
+    {% set guard_sql_target = target_relation.render() %}
+    {% set guard_target = adapter.guarded_materialized_view_target(guard_sql_target) %}
+  {% endif %}
+  {% set use_guarded_refresh = guard_target is not none and adapter.supports_guarded_materialized_view_refresh() %}
   {% set existing_relation = none if use_guarded_refresh else load_cached_relation(target_relation) %}
   {% call adapter.measure_materialized_view_phase('adapter.namespace_ensure') %}
     {% do ensure_database_exists(target_relation.schema, database=target_relation.database, workspace=target_relation.workspace) %}
@@ -94,10 +97,11 @@
   {% if use_guarded_refresh %}
     {% call adapter.run_guarded_materialized_view_refresh() %}
       {% call statement('main', fetch_result=True) %}
-        REFRESH MATERIALIZED VIEW {{ target_relation }} EXPECT QUERY HASH '{{ query_hash }}' IF EXISTS
+        REFRESH MATERIALIZED VIEW {{ guard_sql_target }} EXPECT QUERY HASH '{{ query_hash }}' IF EXISTS
       {% endcall %}
     {% endcall %}
-    {% set guarded_refreshed = adapter.materialized_view_was_refreshed(load_result('main').table, query_hash) %}
+    {% set guarded_refreshed = adapter.materialized_view_was_refreshed(
+        load_result('main').table, query_hash, guard_target) %}
   {% endif %}
 
   {% if not guarded_refreshed %}

@@ -646,9 +646,10 @@ fails the model.
 Set `DBT_FABRICSPARK_GUARDED_REFRESH=1` to try the guarded refresh for OpenIVM
 `materialized_view` models using `method: session` and `on_query_change='fail'`.
 The adapter uses it only when the loaded Spark extension advertises
-`ensure_refresh_v1`. Older extensions and explicit rebuilds keep the original
-path. An absent target uses the original create path; an execution failure,
-definition mismatch, or invalid lifecycle proof is not retried.
+`ensure_refresh_v2` and the target has a supported one-, two-, or three-part
+name. Older extensions, four-part targets, and explicit rebuilds keep the
+original path. An absent target uses the original create path; an execution
+failure, definition mismatch, or invalid lifecycle proof is not retried.
 
 ### Configuration Reference
 

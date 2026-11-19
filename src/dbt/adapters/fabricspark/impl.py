@@ -64,6 +64,17 @@ SKIP_OPTIMIZE_ENV_VAR = "DBT_FABRICSPARK_SKIP_OPTIMIZE"
 SCHEMA_EVOLUTION_CONF = "spark.databricks.delta.schema.autoMerge.enabled"
 TRUTHY_STRINGS = frozenset({"1", "true", "t", "yes", "y", "on"})
 FALSEY_STRINGS = frozenset({"0", "false", "f", "no", "n", "off"})
+_GUARDED_TARGET_PART = r"(?:[a-zA-Z0-9_]+|`(?:[^`]|``)+`)"
+_GUARDED_TARGET = re.compile(rf"{_GUARDED_TARGET_PART}(?:\.{_GUARDED_TARGET_PART}){{0,2}}")
+GUARDED_REFRESH_SUCCESS_OUTCOMES = frozenset(
+    {
+        "no_pending_deltas",
+        "noop_fast_exit",
+        "runtime_empty_delta_skip",
+        "incremental_executed",
+        "full_refresh_executed",
+    }
+)
 
 
 def _as_bool(value: Any, default: Optional[bool]) -> Optional[bool]:
@@ -180,6 +191,15 @@ class FabricSparkAdapter(SQLAdapter):
             return caller()
 
     @available
+    def guarded_materialized_view_target(self, sql_target: str) -> Optional[str]:
+        if not _GUARDED_TARGET.fullmatch(sql_target):
+            return None
+        return ".".join(
+            part if part.startswith("`") else f"`{part}`"
+            for part in re.findall(_GUARDED_TARGET_PART, sql_target)
+        )
+
+    @available
     @measure_adapter_phase("adapter.guarded_refresh_capability")
     def supports_guarded_materialized_view_refresh(self) -> bool:
         from dbt.adapters.fabricspark.session import SessionConnectionWrapper
@@ -196,7 +216,7 @@ class FabricSparkAdapter(SQLAdapter):
         key, value = result.rows[0]
         if key != "spark.openivm.capabilities" or not isinstance(value, str):
             raise DbtRuntimeError("Invalid OpenIVM extension capability response")
-        return "ensure_refresh_v1" in {item.strip() for item in value.split(",")}
+        return "ensure_refresh_v2" in {item.strip() for item in value.split(",")}
 
     @available
     def run_guarded_materialized_view_refresh(self, caller) -> str:
@@ -204,18 +224,23 @@ class FabricSparkAdapter(SQLAdapter):
             return caller()
 
     @available
-    def materialized_view_was_refreshed(self, result: "agate.Table", query_hash: str) -> bool:
+    def materialized_view_was_refreshed(
+        self, result: "agate.Table", query_hash: str, expected_target: str
+    ) -> bool:
         columns = ("status", "query_hash", "target", "target_table_id", "refresh_id", "outcome")
         if tuple(result.column_names) != columns or len(result.rows) != 1:
             raise DbtRuntimeError("Guarded materialized view refresh returned an invalid result")
         status, observed_hash, target, table_id, refresh_id, outcome = result.rows[0]
-        if observed_hash != query_hash or not isinstance(target, str) or not target.strip():
+        if observed_hash != query_hash or target != expected_target:
             raise DbtRuntimeError("Guarded materialized view refresh returned an invalid identity")
         proof = (table_id, refresh_id, outcome)
         if status == "absent" and all(value is None for value in proof):
             return False
-        if status == "refreshed" and all(
-            isinstance(value, str) and value.strip() for value in proof
+        if (
+            status == "refreshed"
+            and all(isinstance(value, str) and value.strip() for value in (table_id, refresh_id))
+            and isinstance(outcome, str)
+            and outcome in GUARDED_REFRESH_SUCCESS_OUTCOMES
         ):
             return True
         raise DbtRuntimeError("Guarded materialized view refresh returned an invalid outcome")

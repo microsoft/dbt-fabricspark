@@ -27,10 +27,12 @@ def _materialize(
     supported=True,
     guard_row=None,
     guard_error=None,
+    rendered_relation="`analytics`.`dbo`.mv_example",
 ):
     """Render the real materialization body with dbt side effects stubbed."""
     relation = MagicMock()
     relation.__str__.return_value = "`analytics`.`dbo`.`mv_example`"
+    relation.render.return_value = rendered_relation
     relation.incorporate.return_value = relation
     relation.schema = "dbo"
     relation.database = "analytics"
@@ -41,9 +43,12 @@ def _materialize(
         lambda caller: FabricSparkAdapter.run_guarded_materialized_view_refresh(adapter, caller)
     )
     adapter.supports_guarded_materialized_view_refresh.return_value = supported
+    adapter.guarded_materialized_view_target.side_effect = (
+        lambda sql: FabricSparkAdapter.guarded_materialized_view_target(adapter, sql)
+    )
     adapter.materialized_view_was_refreshed.side_effect = (
-        lambda table, query_hash: FabricSparkAdapter.materialized_view_was_refreshed(
-            adapter, table, query_hash
+        lambda table, query_hash, expected: FabricSparkAdapter.materialized_view_was_refreshed(
+            adapter, table, query_hash, expected
         )
     )
     guard_table = agate.Table(
@@ -116,7 +121,12 @@ def _materialize(
 
 @pytest.mark.parametrize(
     ("advertised", "supported"),
-    [("<undefined>", False), ("ensure_refresh_v10", False), ("other, ensure_refresh_v1", True)],
+    [
+        ("<undefined>", False),
+        ("ensure_refresh_v1", False),
+        ("ensure_refresh_v20", False),
+        ("other, ensure_refresh_v2", True),
+    ],
 )
 def test_probe_matches_exact_guarded_refresh_capability(advertised, supported):
     adapter = MagicMock(spec=FabricSparkAdapter)
@@ -130,17 +140,29 @@ def test_probe_matches_exact_guarded_refresh_capability(advertised, supported):
     )
 
 
-@pytest.mark.parametrize(("status", "benefit"), [("refreshed", True), ("absent", False)])
-def test_guarded_refresh_falls_back_only_on_authoritative_absence(status, benefit):
-    proof = ["delta-table-id", "refresh-id", "incremental"] if benefit else [None] * 3
+@pytest.mark.parametrize(
+    ("status", "outcome"),
+    [
+        ("refreshed", "no_pending_deltas"),
+        ("refreshed", "noop_fast_exit"),
+        ("refreshed", "runtime_empty_delta_skip"),
+        ("refreshed", "incremental_executed"),
+        ("refreshed", "full_refresh_executed"),
+        ("absent", None),
+    ],
+)
+def test_guarded_refresh_falls_back_only_on_authoritative_absence(status, outcome):
+    refreshed = status == "refreshed"
+    proof = ["delta-table-id", "refresh-id", outcome] if refreshed else [None] * 3
     adapter, _, statements, run = _materialize(
         guarded=True,
         policy="fail",
-        guard_row=[status, QUERY_HASH, "catalog.dbo.mv_example", *proof],
+        rendered_relation="`Analytics.QA`.`d``bo`.mv_example",
+        guard_row=[status, QUERY_HASH, "`Analytics.QA`.`d``bo`.`mv_example`", *proof],
     )
     run()
     assert "EXPECT QUERY HASH" in statements[0]
-    if benefit:
+    if refreshed:
         assert len(statements) == 1
         adapter.get_materialized_view_query_hash.assert_not_called()
     else:
@@ -152,12 +174,33 @@ def test_guarded_refresh_falls_back_only_on_authoritative_absence(status, benefi
 def test_guarded_refresh_engine_and_malformed_proof_errors_never_replay():
     for error, proof in (
         (DbtRuntimeError("hash mismatch"), None),
-        (None, ["absent", "wrong_hash", "catalog.dbo.mv_example", None, None, None]),
+        (None, ["absent", "wrong_hash", "`analytics`.`dbo`.`mv_example`", None, None, None]),
+        (None, ["absent", QUERY_HASH, "`dbo`.`mv_example`", None, None, None]),
+        (
+            None,
+            ["refreshed", QUERY_HASH, "`other`.`dbo`.`mv_example`", "id", "r", "noop_fast_exit"],
+        ),
+        *(
+            (
+                None,
+                [
+                    "refreshed",
+                    QUERY_HASH,
+                    "`analytics`.`dbo`.`mv_example`",
+                    "table",
+                    "refresh",
+                    outcome,
+                ],
+            )
+            for outcome in ("refresh_failed", "source_versions_already_applied", "unknown")
+        ),
     ):
         adapter, _, statements, run = _materialize(
             guarded=True, policy="fail", guard_row=proof, guard_error=error
         )
-        with pytest.raises(DbtRuntimeError, match="hash mismatch|invalid identity"):
+        with pytest.raises(
+            DbtRuntimeError, match="hash mismatch|invalid identity|invalid outcome"
+        ):
             run()
         assert len(statements) == 1
         assert "EXPECT QUERY HASH" in statements[0]
@@ -169,6 +212,18 @@ def test_guarded_refresh_keeps_legacy_for_older_jar_or_explicit_rebuild(policy, 
     _, _, statements, run = _materialize(guarded=True, policy=policy, supported=supported)
     run()
     assert statements == ["REFRESH MATERIALIZED VIEW `analytics`.`dbo`.`mv_example`"]
+
+
+def test_four_part_target_keeps_legacy_without_a_guard_probe():
+    adapter, relation, statements, run = _materialize(
+        guarded=True,
+        policy="fail",
+        rendered_relation="`Workspace One`.`analytics`.`dbo`.mv_example",
+    )
+    relation.__str__.return_value = relation.render.return_value
+    run()
+    adapter.supports_guarded_materialized_view_refresh.assert_not_called()
+    assert statements == ["REFRESH MATERIALIZED VIEW `Workspace One`.`analytics`.`dbo`.mv_example"]
 
 
 @pytest.mark.parametrize("nested", [False, True])

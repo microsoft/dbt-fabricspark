@@ -10,7 +10,8 @@ import time
 import uuid
 from contextlib import contextmanager
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Iterator, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Optional, Sequence, Tuple, Union
+from weakref import WeakKeyDictionary
 
 from dbt_common.exceptions import DbtRuntimeError
 from dbt_common.utils.encoding import DECIMALS
@@ -21,6 +22,7 @@ from dbt.adapters.fabricspark.credentials import (
     DEFAULT_STREAM_STOP_TIMEOUT_SECONDS,
     _validate_stream_stop_timeout_seconds,
 )
+from dbt.adapters.fabricspark.telemetry import adapter_span, measure_adapter_phase
 
 if TYPE_CHECKING:
     from pyspark.sql import DataFrame, Row
@@ -155,6 +157,7 @@ class SessionCursor:
         return False
 
     @property
+    @measure_adapter_phase("adapter.session_result_schema")
     def description(
         self,
     ) -> Sequence[
@@ -205,6 +208,7 @@ class SessionCursor:
             for name, value in previous_properties.items():
                 spark_context.setLocalProperty(name, value)
 
+    @measure_adapter_phase("adapter.session_dispatch", work_class="lifecycle")
     def execute(self, sql: str, *parameters: Any) -> None:
         self._connection.require_not_cancelled()
         if parameters:
@@ -218,7 +222,10 @@ class SessionCursor:
         try:
             with self._job_group():
                 self._connection.require_not_cancelled()
-                self._df = self._spark_session.sql(sql)
+                with adapter_span(
+                    "adapter.sql", work_class="lifecycle", spark_job_group_id=self._job_group_id
+                ):
+                    self._df = self._spark_session.sql(sql)
         except self._analysis_error as exc:
             raise DbtRuntimeError(str(exc)) from exc
 
@@ -257,12 +264,18 @@ class SessionCursor:
         except self._analysis_error as exc:
             raise DbtRuntimeError(str(exc)) from exc
 
+    @measure_adapter_phase("adapter.session_fetch_dispatch", work_class="lifecycle")
     def fetchall(self) -> Optional[list[Row]]:
         self._connection.require_not_cancelled()
         if self._rows is None and self._df is not None:
             with self._job_group():
                 self._connection.require_not_cancelled()
-                self._rows = self._df.collect()
+                with adapter_span(
+                    "adapter.collect",
+                    work_class="lifecycle",
+                    spark_job_group_id=self._job_group_id,
+                ):
+                    self._rows = self._df.collect()
         return self._rows
 
     def fetchmany(self, size: Optional[int] = None) -> Optional[list[Row]]:
@@ -283,6 +296,31 @@ class SessionCursor:
 
 
 class SessionConnection:
+    _openivm_capabilities: WeakKeyDictionary = WeakKeyDictionary()
+    _openivm_eligibility_capabilities = WeakKeyDictionary()
+    _openivm_table_id_capabilities = WeakKeyDictionary()
+    _capability_lock = threading.Lock()
+
+    def supports_openivm_guarded_refresh(self, discover: Callable[[], bool]) -> bool:
+        return self._supports_openivm_capability(discover, self._openivm_capabilities)
+
+    def supports_openivm_guarded_refresh_eligibility(self, discover: Callable[[], bool]) -> bool:
+        return self._supports_openivm_capability(discover, self._openivm_eligibility_capabilities)
+
+    def supports_openivm_guarded_refresh_table_id(self, discover: Callable[[], bool]) -> bool:
+        return self._supports_openivm_capability(discover, self._openivm_table_id_capabilities)
+
+    def _supports_openivm_capability(
+        self, discover: Callable[[], bool], cache: WeakKeyDictionary
+    ) -> bool:
+        self.require_not_cancelled()
+        with self._capability_lock:
+            self.require_not_cancelled()
+            session = self._spark_session
+            if session not in cache:
+                cache[session] = discover()
+            return cache[session]
+
     def __init__(self, *, spark_config: dict[str, Any]) -> None:
         self._fail_fast_cancelled = threading.Event()
         spark_session_type, analysis_error = _load_pyspark()

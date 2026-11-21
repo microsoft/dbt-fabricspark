@@ -40,6 +40,7 @@ from dbt.adapters.fabricspark.livysession import (
 )
 from dbt.adapters.fabricspark.message_retry import MessageRetryPolicy
 from dbt.adapters.fabricspark.relation import FabricSparkRelation
+from dbt.adapters.fabricspark.telemetry import adapter_span, measure_adapter_phase
 from dbt.adapters.sql import SQLConnectionManager
 
 logger = AdapterLogger("Microsoft Fabric-Spark")
@@ -250,6 +251,7 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                 )
 
     @classmethod
+    @measure_adapter_phase("adapter.connection", work_class="lifecycle")
     def open(cls, connection: Connection) -> Connection:
         if connection.state == ConnectionState.OPEN:
             logger.debug("Connection is already open, skipping open.")
@@ -333,7 +335,8 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                         f"({i} of {creds.connect_retries})"
                     )
                     logger.warning(msg)
-                    time.sleep(creds.connect_timeout)
+                    with adapter_span("adapter.retry_wait", work_class="wait"):
+                        time.sleep(creds.connect_timeout)
                 elif creds.retry_all and creds.connect_retries > 0:
                     msg = (
                         f"Warning: {str(exc) or 'No message'}, "
@@ -343,7 +346,8 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                         f"({i} of {creds.connect_retries})"
                     )
                     logger.warning(msg)
-                    time.sleep(creds.connect_timeout)
+                    with adapter_span("adapter.retry_wait", work_class="wait"):
+                        time.sleep(creds.connect_timeout)
                 else:
                     if creds.method == FabricSparkConnectionMethod.SESSION:
                         raise FailedToConnectError(
@@ -618,7 +622,8 @@ class FabricSparkConnectionManager(SQLConnectionManager):
                             args=[],
                         )
                     )
-                    time.sleep(delay)
+                    with adapter_span("adapter.retry_wait", work_class="wait"):
+                        time.sleep(delay)
                     attempt += 1
 
         connection = self.get_thread_connection()

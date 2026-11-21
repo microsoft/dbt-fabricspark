@@ -47,7 +47,7 @@
     {%- call statement('ensure_database_exists') -%}
       create database if not exists {{ schema_name }}
     {%- endcall -%}
-  {% else %}
+  {% elif not skip_schema_ddl %}
     {%- call statement('ensure_database_exists') -%}
       select 1
     {%- endcall -%}

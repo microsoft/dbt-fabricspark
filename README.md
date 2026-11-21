@@ -614,6 +614,16 @@ models:
 > `threads`) can cause resource contention. Lower `threads` or set
 > `DBT_FABRICSPARK_SKIP_OPTIMIZE=true` if you hit it.
 
+### Guarded materialized-view eligibility
+
+Materialized-view macros can opt into OpenIVM's session capabilities with
+`supports_guarded_materialized_view_eligibility()` and
+`supports_guarded_materialized_view_refresh_table_id()`. The adapter validates
+eligibility results with `materialized_view_refresh_is_eligible()` and returns
+the exact canonical Delta UUID through
+`materialized_view_refresh_eligible_table_id()` only for eligible targets. These
+helpers are read-only and do not change the default materialization lifecycle.
+
 ### Transient operation retry
 
 The adapter can retry a failed Spark SQL statement or MLV on-demand refresh when
@@ -640,6 +650,24 @@ While a `streaming_table` model awaits its run, a `metadata_error` status row wh
 failure matches a pattern is treated as a transient catalog read. The adapter keeps
 polling with the same backoff until `statement_timeout`; any other failure still
 fails the model.
+
+### Experimental guarded materialized-view refresh
+
+Set `DBT_FABRICSPARK_GUARDED_REFRESH=1` to try the guarded refresh for OpenIVM
+`materialized_view` models using `method: session` and `on_query_change='fail'`.
+The adapter uses it only when the loaded Spark extension advertises
+`ensure_refresh_v2` and the target has a supported one-, two-, or three-part
+name. Older extensions, four-part targets, and explicit rebuilds keep the
+original path. An absent target uses the original create path; an execution
+failure, definition mismatch, or invalid lifecycle proof is not retried.
+
+The optional `capture_adapter_spans(emit, context)` diagnostic binds to the
+executing dbt worker. Supply explicit `run_id`, `dbt_node_id`, and `request_id`
+in the runner context. For a legacy run, `adapter.create_guard_statement`
+marks the first CREATE statement boundary when that statement is needed.
+`adapter.session_dispatch` contains `adapter.sql`, and
+`adapter.session_fetch_dispatch` contains `adapter.collect`; do not add
+those pairs as independent elapsed times. Outside a capture no spans are emitted.
 
 ### Configuration Reference
 

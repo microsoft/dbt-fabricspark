@@ -21,6 +21,7 @@ from dbt.adapters.fabricspark.session import (
     _load_pyspark,
     _StreamStopWorker,
 )
+from dbt.adapters.fabricspark.telemetry import adapter_span, capture_adapter_spans
 
 
 class FakeAnalysisException(Exception):
@@ -33,6 +34,43 @@ def _make_session_connection(spark_session: Any) -> SessionConnection:
     connection._analysis_error = FakeAnalysisException
     connection._fail_fast_cancelled = threading.Event()
     return connection
+
+
+def test_guarded_refresh_capability_caches_are_independent_and_session_scoped():
+    spark = MagicMock()
+    connection = _make_session_connection(spark)
+    eligibility_lookup = MagicMock(return_value=True)
+    table_id_lookup = MagicMock(return_value=False)
+
+    assert connection.supports_openivm_guarded_refresh_eligibility(eligibility_lookup)
+    assert not connection.supports_openivm_guarded_refresh_table_id(table_id_lookup)
+    assert _make_session_connection(spark).supports_openivm_guarded_refresh_eligibility(
+        eligibility_lookup
+    )
+    assert not _make_session_connection(spark).supports_openivm_guarded_refresh_table_id(
+        table_id_lookup
+    )
+    other_spark = MagicMock()
+    assert _make_session_connection(other_spark).supports_openivm_guarded_refresh_eligibility(
+        eligibility_lookup
+    )
+    assert not _make_session_connection(other_spark).supports_openivm_guarded_refresh_table_id(
+        table_id_lookup
+    )
+    assert eligibility_lookup.call_count == table_id_lookup.call_count == 2
+
+
+def test_guarded_refresh_capability_probe_failure_is_not_cached_and_honors_cancellation():
+    connection = _make_session_connection(MagicMock())
+    lookup = MagicMock(side_effect=[FakeAnalysisException("probe failed"), False])
+    with pytest.raises(FakeAnalysisException, match="probe failed"):
+        connection.supports_openivm_guarded_refresh_eligibility(lookup)
+    assert not connection.supports_openivm_guarded_refresh_eligibility(lookup)
+    assert lookup.call_count == 2
+    connection.mark_fail_fast_cancelled()
+    with pytest.raises(DbtRuntimeError, match="cancelled"):
+        connection.supports_openivm_guarded_refresh_table_id(lookup)
+    assert lookup.call_count == 2
 
 
 def _make_session_cursor(spark_session: Any) -> SessionCursor:
@@ -57,6 +95,79 @@ def _make_session_cursor(spark_session: Any) -> SessionCursor:
 )
 def test_dbt_job_description(sql: str, expected: str) -> None:
     assert _dbt_job_description(sql) == expected
+
+
+def test_session_spans_link_sql_collect_and_failure_to_captured_model():
+    spark = MagicMock()
+    data_frame = spark.sql.return_value
+    data_frame.collect.side_effect = [(("first",),), FakeAnalysisException("query failed")]
+    records = []
+    cursor = _make_session_cursor(spark)
+    context = {
+        "campaign_id": "campaign",
+        "request_id": "request",
+        "correlation_id": "correlation",
+        "dbt_node_id": "model.package.orders.v2",
+        "parent_span_id": "runner",
+        "clock_domain_id": "python:runner",
+    }
+    with capture_adapter_spans(records.append, context), adapter_span("adapter.query_hash"):
+        cursor.execute("SHOW TBLPROPERTIES orders")
+        assert cursor.fetchall() == (("first",),)
+        cursor.execute("SHOW TBLPROPERTIES orders")
+        with pytest.raises(FakeAnalysisException):
+            cursor.fetchall()
+
+    (
+        first_sql,
+        first_dispatch,
+        first_collect,
+        first_fetch,
+        second_sql,
+        second_dispatch,
+        second_collect,
+        second_fetch,
+        hash_lookup,
+    ) = records
+    assert first_sql["operation"] == "adapter.sql"
+    assert first_collect["operation"] == "adapter.collect"
+    assert first_sql["spark_job_group_id"] == first_collect["spark_job_group_id"]
+    assert second_sql["spark_job_group_id"] != first_sql["spark_job_group_id"]
+    assert second_collect["status"] == "failed"
+    assert (
+        first_dispatch["operation"] == second_dispatch["operation"] == "adapter.session_dispatch"
+    )
+    assert (
+        first_fetch["operation"] == second_fetch["operation"] == "adapter.session_fetch_dispatch"
+    )
+    for child, parent in (
+        (first_sql, first_dispatch),
+        (second_sql, second_dispatch),
+        (first_collect, first_fetch),
+        (second_collect, second_fetch),
+        (first_dispatch, hash_lookup),
+    ):
+        assert child["parent_span_id"] == parent["span_id"]
+        assert 0 <= child["duration_ns"] <= parent["duration_ns"]
+    assert second_fetch["status"] == "failed"
+    assert hash_lookup["parent_span_id"] == context["parent_span_id"]
+    assert all(record["dbt_node_id"] == context["dbt_node_id"] for record in records)
+    assert all(record["clock_domain_id"] == context["clock_domain_id"] for record in records)
+
+
+def test_openivm_capability_is_reused_only_for_the_same_spark_session():
+    spark = MagicMock()
+    lookup = MagicMock(side_effect=[FakeAnalysisException("probe failed"), True, False])
+    connection = _make_session_connection(spark)
+    with pytest.raises(FakeAnalysisException, match="probe failed"):
+        connection.supports_openivm_guarded_refresh(lookup)
+    assert connection.supports_openivm_guarded_refresh(lookup)
+    assert _make_session_connection(spark).supports_openivm_guarded_refresh(lookup)
+    assert not _make_session_connection(MagicMock()).supports_openivm_guarded_refresh(lookup)
+    assert lookup.call_count == 3
+    connection.mark_fail_fast_cancelled()
+    with pytest.raises(DbtRuntimeError, match="cancelled"):
+        connection.supports_openivm_guarded_refresh(lookup)
 
 
 def test_credentials_session_mode() -> None:

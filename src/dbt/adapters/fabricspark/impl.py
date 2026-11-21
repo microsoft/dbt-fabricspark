@@ -1,5 +1,6 @@
 import os
 import re
+import uuid
 from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import (
@@ -75,6 +76,34 @@ GUARDED_REFRESH_SUCCESS_OUTCOMES = frozenset(
         "full_refresh_executed",
     }
 )
+
+_GUARDED_QUOTED_TARGET_PART = r"`(?:[^`]|``)+`"
+_GUARDED_QUOTED_TARGET = re.compile(
+    rf"{_GUARDED_QUOTED_TARGET_PART}(?:\.{_GUARDED_QUOTED_TARGET_PART}){{0,2}}"
+)
+GUARDED_REFRESH_LIFECYCLE_REASONS = frozenset(
+    {
+        "registration_missing",
+        "legacy_identity_missing",
+        "query_hash_policy",
+        "public_relation_missing",
+        "async_unsupported",
+    }
+)
+
+
+def _has_openivm_capability(execute: Callable, capability: str) -> bool:
+    _, result = execute("SET spark.openivm.capabilities", auto_begin=False, fetch=True)
+    if (
+        result is None
+        or tuple(getattr(result, "column_names", ())) != ("key", "value")
+        or len(getattr(result, "rows", ())) != 1
+    ):
+        raise DbtRuntimeError("Could not read the OpenIVM extension capabilities")
+    key, value = result.rows[0]
+    if key != "spark.openivm.capabilities" or not isinstance(value, str):
+        raise DbtRuntimeError("Invalid OpenIVM extension capability response")
+    return capability in {item.strip() for item in value.split(",")}
 
 
 def _as_bool(value: Any, default: Optional[bool]) -> Optional[bool]:
@@ -357,6 +386,95 @@ class FabricSparkAdapter(SQLAdapter):
         """Expose the connection method independently from local-mode behavior."""
         credentials = getattr(self.config, "credentials", None)
         return bool(credentials and getattr(credentials, "is_session_method", False))
+
+    @available
+    def supports_guarded_materialized_view_eligibility(self) -> bool:
+        from dbt.adapters.fabricspark.session import SessionConnectionWrapper
+
+        wrapper = self.connections.get_thread_connection().handle
+        if not isinstance(wrapper, SessionConnectionWrapper):
+            return False
+        return wrapper.handle.supports_openivm_guarded_refresh_eligibility(
+            self._discover_guarded_refresh_eligibility
+        )
+
+    def _discover_guarded_refresh_eligibility(self) -> bool:
+        return _has_openivm_capability(self.execute, "ensure_refresh_eligibility_v1")
+
+    @available
+    def supports_guarded_materialized_view_refresh_table_id(self) -> bool:
+        from dbt.adapters.fabricspark.session import SessionConnectionWrapper
+
+        wrapper = self.connections.get_thread_connection().handle
+        if not isinstance(wrapper, SessionConnectionWrapper):
+            return False
+        return wrapper.handle.supports_openivm_guarded_refresh_table_id(
+            self._discover_guarded_refresh_table_id
+        )
+
+    def _discover_guarded_refresh_table_id(self) -> bool:
+        return _has_openivm_capability(self.execute, "ensure_refresh_table_id_v1")
+
+    @available
+    def materialized_view_refresh_is_eligible(
+        self, result: "agate.Table", query_hash: str, expected_target: str
+    ) -> bool:
+        from agate import Table
+
+        columns = ("status", "query_hash", "target", "target_table_id", "reason")
+        if (
+            not isinstance(result, Table)
+            or tuple(result.column_names) != columns
+            or len(result.rows) != 1
+        ):
+            raise DbtRuntimeError(
+                "Materialized view refresh eligibility returned an invalid result"
+            )
+        if (
+            not isinstance(query_hash, str)
+            or re.fullmatch(r"[0-9a-f]{32}", query_hash) is None
+            or not isinstance(expected_target, str)
+            or _GUARDED_QUOTED_TARGET.fullmatch(expected_target) is None
+        ):
+            raise DbtRuntimeError("Materialized view refresh eligibility has an invalid identity")
+        status, observed_hash, target, table_id, reason = result.rows[0]
+        if observed_hash != query_hash or target != expected_target:
+            raise DbtRuntimeError(
+                "Materialized view refresh eligibility returned an invalid identity"
+            )
+        if (
+            status == "eligible"
+            and isinstance(table_id, str)
+            and table_id.strip()
+            and reason is None
+        ):
+            return True
+        if (
+            status == "lifecycle_required"
+            and table_id is None
+            and isinstance(reason, str)
+            and reason in GUARDED_REFRESH_LIFECYCLE_REASONS
+        ):
+            return False
+        raise DbtRuntimeError(
+            "Materialized view refresh eligibility returned an invalid disposition"
+        )
+
+    @available
+    def materialized_view_refresh_eligible_table_id(
+        self, result: "agate.Table", query_hash: str, expected_target: str
+    ) -> Optional[str]:
+        if not self.materialized_view_refresh_is_eligible(result, query_hash, expected_target):
+            return None
+        table_id = result.rows[0][3]
+        try:
+            if str(uuid.UUID(table_id)) != table_id:
+                raise ValueError("non-canonical UUID")
+        except ValueError as exc:
+            raise DbtRuntimeError(
+                "Materialized view refresh eligibility returned an invalid Delta table ID"
+            ) from exc
+        return table_id
 
     @available
     def load_seed_rows_session(

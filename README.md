@@ -614,6 +614,16 @@ models:
 > `threads`) can cause resource contention. Lower `threads` or set
 > `DBT_FABRICSPARK_SKIP_OPTIMIZE=true` if you hit it.
 
+### Guarded materialized-view eligibility
+
+Materialized-view macros can opt into OpenIVM's session capabilities with
+`supports_guarded_materialized_view_eligibility()` and
+`supports_guarded_materialized_view_refresh_table_id()`. The adapter validates
+eligibility results with `materialized_view_refresh_is_eligible()` and returns
+the exact canonical Delta UUID through
+`materialized_view_refresh_eligible_table_id()` only for eligible targets. These
+helpers are read-only and do not change the default materialization lifecycle.
+
 ### Transient operation retry
 
 The adapter can retry a failed Spark SQL statement or MLV on-demand refresh when

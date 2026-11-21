@@ -36,6 +36,43 @@ def _make_session_connection(spark_session: Any) -> SessionConnection:
     return connection
 
 
+def test_guarded_refresh_capability_caches_are_independent_and_session_scoped():
+    spark = MagicMock()
+    connection = _make_session_connection(spark)
+    eligibility_lookup = MagicMock(return_value=True)
+    table_id_lookup = MagicMock(return_value=False)
+
+    assert connection.supports_openivm_guarded_refresh_eligibility(eligibility_lookup)
+    assert not connection.supports_openivm_guarded_refresh_table_id(table_id_lookup)
+    assert _make_session_connection(spark).supports_openivm_guarded_refresh_eligibility(
+        eligibility_lookup
+    )
+    assert not _make_session_connection(spark).supports_openivm_guarded_refresh_table_id(
+        table_id_lookup
+    )
+    other_spark = MagicMock()
+    assert _make_session_connection(other_spark).supports_openivm_guarded_refresh_eligibility(
+        eligibility_lookup
+    )
+    assert not _make_session_connection(other_spark).supports_openivm_guarded_refresh_table_id(
+        table_id_lookup
+    )
+    assert eligibility_lookup.call_count == table_id_lookup.call_count == 2
+
+
+def test_guarded_refresh_capability_probe_failure_is_not_cached_and_honors_cancellation():
+    connection = _make_session_connection(MagicMock())
+    lookup = MagicMock(side_effect=[FakeAnalysisException("probe failed"), False])
+    with pytest.raises(FakeAnalysisException, match="probe failed"):
+        connection.supports_openivm_guarded_refresh_eligibility(lookup)
+    assert not connection.supports_openivm_guarded_refresh_eligibility(lookup)
+    assert lookup.call_count == 2
+    connection.mark_fail_fast_cancelled()
+    with pytest.raises(DbtRuntimeError, match="cancelled"):
+        connection.supports_openivm_guarded_refresh_table_id(lookup)
+    assert lookup.call_count == 2
+
+
 def _make_session_cursor(spark_session: Any) -> SessionCursor:
     return _make_session_connection(spark_session).cursor()
 

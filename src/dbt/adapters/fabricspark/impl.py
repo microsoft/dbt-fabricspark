@@ -38,6 +38,7 @@ from dbt.adapters.fabricspark import (
     FabricSparkConnectionManager,
     experimental,
     mlv_api,
+    onelake,
 )
 from dbt.adapters.fabricspark.relation import FabricSparkRelation
 from dbt.adapters.sql import SQLAdapter
@@ -119,6 +120,7 @@ class FabricSparkConfig(AdapterConfig):
     # Precedence: DBT_FABRICSPARK_SKIP_OPTIMIZE env var > this key > the
     # profile's ``auto_optimize`` > enabled.
     auto_optimize: Optional[bool] = None
+    persist_docs_onelake: bool = False
     tblproperties: Optional[Dict[str, Any]] = None
     cluster_by: Optional[Union[List[str], str]] = None
     output_mode: str = "append"
@@ -163,6 +165,24 @@ class FabricSparkAdapter(SQLAdapter):
     Column: TypeAlias = FabricSparkColumn
     ConnectionManager: TypeAlias = FabricSparkConnectionManager
     AdapterSpecificConfigs: TypeAlias = FabricSparkConfig
+
+    @available
+    def persist_onelake_descriptions(
+        self, relation: FabricSparkRelation, description: Optional[str], columns: dict
+    ) -> None:
+        descriptions = {
+            name: col["description"] for name, col in columns.items() if col.get("description")
+        }
+        if not description and not descriptions:
+            return
+        _, metadata = self.execute(f"describe extended {relation}", auto_begin=False, fetch=True)
+        provider = next((row[1] for row in metadata.rows if row[0] == "Provider"), None)
+        if not provider:
+            raise DbtRuntimeError(f"Could not determine table provider for {relation}")
+        if provider.lower() == "delta":
+            onelake.persist_descriptions(
+                self.config.credentials, relation, description or None, descriptions
+            )
 
     @available
     def require_experimental_unstable(self, feature: str) -> None:
@@ -275,7 +295,7 @@ class FabricSparkAdapter(SQLAdapter):
             "  2. Remove `workspace_name` from this model's config; or\n"
             "  3. Use a OneLake shortcut to bring the cross-workspace data "
             "into the current workspace.\n"
-            "See README → 'Cross-Workspace 4-Part Naming' for details."
+            "See docs/CROSS_WORKSPACE.md for details."
         )
 
     @available

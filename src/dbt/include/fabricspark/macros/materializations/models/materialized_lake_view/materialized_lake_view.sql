@@ -148,7 +148,7 @@
         {% endif %}
         {#-- Comment --#}
         {% if mlv_comment %}
-            COMMENT '{{ mlv_comment }}'
+            COMMENT '{{ mlv_comment | replace("\\", "\\\\") | replace("'", "\\'") }}'
         {% endif %}
         {#-- Table properties --#}
         {% if tblproperties %}

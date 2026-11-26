@@ -124,7 +124,9 @@ def is_token_refresh_necessary(unixTimestamp: int) -> bool:
         return False
 
 
-def get_cli_access_token(credentials: FabricSparkCredentials) -> AccessToken:
+def get_cli_access_token(
+    credentials: FabricSparkCredentials, scope: str = AZURE_CREDENTIAL_SCOPE
+) -> AccessToken:
     """
     Get an Azure access token using the CLI credentials
 
@@ -146,11 +148,13 @@ def get_cli_access_token(credentials: FabricSparkCredentials) -> AccessToken:
     """
     accessToken = AzureCliCredential(
         process_timeout=credentials.azure_cli_process_timeout
-    ).get_token(AZURE_CREDENTIAL_SCOPE)
+    ).get_token(scope)
     return accessToken
 
 
-def get_sp_access_token(credentials: FabricSparkCredentials) -> AccessToken:
+def get_sp_access_token(
+    credentials: FabricSparkCredentials, scope: str = AZURE_CREDENTIAL_SCOPE
+) -> AccessToken:
     """
     Get an Azure access token using the SP credentials.
 
@@ -166,7 +170,7 @@ def get_sp_access_token(credentials: FabricSparkCredentials) -> AccessToken:
     """
     accessToken = ClientSecretCredential(
         str(credentials.tenant_id), str(credentials.client_id), str(credentials.client_secret)
-    ).get_token(AZURE_CREDENTIAL_SCOPE)
+    ).get_token(scope)
     return accessToken
 
 
@@ -292,7 +296,9 @@ def _load_custom_credential(credentials: FabricSparkCredentials) -> Any:
         return instance
 
 
-def get_token_credential_access_token(credentials: FabricSparkCredentials) -> AccessToken:
+def get_token_credential_access_token(
+    credentials: FabricSparkCredentials, scope: str = AZURE_CREDENTIAL_SCOPE
+) -> AccessToken:
     """
     Get an Azure access token from a user-supplied TokenCredential class.
 
@@ -310,7 +316,7 @@ def get_token_credential_access_token(credentials: FabricSparkCredentials) -> Ac
         The access token returned by the user-supplied credential.
     """
     credential = _load_custom_credential(credentials)
-    result = credential.get_token(AZURE_CREDENTIAL_SCOPE)
+    result = credential.get_token(scope)
     if not isinstance(result, AccessToken):
         raise DbtRuntimeError(
             f"{credentials.credential_class!r}.get_token() must return an "
@@ -319,7 +325,9 @@ def get_token_credential_access_token(credentials: FabricSparkCredentials) -> Ac
     return result
 
 
-def get_fabric_notebook_access_token(credentials: FabricSparkCredentials) -> AccessToken:
+def get_fabric_notebook_access_token(
+    credentials: FabricSparkCredentials, scope: str = FABRIC_NOTEBOOK_CREDENTIAL_SCOPE
+) -> AccessToken:
     """
     Get an Azure access token using notebookutils.
 
@@ -343,7 +351,7 @@ def get_fabric_notebook_access_token(credentials: FabricSparkCredentials) -> Acc
     import notebookutils  # type: ignore  # noqa: F401 - only available in Fabric runtime
 
     _ = credentials
-    aad_token = notebookutils.credentials.getToken(FABRIC_NOTEBOOK_CREDENTIAL_SCOPE)
+    aad_token = notebookutils.credentials.getToken(scope)
     expires_on = json.loads(base64.b64decode(aad_token.split(".")[1] + "=="))["exp"]
 
     now = time.time()

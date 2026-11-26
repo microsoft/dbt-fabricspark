@@ -866,6 +866,7 @@ class LivySessionManager(LivyBackend):
                     shortcut_client,
                     credentials.shortcuts_json_str,
                     prune=credentials.prune_shortcuts,
+                    shortcuts_json_file=credentials.shortcuts_json_file,
                 )
             except Exception:
                 LivySessionManager.livy_global_session = None

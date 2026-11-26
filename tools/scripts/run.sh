@@ -82,18 +82,18 @@ run_lint() {
     ensure_venv
     cd "${PROJECT_DIR}"
     # Auto-fix safe formatting and lint issues first, then verify nothing remains.
-    uv run ruff check --fix src/ tests/
-    uv run ruff format src/ tests/
+    uv run ruff check --fix src/ tests/ tools/scripts/ci/
+    uv run ruff format src/ tests/ tools/scripts/ci/
     # Final check — only fails on issues that couldn't be auto-fixed.
-    uv run ruff check src/ tests/
-    uv run ruff format --check src/ tests/
+    uv run ruff check src/ tests/ tools/scripts/ci/
+    uv run ruff format --check src/ tests/ tools/scripts/ci/
 }
 
 run_fix() {
     ensure_venv
     cd "${PROJECT_DIR}"
-    uv run ruff check --fix --unsafe-fixes src/ tests/
-    uv run ruff format src/ tests/
+    uv run ruff check --fix --unsafe-fixes src/ tests/ tools/scripts/ci/
+    uv run ruff format src/ tests/ tools/scripts/ci/
 }
 
 run_build() {

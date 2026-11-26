@@ -44,7 +44,7 @@
     {% do apply_grants(target_relation, grant_config, should_revoke) %}
   */ 
 
-  {% do persist_docs(target_relation, model) %}
+  {% do fabricspark_persist_table_docs(target_relation, model) %}
   {% do persist_constraints(target_relation, model) %}
   {% do optimize(target_relation) %}
   {{ run_hooks(post_hooks) }}

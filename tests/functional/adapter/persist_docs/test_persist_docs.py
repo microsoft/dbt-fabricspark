@@ -1,4 +1,6 @@
 import pytest
+import requests
+from azure.identity import AzureCliCredential
 from fixtures import (
     _MODELS__INCREMENTAL_DELTA,
     _MODELS__MY_FUN_DOCS,
@@ -11,6 +13,7 @@ from fixtures import (
     _VIEW_PROPERTIES_MODELS,
 )
 
+from dbt.adapters.fabricspark.onelake import table_api_base
 from dbt.tests.util import run_dbt
 
 
@@ -74,6 +77,114 @@ class TestPersistDocsDeltaTable:
                     assert result[2].startswith("id Column description")
                 if result[0] == "name":
                     assert result[2].startswith("Some stuff here and then a call to")
+
+
+@pytest.mark.skip_profile("int_tests")
+class TestOneLakePersistDocs:
+    @pytest.fixture(scope="class")
+    def seeds(self):
+        return {"source.csv": _SEEDS__BASIC}
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {
+            "doc_table.sql": "{{ config(materialized='table') }} select * from {{ ref('source') }}",
+            "doc_incremental.sql": "{{ config(materialized='incremental') }} select * from {{ ref('doc_table') }}",
+            "schema.yml": """
+version: 2
+seeds:
+  - name: source
+    description: Source description
+models:
+  - name: doc_table
+    description: Table description
+  - name: doc_incremental
+    columns:
+      - name: id
+        description: Incremental identifier
+""",
+        }
+
+    @pytest.fixture(scope="class")
+    def snapshots(self):
+        return {
+            "snapshot.yml": """
+version: 2
+snapshots:
+  - name: doc_snapshot
+    relation: ref('doc_table')
+    description: Snapshot description
+    config:
+      strategy: check
+      unique_key: id
+      check_cols: [name]
+"""
+        }
+
+    @pytest.fixture(scope="class")
+    def project_config_update(self):
+        return {
+            key: {
+                "test": {
+                    "+file_format": "delta",
+                    "+persist_docs_onelake": True,
+                    "+persist_docs": {"relation": True, "columns": True},
+                }
+            }
+            for key in ("models", "seeds", "snapshots")
+        }
+
+    def test_metadata_materializations(self, project, is_schema_enabled):
+        creds = project.adapter.config.credentials
+        prefix = creds.identifier_prefix or ""
+        schema = creds.schema if is_schema_enabled else "dbo"
+        credential = AzureCliCredential(process_timeout=creds.azure_cli_process_timeout)
+
+        def metadata(table, payload=None):
+            if payload is not None:
+                for entry in payload.get("columns", []):
+                    entry.pop("columnId", None)
+            url = (
+                f"{table_api_base(creds.endpoint)}/{creds.workspaceid}/{creds.lakehouseid}"
+                f"/schemas/{schema}/tables/{prefix}{table}/additionalMetadata"
+            )
+            token = credential.get_token("https://storage.azure.com/.default")
+            response = requests.request(
+                "POST" if payload is not None else "GET",
+                url,
+                headers={"Authorization": f"Bearer {token.token}"},
+                json=payload,
+                timeout=creds.http_timeout,
+            )
+            response.raise_for_status()
+            return response.json()
+
+        run_dbt(["seed"])
+        run_dbt(["run"])
+        run_dbt(["snapshot"])
+        assert metadata("source")["description"] == "Source description"
+        assert metadata("doc_table")["description"] == "Table description"
+        incremental = metadata("doc_incremental")
+        column = next(c for c in incremental["columns"] if c["columnName"] == "id")
+        assert column["description"] == "Incremental identifier"
+        incremental["description"] = "Retain manual table description"
+        incremental["tags"] = {"owner": "functional-test"}
+        column.update(description="Old identifier", tags={"role": "key"})
+        metadata("doc_incremental", incremental)
+        snapshot = metadata("doc_snapshot")
+        assert snapshot["description"] == "Snapshot description"
+        snapshot["description"] = "Old snapshot"
+        metadata("doc_snapshot", snapshot)
+
+        run_dbt(["run", "--select", "doc_incremental"])
+        run_dbt(["snapshot"])
+        result = metadata("doc_incremental")
+        assert result["tags"] == incremental["tags"]
+        assert result["description"] == incremental["description"]
+        stored = next(c for c in result["columns"] if c["columnName"] == "id")
+        assert stored["tags"] == column["tags"]
+        assert stored["description"] == "Incremental identifier"
+        assert metadata("doc_snapshot")["description"] == "Snapshot description"
 
 
 class TestPersistDocsDeltaView:

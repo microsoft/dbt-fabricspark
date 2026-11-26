@@ -184,11 +184,12 @@ select id, name, amount from {{ ref('mlv_seed') }}
 # MLV model — on-demand refresh (same lakehouse)
 # ---------------------------------------------------------------------------
 
+_MLV_COMMENT = r"Analyst's \' literal \n"
+
 _mlv_on_demand_sql = """
 {{ config(
     materialized='materialized_lake_view',
-    mlv_on_demand=true,
-    mlv_comment='Functional test MLV with on-demand refresh'
+    mlv_on_demand=true
 ) }}
 
 select
@@ -321,7 +322,11 @@ class TestMLVOnDemand:
 
     @pytest.fixture(scope="class")
     def project_config_update(self):
-        return {"name": "mlv_on_demand_test"}
+        # dbt's static config() parser leaves Jinja string escapes undecoded.
+        return {
+            "name": "mlv_on_demand_test",
+            "models": {"mlv_on_demand_test": {"mlv_on_demand": {"+mlv_comment": _MLV_COMMENT}}},
+        }
 
     @pytest.fixture(scope="class")
     def seeds(self):
@@ -351,6 +356,13 @@ class TestMLVOnDemand:
             fetch="one",
         )
         assert int(result[0]) == 3
+        ddl = project.run_sql(
+            f"show create materialized lake view {_fq_table(project, 'mlv_on_demand')}",
+            fetch="one",
+        )
+        # SHOW CREATE escapes quotes but not backslashes.
+        escaped = _MLV_COMMENT.replace("'", "\\'")
+        assert f"COMMENT '{escaped}'" in ddl[0]
 
     def test_on_demand_has_computed_column(self, project):
         """Verify the tier column is computed correctly."""

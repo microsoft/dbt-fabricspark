@@ -26,5 +26,17 @@
   {% endif %}
 {% endmacro %}
 
+{% macro fabricspark_persist_table_docs(relation, model) -%}
+  {% do persist_docs(relation, model) %}
+  {% if config.get('persist_docs_onelake', false) is sameas true and
+        (config.persist_relation_docs() or config.persist_column_docs()) %}
+    {% do adapter.persist_onelake_descriptions(
+        relation,
+        model.description if config.persist_relation_docs() else none,
+        model.columns if config.persist_column_docs() else {}
+    ) %}
+  {% endif %}
+{% endmacro %}
+
 
 

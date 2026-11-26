@@ -1017,6 +1017,7 @@ def _maybe_create_shortcuts(credentials: FabricSparkCredentials) -> None:
             shortcut_client,
             credentials.shortcuts_json_str,
             prune=credentials.prune_shortcuts,
+            shortcuts_json_file=credentials.shortcuts_json_file,
         )
         _shortcuts_done.add(key)
 

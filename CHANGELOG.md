@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.13.14
+
+### Features
+
+- Configure a UTF-8 shortcut definition file with `shortcuts_json_file`. (#332)
+- Opt in to publishing dbt table and column descriptions to the OneLake Table overview for Delta tables, incremental models, seeds and snapshots. (#333)
+
+### Bug Fixes
+
+- Escape apostrophes and backslashes in materialized lake view comments. (#333)
+
+### Documentation
+
+- Move the README's configuration guides into topic pages under `docs/`.
+
+### CI/CD
+
+- CI signs in to Fabric through an IMDS relay bridge instead of GitHub OIDC. See `docs/CI.md`.
+
 ## v1.13.13
 
 ### Bug Fixes

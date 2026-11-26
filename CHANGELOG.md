@@ -11,6 +11,10 @@
 
 - Escape apostrophes and backslashes in materialized lake view comments. (#333)
 
+### Documentation
+
+- Move the README's configuration guides into topic pages under `docs/`.
+
 ## v1.13.13
 
 ### Bug Fixes

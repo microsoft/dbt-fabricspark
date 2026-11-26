@@ -83,7 +83,7 @@ Adapter behavior is subtle (schema-enabled detection, cross-lakehouse routing, s
 
 - **Confirm scope with the user.** Is this a bug fix, a new materialization option, or a behavior change to an existing one? Should it apply to schema-enabled mode, non-schema mode, or both?
 - **Confirm test strategy.** Unit-only, or does it need a functional test against real Fabric? Which Fabric runtime/lakehouse type is in scope?
-- **Confirm public-API impact.** Does this change `FabricSparkCredentials` fields, profile YAML keys, or model `config()` keys? If so, the README config tables and `profile_template.yml` need updates too.
+- **Confirm public-API impact.** Does this change `FabricSparkCredentials` fields, profile YAML keys, or model `config()` keys? If so, `docs/CONFIGURATION.md` and `profile_template.yml` need updates too.
 - **Confirm changelog placement.** New version section in `CHANGELOG.md`, or append to the unreleased section?
 
 When in doubt, **ask** rather than guess. The maintainers prefer a question to a wrong assumption that ships.

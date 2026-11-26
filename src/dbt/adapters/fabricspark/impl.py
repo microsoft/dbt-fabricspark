@@ -295,7 +295,7 @@ class FabricSparkAdapter(SQLAdapter):
             "  2. Remove `workspace_name` from this model's config; or\n"
             "  3. Use a OneLake shortcut to bring the cross-workspace data "
             "into the current workspace.\n"
-            "See README → 'Cross-Workspace 4-Part Naming' for details."
+            "See docs/CROSS_WORKSPACE.md for details."
         )
 
     @available

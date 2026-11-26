@@ -184,7 +184,7 @@ select id, name, amount from {{ ref('mlv_seed') }}
 # MLV model — on-demand refresh (same lakehouse)
 # ---------------------------------------------------------------------------
 
-_MLV_COMMENT = r"Analyst's \' C:\new"
+_MLV_COMMENT = r"Analyst's \' literal \n"
 
 _mlv_on_demand_sql = """
 {{ config(

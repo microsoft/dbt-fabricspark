@@ -303,6 +303,6 @@ def test_mlv_comment_renders_spark_literal():
         if line.strip().startswith("COMMENT ")
     )
     assert (
-        Environment().from_string(clause).render(mlv_comment=r"Analyst's \' C:\new")
-        == r"COMMENT 'Analyst\'s \\\' C:\\new'"
+        Environment().from_string(clause).render(mlv_comment=r"Analyst's \' literal \n")
+        == r"COMMENT 'Analyst\'s \\\' literal \\n'"
     )

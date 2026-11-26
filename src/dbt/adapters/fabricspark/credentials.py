@@ -213,7 +213,11 @@ class FabricSparkCredentials(Credentials):
         return f"{self.endpoint}/workspaces/{self.workspaceid}/lakehouses/{self.lakehouseid}/livyapi/versions/2023-12-01"
 
     def __post_init__(self) -> None:
-        if self.shortcuts_json_file is not None and self.shortcuts_json_str is not None:
+        if (
+            self.create_shortcuts
+            and self.shortcuts_json_file is not None
+            and self.shortcuts_json_str is not None
+        ):
             raise DbtRuntimeError("Set only one of shortcuts_json_file and shortcuts_json_str")
         _validate_experimental_flag(self.enable_experimental_unstable)
         _validate_stream_stop_timeout_seconds(self.stream_stop_timeout_seconds)

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -44,7 +45,7 @@ def response(payload=None, status=200):
     return result
 
 
-def test_merge_preserves_all_other_metadata_and_reconciles_timeout(creds, relation, monkeypatch):
+def test_merge_preserves_all_other_metadata_and_verifies_write(creds, relation, monkeypatch):
     before = {
         "description": "Unmanaged",
         "tags": {"owner": "BI"},
@@ -61,10 +62,9 @@ def test_merge_preserves_all_other_metadata_and_reconciles_timeout(creds, relati
         ],
     }
     get = Mock(side_effect=[response(before), response(after)])
-    post = Mock(side_effect=requests.Timeout())
+    post = Mock(return_value=response(after))
     monkeypatch.setattr(requests, "get", get)
     monkeypatch.setattr(requests, "post", post)
-    monkeypatch.setattr(onelake, "_wait", Mock())
     with patch.object(
         onelake.livysession, "get_cli_access_token", return_value=AccessToken("storage", 1)
     ) as token:
@@ -81,18 +81,29 @@ def test_merge_preserves_all_other_metadata_and_reconciles_timeout(creds, relati
     assert get.call_count == 2
 
 
-def test_retry_remerges_concurrent_edits(creds, relation, monkeypatch):
-    latest = {"tags": {"new": "tag"}, "columns": [{"columnName": "manual", "description": "kept"}]}
-    expected = {**latest, "description": "x" * 1024}
+@pytest.mark.parametrize(
+    ("outcome", "message"),
+    [
+        (requests.Timeout(), "unknown outcome .* may still complete"),
+        (requests.ConnectionError(), "unknown outcome"),
+        (response(status=408), "unknown outcome"),
+        (response(status=503), "unknown outcome"),
+        (response(status=429), "rejected"),
+        (response(status=400), "rejected"),
+    ],
+)
+def test_post_is_sent_once_and_unconfirmed_writes_fail(
+    creds, relation, monkeypatch, outcome, message
+):
+    get = Mock(side_effect=[response({}), response({"description": "new"})])
+    post = Mock(side_effect=[outcome])
     monkeypatch.setattr(onelake, "_headers", Mock(return_value={}))
-    monkeypatch.setattr(onelake, "_wait", Mock())
-    monkeypatch.setattr(
-        requests, "get", Mock(side_effect=[response({}), response(latest), response(expected)])
-    )
-    post = Mock(side_effect=[response(status=503), response(expected)])
+    monkeypatch.setattr(requests, "get", get)
     monkeypatch.setattr(requests, "post", post)
-    onelake.persist_descriptions(creds, relation, expected["description"], {})
-    assert post.call_args.kwargs["json"] == expected
+    with pytest.raises(DbtRuntimeError, match=message):
+        onelake.persist_descriptions(creds, relation, "new", {})
+    assert post.call_count == 1
+    assert get.call_count == 1
 
 
 @pytest.mark.parametrize(
@@ -160,29 +171,69 @@ def test_metadata_url_uses_fabric_environment(creds, relation, endpoint, base):
     )
 
 
-def test_cross_workspace_and_flat_lakehouse_routes(creds, relation, monkeypatch):
+def test_cross_workspace_routes_and_encoded_continuation(creds, relation, monkeypatch):
+    creds.endpoint = "https://msitapi.fabric.microsoft.com/v1"
     relation.workspace = "Other"
     relation.schema = "report/s"
-    get = Mock(
-        side_effect=[
-            response({"value": [], "continuationToken": "next"}),
-            response({"value": [{"displayName": "Other", "id": "other-ws"}]}),
-            response({"value": [{"displayName": "Main", "id": "other-item"}]}),
+    pages = iter(
+        [
+            {"value": [], "continuationToken": "ABCsMTAwMDAwLDA%3D"},
+            {"value": [{"displayName": "Other", "id": "other-ws"}]},
+            {"value": [{"displayName": "Main", "id": "other-item"}]},
         ]
     )
-    monkeypatch.setattr(requests, "get", get)
+    sent = []
+
+    def send(adapter, request, **kwargs):
+        sent.append(request.url)
+        result = requests.Response()
+        result.status_code = 200
+        result._content = json.dumps(next(pages)).encode()
+        return result
+
+    monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", send)
     with patch.object(
         onelake.livysession, "get_cli_access_token", return_value=AccessToken("fabric", 1)
     ) as token:
-        assert onelake.metadata_url(creds, relation).endswith(
-            "/other-ws/other-item/schemas/report%2Fs/tables/pre_Daily%20%231/additionalMetadata"
+        assert onelake.metadata_url(creds, relation) == (
+            "https://msit-onelake.table.fabric.microsoft.com/common/v1/other-ws/other-item"
+            "/schemas/report%2Fs/tables/pre_Daily%20%231/additionalMetadata"
         )
         token.assert_called_once_with(creds, onelake.livysession.AZURE_CREDENTIAL_SCOPE)
-    assert get.call_args_list[1].kwargs["params"] == {"continuationToken": "next"}
-    assert get.call_args_list[2].args[0].endswith("/workspaces/other-ws/lakehouses")
+    assert sent == [
+        "https://msitapi.fabric.microsoft.com/v1/workspaces",
+        "https://msitapi.fabric.microsoft.com/v1/workspaces?continuationToken=ABCsMTAwMDAwLDA%3D",
+        "https://msitapi.fabric.microsoft.com/v1/workspaces/other-ws/lakehouses",
+    ]
     relation.include_policy.database = False
     relation.schema = "Main"
     assert "/local-ws/local-item/schemas/dbo/" in onelake.metadata_url(creds, relation)
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://api.fabric.microsoft.com/v1",
+        "https://api.fabric.microsoft.com.evil.example/v1",
+        "https://localhost:8998",
+    ],
+)
+@pytest.mark.parametrize("workspace", [None, "Other"], ids=["lakehouse", "workspace"])
+def test_discovery_rejects_untrusted_origin_before_token(
+    creds, relation, monkeypatch, endpoint, workspace
+):
+    creds.endpoint = endpoint
+    relation.workspace = workspace
+    relation.database = "Other"
+    get = Mock()
+    monkeypatch.setattr(requests, "get", get)
+    with (
+        patch.object(onelake.livysession, "get_cli_access_token") as token,
+        pytest.raises(DbtRuntimeError, match="refusing to send a Fabric token"),
+    ):
+        onelake.metadata_url(creds, relation)
+    token.assert_not_called()
+    get.assert_not_called()
 
 
 def test_ambiguous_workspace_and_raw_token_fail(creds, relation, monkeypatch):
@@ -252,6 +303,6 @@ def test_mlv_comment_renders_spark_literal():
         if line.strip().startswith("COMMENT ")
     )
     assert (
-        Environment().from_string(clause).render(mlv_comment="Analyst's data")
-        == r"COMMENT 'Analyst\'s data'"
+        Environment().from_string(clause).render(mlv_comment=r"Analyst's \' C:\new")
+        == r"COMMENT 'Analyst\'s \\\' C:\\new'"
     )

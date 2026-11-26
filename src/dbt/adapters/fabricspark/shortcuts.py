@@ -225,13 +225,15 @@ def create_and_prune_shortcuts(
 ) -> None:
     """Create configured shortcuts before optionally pruning their configured parents."""
     if shortcuts_json_str is None:
-        path = "shortcuts.json" if shortcuts_json_file is None else shortcuts_json_file
+        explicit = shortcuts_json_file is not None
+        path = shortcuts_json_file if explicit else "shortcuts.json"
         try:
-            with open(path, encoding="utf-8") as f:
+            with open(path, encoding="utf-8" if explicit else None) as f:
                 shortcuts_json_str = f.read()
         except (OSError, UnicodeError) as exc:
+            kind = "UTF-8 shortcut" if explicit else "shortcut"
             raise ValueError(
-                f"Cannot read UTF-8 shortcut configuration at {path!r}: {type(exc).__name__}"
+                f"Cannot read {kind} configuration at {path!r}: {type(exc).__name__}"
             ) from None
     shortcut_client.create_shortcuts(shortcuts_json_str)
     if prune:

@@ -1,4 +1,7 @@
 import json
+import os
+import subprocess
+import sys
 from unittest.mock import Mock, mock_open, patch
 
 import pytest
@@ -250,9 +253,37 @@ def test_create_and_prune_uses_file_config_for_both_operations(filename):
             client, None, prune=True, shortcuts_json_file=filename
         )
 
-    opened.assert_called_once_with(filename or "shortcuts.json", encoding="utf-8")
+    opened.assert_called_once_with(
+        filename or "shortcuts.json", encoding="utf-8" if filename else None
+    )
     create.assert_called_once_with(config)
     prune.assert_called_once_with(config)
+
+
+def test_only_explicit_shortcut_file_overrides_locale_encoding(tmp_path):
+    (tmp_path / "shortcuts.json").write_text('{"shortcuts": [], "note": "é"}', encoding="utf-8")
+    script = """
+import locale, sys
+from unittest.mock import Mock
+from dbt.adapters.fabricspark.shortcuts import create_and_prune_shortcuts
+if locale.getpreferredencoding(False).lower() not in ("ascii", "ansi_x3.4-1968"):
+    sys.exit(3)
+create_and_prune_shortcuts(Mock(), None, shortcuts_json_file="shortcuts.json")
+try:
+    create_and_prune_shortcuts(Mock(), None)
+except ValueError as exc:
+    print(exc)
+"""
+    env = {**os.environ, "LC_ALL": "C", "PYTHONUTF8": "0", "PYTHONCOERCECLOCALE": "0"}
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True
+    )
+    if result.returncode == 3:
+        pytest.skip("C locale does not use ASCII on this platform")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == (
+        "Cannot read shortcut configuration at 'shortcuts.json': UnicodeDecodeError"
+    )
 
 
 def test_invalid_shortcut_file_fails_without_exposing_contents(tmp_path, monkeypatch):

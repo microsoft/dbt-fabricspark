@@ -79,6 +79,7 @@ class TestPersistDocsDeltaTable:
                     assert result[2].startswith("Some stuff here and then a call to")
 
 
+@pytest.mark.skip_profile("int_tests")
 class TestOneLakePersistDocs:
     @pytest.fixture(scope="class")
     def seeds(self):

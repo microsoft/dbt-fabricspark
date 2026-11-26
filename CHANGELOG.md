@@ -9,7 +9,7 @@
 
 ### Bug Fixes
 
-- Escape apostrophes in materialized lake view comments. (#333)
+- Escape apostrophes and backslashes in materialized lake view comments. (#333)
 
 ## v1.13.13
 

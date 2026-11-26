@@ -3,7 +3,7 @@
 import re
 import time
 from copy import deepcopy
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 import requests
 from dbt_common.exceptions import DbtRuntimeError
@@ -15,13 +15,35 @@ from dbt.adapters.fabricspark.relation import FabricSparkRelation
 
 STORAGE_SCOPE = "https://storage.azure.com/.default"
 TRANSIENT = {408, 429, 500, 502, 503, 504}
+FABRIC_API_HOST = re.compile(r"([a-z0-9-]*)api\.fabric\.microsoft\.com")
 
 
 def table_api_base(endpoint: str | None) -> str:
-    hostname = urlsplit(endpoint or "").hostname or ""
-    match = re.fullmatch(r"([a-z0-9-]+)api\.fabric\.microsoft\.com", hostname)
-    prefix = f"{match[1]}-" if match else ""
+    match = FABRIC_API_HOST.fullmatch(urlsplit(endpoint or "").hostname or "")
+    prefix = f"{match[1]}-" if match and match[1] else ""
     return f"https://{prefix}onelake.table.fabric.microsoft.com/common/v1"
+
+
+def _workspaces_url(endpoint: str | None) -> str:
+    parts = urlsplit(endpoint or "")
+    try:
+        port = parts.port
+    except ValueError:
+        port = -1
+    if (
+        parts.scheme != "https"
+        or parts.username is not None
+        or port not in (None, 443)
+        or parts.query
+        or parts.fragment
+        or not FABRIC_API_HOST.fullmatch(parts.hostname or "")
+    ):
+        raise DbtRuntimeError(
+            "persist_docs_onelake resolves other workspaces and lakehouses only through an "
+            "HTTPS Fabric API endpoint such as https://api.fabric.microsoft.com/v1; "
+            f"refusing to send a Fabric token to {parts.hostname or 'the configured endpoint'!r}"
+        )
+    return f"https://{parts.hostname}{parts.path.rstrip('/')}/workspaces"
 
 
 def _headers(credentials: FabricSparkCredentials, storage: bool) -> dict[str, str]:
@@ -101,7 +123,8 @@ def _resolve_id(credentials, url, name, headers):
         if not isinstance(token, str) or token in tokens:
             raise DbtRuntimeError(f"Invalid continuation token from {url}")
         tokens.add(token)
-        params = {"continuationToken": token}
+        # Fabric returns the token already URL-encoded; requests encodes it again.
+        params = {"continuationToken": unquote(token)}
     if len(matches) != 1:
         raise DbtRuntimeError(
             f"Expected one Fabric item named {name!r} in {url}; found {len(matches)}"
@@ -120,23 +143,21 @@ def metadata_url(credentials: FabricSparkCredentials, relation: FabricSparkRelat
     schema = relation.schema if qualified else "dbo"
     if not lakehouse or not schema or not relation.identifier:
         raise DbtRuntimeError(f"Incomplete OneLake target relation: {relation}")
-    workspaces = f"{credentials.endpoint.rstrip('/')}/workspaces"
-    fabric_headers = None
-    if qualified and relation.workspace:
+    item_id = credentials.lakehouseid
+    other_workspace = bool(qualified and relation.workspace)
+    other_lakehouse = lakehouse.casefold() != credentials.lakehouse.casefold()
+    if other_workspace or other_lakehouse:
+        workspaces = _workspaces_url(credentials.endpoint)
         fabric_headers = _headers(credentials, storage=False)
-        workspace_id = _resolve_id(credentials, workspaces, relation.workspace, fabric_headers)
-    if (
-        workspace_id == credentials.workspaceid
-        and lakehouse.casefold() == credentials.lakehouse.casefold()
-    ):
-        item_id = credentials.lakehouseid
-    else:
-        item_id = _resolve_id(
-            credentials,
-            f"{workspaces}/{quote(workspace_id, safe='')}/lakehouses",
-            lakehouse,
-            fabric_headers or _headers(credentials, storage=False),
-        )
+        if other_workspace:
+            workspace_id = _resolve_id(credentials, workspaces, relation.workspace, fabric_headers)
+        if other_lakehouse or workspace_id != credentials.workspaceid:
+            item_id = _resolve_id(
+                credentials,
+                f"{workspaces}/{quote(workspace_id, safe='')}/lakehouses",
+                lakehouse,
+                fabric_headers,
+            )
     return (
         f"{table_api_base(credentials.endpoint)}/{quote(workspace_id, safe='')}/{quote(item_id, safe='')}"
         f"/schemas/{quote(schema, safe='')}/tables/{quote(relation.identifier, safe='')}/additionalMetadata"
@@ -184,36 +205,34 @@ def persist_descriptions(
     headers = _headers(credentials, storage=True)
     url = metadata_url(credentials, relation)
     current = _read(url, headers, credentials, newly_built=True)
-    for attempt in range(max(0, credentials.connect_retries) + 1):
-        merged = _merge(current, description, columns)
-        if merged == current:
+    merged = _merge(current, description, columns)
+    if merged == current:
+        return
+    # Fabric returns columnId on GET but rejects it alongside columnName on POST.
+    for column in merged.get("columns", []):
+        column.pop("columnId", None)
+    # POST replaces all metadata and has no idempotency key, so it is never replayed.
+    try:
+        response = requests.post(
+            url, headers=headers, json=merged, timeout=credentials.http_timeout
+        )
+    except (requests.Timeout, requests.ConnectionError) as exc:
+        cause = type(exc).__name__
+    else:
+        if response.status_code == 200:
+            stored = _read(url, headers, credentials)
+            if _merge(stored, description, columns) != stored:
+                raise DbtRuntimeError(
+                    f"OneLake did not retain the selected descriptions for {relation}"
+                )
             return
-        # Fabric returns columnId on GET but rejects it alongside columnName on POST.
-        for column in merged.get("columns", []):
-            column.pop("columnId", None)
-        response = None
-        try:
-            response = requests.post(
-                url, headers=headers, json=merged, timeout=credentials.http_timeout
+        cause = f"HTTP {response.status_code}"
+        if response.status_code != 408 and response.status_code < 500:
+            raise DbtRuntimeError(
+                f"OneLake rejected the metadata write to {url}: {cause}. "
+                "The dbt build is not rolled back."
             )
-        except (requests.Timeout, requests.ConnectionError) as exc:
-            cause = type(exc).__name__
-        else:
-            if response.status_code == 200:
-                stored = _read(url, headers, credentials)
-                if _merge(stored, description, columns) != stored:
-                    raise DbtRuntimeError(
-                        f"OneLake did not retain the selected descriptions for {relation}"
-                    )
-                return
-            cause = f"HTTP {response.status_code}"
-            if response.status_code not in TRANSIENT:
-                break
-        # A timed-out POST may have committed; never replay a stale replacement.
-        _wait(response, attempt)
-        current = _read(url, headers, credentials)
-        if _merge(current, description, columns) == current:
-            return
     raise DbtRuntimeError(
-        f"OneLake POST {url} failed: {cause}. The table may already contain the built data."
+        f"OneLake metadata write to {url} has an unknown outcome ({cause}) and may still "
+        "complete; it was not retried. The dbt build is not rolled back."
     )

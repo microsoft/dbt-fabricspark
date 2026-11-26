@@ -11,6 +11,8 @@ from jinja2 import Environment
 from dbt.adapters.fabricspark import onelake
 from dbt.adapters.fabricspark.impl import FabricSparkAdapter
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 @pytest.fixture
 def creds():
@@ -126,6 +128,38 @@ def test_oversized_descriptions_fail_before_io(creds, relation, description, col
     headers.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("endpoint", "base"),
+    [
+        (
+            "https://api.fabric.microsoft.com/v1",
+            "https://onelake.table.fabric.microsoft.com/common/v1",
+        ),
+        (
+            "https://msitapi.fabric.microsoft.com/v1",
+            "https://msit-onelake.table.fabric.microsoft.com/common/v1",
+        ),
+        (
+            "https://dailyapi.fabric.microsoft.com/v1",
+            "https://daily-onelake.table.fabric.microsoft.com/common/v1",
+        ),
+        (
+            "https://dxtapi.fabric.microsoft.com/v1",
+            "https://dxt-onelake.table.fabric.microsoft.com/common/v1",
+        ),
+        (
+            "https://msitapi.fabric.microsoft.com.example.org/v1",
+            "https://onelake.table.fabric.microsoft.com/common/v1",
+        ),
+    ],
+)
+def test_metadata_url_uses_fabric_environment(creds, relation, endpoint, base):
+    creds.endpoint = endpoint
+    assert onelake.metadata_url(creds, relation) == (
+        f"{base}/local-ws/local-item/schemas/Reports/tables/pre_Daily%20%231/additionalMetadata"
+    )
+
+
 def test_cross_workspace_and_flat_lakehouse_routes(creds, relation, monkeypatch):
     relation.workspace = "Other"
     relation.schema = "report/s"
@@ -178,7 +212,9 @@ def test_ambiguous_workspace_and_raw_token_fail(creds, relation, monkeypatch):
 )
 def test_persist_table_docs_selection(opt_in, table, cols):
     env = Environment(extensions=["jinja2.ext.do"])
-    macro = env.from_string(Path("src/dbt/include/fabricspark/macros/adapters.sql").read_text())
+    macro = env.from_string(
+        (REPO_ROOT / "src/dbt/include/fabricspark/macros/adapters.sql").read_text(encoding="utf-8")
+    )
     config = Mock()
     config.get.return_value = opt_in
     config.persist_relation_docs.return_value = table
@@ -206,12 +242,13 @@ def test_non_delta_provider_skips_metadata(relation):
 
 
 def test_mlv_comment_renders_spark_literal():
-    path = Path(
-        "src/dbt/include/fabricspark/macros/materializations/models/materialized_lake_view/materialized_lake_view.sql"
+    path = (
+        REPO_ROOT
+        / "src/dbt/include/fabricspark/macros/materializations/models/materialized_lake_view/materialized_lake_view.sql"
     )
     clause = next(
         line.strip()
-        for line in path.read_text().splitlines()
+        for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip().startswith("COMMENT ")
     )
     assert (

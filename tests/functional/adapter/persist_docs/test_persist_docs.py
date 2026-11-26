@@ -13,6 +13,7 @@ from fixtures import (
     _VIEW_PROPERTIES_MODELS,
 )
 
+from dbt.adapters.fabricspark.onelake import table_api_base
 from dbt.tests.util import run_dbt
 
 
@@ -143,7 +144,7 @@ snapshots:
                 for entry in payload.get("columns", []):
                     entry.pop("columnId", None)
             url = (
-                f"https://onelake.table.fabric.microsoft.com/common/v1/{creds.workspaceid}/{creds.lakehouseid}"
+                f"{table_api_base(creds.endpoint)}/{creds.workspaceid}/{creds.lakehouseid}"
                 f"/schemas/{schema}/tables/{prefix}{table}/additionalMetadata"
             )
             token = credential.get_token("https://storage.azure.com/.default")

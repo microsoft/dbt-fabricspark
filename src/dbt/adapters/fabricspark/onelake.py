@@ -1,8 +1,9 @@
 """Synchronize dbt descriptions through the OneLake additional table metadata API."""
 
+import re
 import time
 from copy import deepcopy
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import requests
 from dbt_common.exceptions import DbtRuntimeError
@@ -13,8 +14,14 @@ from dbt.adapters.fabricspark.credentials import FabricSparkCredentials
 from dbt.adapters.fabricspark.relation import FabricSparkRelation
 
 STORAGE_SCOPE = "https://storage.azure.com/.default"
-TABLE_API = "https://onelake.table.fabric.microsoft.com/common/v1"
 TRANSIENT = {408, 429, 500, 502, 503, 504}
+
+
+def table_api_base(endpoint: str | None) -> str:
+    hostname = urlsplit(endpoint or "").hostname or ""
+    match = re.fullmatch(r"([a-z0-9-]+)api\.fabric\.microsoft\.com", hostname)
+    prefix = f"{match[1]}-" if match else ""
+    return f"https://{prefix}onelake.table.fabric.microsoft.com/common/v1"
 
 
 def _headers(credentials: FabricSparkCredentials, storage: bool) -> dict[str, str]:
@@ -131,7 +138,7 @@ def metadata_url(credentials: FabricSparkCredentials, relation: FabricSparkRelat
             fabric_headers or _headers(credentials, storage=False),
         )
     return (
-        f"{TABLE_API}/{quote(workspace_id, safe='')}/{quote(item_id, safe='')}"
+        f"{table_api_base(credentials.endpoint)}/{quote(workspace_id, safe='')}/{quote(item_id, safe='')}"
         f"/schemas/{quote(schema, safe='')}/tables/{quote(relation.identifier, safe='')}/additionalMetadata"
     )
 

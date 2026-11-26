@@ -187,7 +187,7 @@
   {% set should_revoke = should_revoke(target_relation_exists, full_refresh_mode) %}
   {% do apply_grants(target_relation, grant_config, should_revoke) %}
 
-  {% do persist_docs(target_relation, model) %}
+  {% do fabricspark_persist_table_docs(target_relation, model) %}
 
   {{ run_hooks(post_hooks, inside_transaction=True) }}
 

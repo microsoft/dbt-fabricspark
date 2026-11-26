@@ -18,7 +18,7 @@ def _prefix_aware_run_sql():
     yield
 
 
-def test_fabric_shortcut_idempotence_failures_and_pruning(monkeypatch):
+def test_fabric_shortcut_idempotence_failures_and_pruning(monkeypatch, tmp_path):
     load_dotenv("test.env", override=False)
     workspace_id = os.environ["WORKSPACE_ID_1"]
     endpoint = os.environ.get("LIVY_ENDPOINT", "https://api.fabric.microsoft.com/v1").rstrip("/")
@@ -100,7 +100,9 @@ def test_fabric_shortcut_idempotence_failures_and_pruning(monkeypatch):
 
         keep = shortcut(f"keep_{prefix}", source_id)
         config = shortcut_config(keep)
-        client.create_shortcuts(config)
+        path = tmp_path / "fabric-shortcuts.json"
+        path.write_text(config, encoding="utf-8")
+        create_and_prune_shortcuts(client, None, shortcuts_json_file=str(path))
         created = read_shortcut(destination_id, keep.path, keep.shortcut_name, 200).json()
         assert created["target"]["type"] == "OneLake"
         assert "oneLake" in created["target"]
@@ -140,7 +142,7 @@ def test_fabric_shortcut_idempotence_failures_and_pruning(monkeypatch):
         read_shortcut(destination_id, orphan.path, orphan.shortcut_name, 200)
         read_shortcut(destination_id, outside.path, outside.shortcut_name, 200)
 
-        create_and_prune_shortcuts(client, config, prune=True)
+        create_and_prune_shortcuts(client, None, prune=True, shortcuts_json_file=str(path))
         read_shortcut(destination_id, keep.path, keep.shortcut_name, 200)
         read_shortcut(destination_id, outside.path, outside.shortcut_name, 200)
         read_shortcut(destination_id, orphan.path, orphan.shortcut_name, 404)

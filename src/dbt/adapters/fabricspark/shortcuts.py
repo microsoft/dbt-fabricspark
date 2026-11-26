@@ -33,15 +33,21 @@ class ShortcutClient:
         shortcuts = []
         try:
             parsed_json = json.loads(json_str)
-            for shortcut in parsed_json["shortcuts"]:
-                shortcut["target"] = TargetName(shortcut["target"])
+            if not isinstance(parsed_json, dict) or not isinstance(
+                parsed_json.get("shortcuts"), list
+            ):
+                raise ValueError("Expected a JSON object containing a shortcuts array")
+            for index, shortcut in enumerate(parsed_json["shortcuts"]):
                 try:
+                    shortcut["target"] = TargetName(shortcut["target"])
                     shortcuts.append(Shortcut(**shortcut))
-                except Exception as exc:
-                    raise ValueError(f"Could not parse shortcut: {shortcut} with error: {exc}")
+                except (KeyError, TypeError, ValueError):
+                    raise ValueError(f"Invalid shortcut at index {index}") from None
             return shortcuts
-        except Exception as exc:
-            raise ValueError(f"Could not parse JSON: {json_str} with error: {exc}")
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Invalid shortcut JSON at line {exc.lineno}, column {exc.colno}"
+            ) from None
 
     def create_shortcuts(self, shortcuts_json_str: str, max_retries: int = 3) -> None:
         """Creates configured shortcuts, retrying transient failures per shortcut."""
@@ -214,11 +220,19 @@ def create_and_prune_shortcuts(
     shortcut_client: ShortcutClient,
     shortcuts_json_str: str | None,
     prune: bool = False,
+    *,
+    shortcuts_json_file: str | None = None,
 ) -> None:
     """Create configured shortcuts before optionally pruning their configured parents."""
     if shortcuts_json_str is None:
-        with open("shortcuts.json", "r") as f:
-            shortcuts_json_str = f.read()
+        path = "shortcuts.json" if shortcuts_json_file is None else shortcuts_json_file
+        try:
+            with open(path, encoding="utf-8") as f:
+                shortcuts_json_str = f.read()
+        except (OSError, UnicodeError) as exc:
+            raise ValueError(
+                f"Cannot read UTF-8 shortcut configuration at {path!r}: {type(exc).__name__}"
+            ) from None
     shortcut_client.create_shortcuts(shortcuts_json_str)
     if prune:
         shortcut_client.prune_shortcuts(shortcuts_json_str)

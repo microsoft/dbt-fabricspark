@@ -237,15 +237,33 @@ def test_empty_config_prunes_nothing_and_creation_failure_skips_pruning():
     get.assert_not_called()
 
 
-def test_create_and_prune_uses_file_config_for_both_operations():
+@pytest.mark.parametrize("filename", [None, "custom/definitions.json"])
+def test_create_and_prune_uses_file_config_for_both_operations(filename):
     client = _client()
     config = json.dumps({"shortcuts": []})
     with (
-        patch("builtins.open", mock_open(read_data=config)),
+        patch("builtins.open", mock_open(read_data=config)) as opened,
         patch.object(client, "create_shortcuts") as create,
         patch.object(client, "prune_shortcuts") as prune,
     ):
-        shortcuts.create_and_prune_shortcuts(client, None, prune=True)
+        shortcuts.create_and_prune_shortcuts(
+            client, None, prune=True, shortcuts_json_file=filename
+        )
 
+    opened.assert_called_once_with(filename or "shortcuts.json", encoding="utf-8")
     create.assert_called_once_with(config)
     prune.assert_called_once_with(config)
+
+
+def test_invalid_shortcut_file_fails_without_exposing_contents(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError, match="definitions.json"):
+        shortcuts.create_and_prune_shortcuts(
+            _client(), None, shortcuts_json_file="definitions.json"
+        )
+    (tmp_path / "definitions.json").write_text('{"private-value":', encoding="utf-8")
+    with pytest.raises(ValueError, match="Invalid shortcut JSON") as error:
+        shortcuts.create_and_prune_shortcuts(
+            _client(), None, shortcuts_json_file="definitions.json"
+        )
+    assert "private-value" not in str(error.value)

@@ -1218,7 +1218,7 @@ def test_shortcut_failure_happens_before_hc_pool_borrow():
 
 
 def test_shortcut_attempt_is_retried_after_failure_and_cached_only_after_success():
-    credentials = _make_creds(create_shortcuts=True)
+    credentials = _make_creds(create_shortcuts=True, shortcuts_json_file="nested/config.json")
     client = MagicMock()
     create_and_prune = MagicMock(side_effect=[RuntimeError("shortcut failed"), None])
 
@@ -1239,3 +1239,6 @@ def test_shortcut_attempt_is_retried_after_failure_and_cached_only_after_success
         concurrent_livy._maybe_create_shortcuts(credentials)
 
     assert create_and_prune.call_count == 2
+    create_and_prune.assert_called_with(
+        client, None, prune=False, shortcuts_json_file="nested/config.json"
+    )

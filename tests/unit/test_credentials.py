@@ -35,6 +35,15 @@ def test_credentials_fabric_mode_default() -> None:
     assert credentials.is_local_mode is False
 
 
+def test_explicit_shortcut_sources_are_mutually_exclusive():
+    with pytest.raises(
+        DbtRuntimeError, match="only one of shortcuts_json_file and shortcuts_json_str"
+    ):
+        FabricSparkCredentials(
+            livy_mode="local", shortcuts_json_str="", shortcuts_json_file="shortcuts.json"
+        )
+
+
 def test_credentials_local_mode() -> None:
     """Test local mode credentials without workspace/lakehouse IDs."""
     credentials = FabricSparkCredentials(

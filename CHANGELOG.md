@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.13.14
+
+### Features
+
+- Configure a UTF-8 shortcut definition file with `shortcuts_json_file`. (#332)
+- Opt in to publishing dbt table and column descriptions to the OneLake Table overview for Delta tables, incremental models, seeds and snapshots. (#333)
+
+### Bug Fixes
+
+- Escape apostrophes in materialized lake view comments. (#333)
+
 ## v1.13.13
 
 ### Bug Fixes

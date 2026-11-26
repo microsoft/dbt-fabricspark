@@ -1311,7 +1311,9 @@ class TestCreateSessionPayload:
 def test_shortcut_failure_precedes_session_creation_and_retries_before_file_reuse():
     from dbt.adapters.fabricspark import singleton_livy
 
-    credentials = _make_fabric_credentials(reuse_session=True, create_shortcuts=True)
+    credentials = _make_fabric_credentials(
+        reuse_session=True, create_shortcuts=True, shortcuts_json_file="nested/config.json"
+    )
     manager = LivySessionManager
     manager.livy_global_session = None
     if hasattr(manager, "_shortcuts_pending_key"):
@@ -1319,6 +1321,7 @@ def test_shortcut_failure_precedes_session_creation_and_retries_before_file_reus
     calls = []
 
     def apply_shortcuts(*args, **kwargs):
+        assert kwargs["shortcuts_json_file"] == "nested/config.json"
         calls.append("shortcuts")
         if calls.count("shortcuts") == 1:
             raise RuntimeError("shortcut failed")

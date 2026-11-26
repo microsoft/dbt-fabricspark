@@ -197,6 +197,7 @@ fabric-spark-test:
         # create_shortcuts: false
         # prune_shortcuts: false
         # shortcuts_json_str: '<json-string>'
+        # shortcuts_json_file: config/shortcuts.json   # Alternative to shortcuts_json_str
 
         # Spark configuration (optional)
         # spark_config:
@@ -689,11 +690,14 @@ fails the model.
 | `job_retry_max_wait_seconds`     | float  | `300`                                 | Maximum capped exponential-backoff delay between matching query retries.                                                                                                                                                                                                                                                                                                                                         |
 | `create_shortcuts`               | bool   | `false`                               | Enable Fabric shortcut creation                                                                                                                                                                                                                                                                                                                                                                                  |
 | `shortcuts_json_str`             | string | —                                     | JSON string defining shortcuts                                                                                                                                                                                                                                                                                                                                                                                   |
-| `prune_shortcuts`                | bool   | `false`                               | Delete unlisted shortcuts only from parent paths in `shortcuts_json_str`                                                                                                                                                                                                                                                                                                                                        |
+| `shortcuts_json_file`            | string | —                                     | UTF-8 shortcut JSON file path, instead of an inline JSON string |
+| `prune_shortcuts`                | bool   | `false`                               | Delete unlisted shortcuts only from configured parent paths |
 | `livy_mode`                      | string | `fabric`                              | `fabric` for Fabric cloud, `local` for local Livy                                                                                                                                                                                                                                                                                                                                                                |
 | `livy_url`                       | string | `http://localhost:8998`               | Local Livy URL (local mode only)                                                                                                                                                                                                                                                                                                                                                                                 |
 
-Shortcuts are applied when the adapter creates a new Fabric session; they are not reapplied when an existing session is reused. Shortcut creation failures fail the dbt run. Set `prune_shortcuts: true` to remove unlisted shortcuts only from parent folders named in `shortcuts_json_str`. An empty shortcut list names no parent folders, so it prunes nothing.
+With `create_shortcuts: true`, supply either `shortcuts_json_str` or `shortcuts_json_file`, not both. `shortcuts_json_file` accepts an absolute path or a path relative to the directory where you run dbt. The file must contain the same JSON object as the inline setting, encoded as UTF-8. With neither setting, the adapter reads `./shortcuts.json`.
+
+Shortcuts are applied when the adapter creates a new Fabric session; they are not reapplied when an existing session is reused. Shortcut creation failures fail the dbt run. Set `prune_shortcuts: true` to remove unlisted shortcuts only from parent folders named in the configuration. An empty shortcut list names no parent folders, so it prunes nothing.
 
 ### Inspecting `spark_config`
 
@@ -808,6 +812,20 @@ so a single build stays on one billed session; raise `threads` only when the ext
 parallelism beats the extra compute spend.
 
 High-concurrency has no effect in local mode as this is a Fabric specific construct.
+
+### Publish descriptions to the Lakehouse Table overview
+
+Spark comments from `persist_docs` are unchanged by default. To also update the [OneLake additional table metadata API (preview)](https://learn.microsoft.com/fabric/onelake/table-apis/additional-table-metadata), enable the resource config in `dbt_project.yml`:
+
+```yaml
+models:
+  +persist_docs_onelake: true
+  +persist_docs: {relation: true, columns: true}
+```
+
+Set the same keys under `seeds` or `snapshots` to opt those resources in. Delta tables and incremental models, seeds and snapshots are supported; views, materialized lake views and clones are not. Only nonempty YAML descriptions selected by `relation` or `columns` are published. Each description may contain up to 1,024 characters. The profile identity must be able to read and write the target metadata and acquire a token for Azure Storage (CLI, SPN, `fabric_notebook` or `token_credential`).
+
+The adapter reads existing metadata before replacing it, retaining tags and unselected descriptions. Coordinate other metadata writers: the API does not provide an atomic merge. An authentication, validation or sync failure fails the dbt operation; it does not roll back data already written.
 
 ### Materialized Lake Views
 

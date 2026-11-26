@@ -188,7 +188,7 @@ _mlv_on_demand_sql = """
 {{ config(
     materialized='materialized_lake_view',
     mlv_on_demand=true,
-    mlv_comment='Functional test MLV with on-demand refresh'
+    mlv_comment="Analyst's on-demand refresh"
 ) }}
 
 select
@@ -351,6 +351,11 @@ class TestMLVOnDemand:
             fetch="one",
         )
         assert int(result[0]) == 3
+        ddl = project.run_sql(
+            f"show create materialized lake view {_fq_table(project, 'mlv_on_demand')}",
+            fetch="one",
+        )
+        assert "Analyst's on-demand refresh" in ddl[0].replace("\\'", "'").replace("''", "'")
 
     def test_on_demand_has_computed_column(self, project):
         """Verify the tier column is computed correctly."""

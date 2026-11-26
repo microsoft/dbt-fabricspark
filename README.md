@@ -117,6 +117,7 @@ See [Lakehouses](https://github.com/microsoft/dbt-fabricspark/blob/HEAD/docs/LAK
 | [Publish descriptions to the Lakehouse Table overview](https://github.com/microsoft/dbt-fabricspark/blob/HEAD/docs/PERSIST_DOCS_ONELAKE.md) | Writing dbt descriptions to OneLake table metadata with `persist_docs_onelake`                               |
 | [Materialized Lake Views](https://github.com/microsoft/dbt-fabricspark/blob/HEAD/docs/MATERIALIZED_LAKE_VIEWS.md)                           | The `materialized_lake_view` materialization, constraints and refresh schedules                              |
 | [FAQs](https://github.com/microsoft/dbt-fabricspark/blob/HEAD/docs/FAQ.md)                                                                  | Frequently asked questions                                                                                   |
+| [Continuous integration](https://github.com/microsoft/dbt-fabricspark/blob/HEAD/docs/CI.md)                                                 | How CI authenticates to Fabric through the IMDS relay bridge                                                 |
 
 ## Issues, bug-bashing, help us help you
 

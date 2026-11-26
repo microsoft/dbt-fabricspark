@@ -14,6 +14,7 @@
       },
       "lint": {
          "executor": "nx:run-commands",
+         "inputs": ["default", "{workspaceRoot}/tools/scripts/ci/**/*"],
          "options": {
             "commands": [
                { "command": "bash tools/scripts/run.sh lint", "forwardAllArgs": false }
@@ -40,6 +41,7 @@
       },
       "test:unit": {
          "executor": "nx:run-commands",
+         "inputs": ["default", "{workspaceRoot}/tools/scripts/ci/**/*"],
          "options": {
             "commands": [
                { "command": "bash tools/scripts/run.sh test:unit", "forwardAllArgs": false }

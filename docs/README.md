@@ -12,6 +12,7 @@
 - [Publish descriptions to the Lakehouse Table overview](./PERSIST_DOCS_ONELAKE.md)
 - [Materialized Lake Views](./MATERIALIZED_LAKE_VIEWS.md)
 - [FAQs](./FAQ.md)
+- [Continuous integration](./CI.md)
 - [Release checklist](./RELEASE_CHECKLIST.md)
 
 ---

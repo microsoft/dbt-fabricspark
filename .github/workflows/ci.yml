@@ -10,19 +10,17 @@ concurrency:
 
 env:
   IS_GH_ACTION: "1"
-  CLIENT_ID: ${{ secrets.APP_ID }}
-  TENANT_ID: ${{ secrets.TENANT_ID }}
   FABRIC_API: "https://msitapi.fabric.microsoft.com/v1"
 
 permissions:
   contents: read
   packages: read
-  id-token: write
 
 jobs:
   linux:
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    environment: manual-run
     container:
       image: dbtfabric.azurecr.io/devcontainer/spark:c30058bab7d446a30b78be86804639114f58edb0242a79c5e1400af912052265
       options: >-
@@ -44,13 +42,6 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: "🔒 Auth: Azure login with OIDC"
-        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906  # v3.1.0
-        with:
-          client-id: ${{ secrets.APP_ID }}
-          tenant-id: ${{ secrets.TENANT_ID }}
-          allow-no-subscriptions: true
-
       - name: "📝 Write test.env"
         run: |
           {
@@ -67,6 +58,23 @@ jobs:
       - name: "⚙️ Post attach commands"
         run: /tmp/overlay/post-attach-commands.sh
 
+      - name: "🐍 Create Python environment"
+        run: bash tools/scripts/run.sh venv
+
+      - name: "🔒 Auth: Start IMDS relay bridge"
+        env:
+          IMDS_RELAY_TEMPORARY_SAS_URL: ${{ secrets.IMDS_RELAY_TEMPORARY_SAS_URL }}
+          UAMI_CLIENT_ID: ${{ vars.UAMI_CLIENT_ID }}
+        run: .venv/bin/python tools/scripts/ci/imds_relay.py start
+
+      - name: "🔒 Auth: Check Fabric workspace access"
+        env:
+          WORKSPACE_ID_1: ${{ secrets.WORKSPACE_ID_1 }}
+          WORKSPACE_ID_2: ${{ secrets.WORKSPACE_ID_2 }}
+        run: >-
+          .venv/bin/python tools/scripts/ci/imds_relay.py preflight --api "$FABRIC_API"
+          --workspace "$WORKSPACE_ID_1" --workspace "$WORKSPACE_ID_2"
+
       - name: "📦 Build Projects"
         run: npx nx affected --base=origin/main -t build --parallel=3 --configuration=ci --output-style=stream --verbose
 
@@ -78,3 +86,7 @@ jobs:
 
       - name: "📁 Verify No Untracked Files"
         run: npm run fail-on-untracked-files
+
+      - name: "🧹 Stop IMDS relay bridge"
+        if: always() && env.IMDS_RELAY_STATE_DIR != ''
+        run: .venv/bin/python tools/scripts/ci/imds_relay.py stop

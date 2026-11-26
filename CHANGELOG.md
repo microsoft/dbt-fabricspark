@@ -15,6 +15,10 @@
 
 - Move the README's configuration guides into topic pages under `docs/`.
 
+### CI/CD
+
+- CI signs in to Fabric through an IMDS relay bridge instead of GitHub OIDC. See `docs/CI.md`.
+
 ## v1.13.13
 
 ### Bug Fixes
